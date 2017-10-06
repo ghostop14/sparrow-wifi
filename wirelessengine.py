@@ -18,11 +18,13 @@
 # Boston, MA 02110-1301, USA.
 # 
 
+import os
 import subprocess
 import re
 import datetime
-# import pytz
-# import json
+from dateutil import parser
+import json
+import copy
 
 class WirelessNetwork(object):
     ERR_NETDOWN = 156
@@ -47,9 +49,12 @@ class WirelessNetwork(object):
         now=datetime.datetime.now()
         self.firstSeen = now
         self.lastSeen = now
-        
+        self.lat = 0.0
+        self.long = 0.0
         # Used for tracking in network table
         self.foundInList = False
+        
+        super().__init__()
 
     def __str__(self):
         retVal = ""
@@ -69,9 +74,101 @@ class WirelessNetwork(object):
         retVal += "Bandwidth: " + str(self.bandwidth) + "\n"
         retVal += "First Seen: " + str(self.firstSeen) + "\n"
         retVal += "Last Seen: " + str(self.lastSeen) + "\n"
+        retVal += "Latitude: " + str(self.lat) + "\n"
+        retVal += "Longitude: " + str(self.long) + "\n"
 
         return retVal
 
+    def defatul(self, obj):
+        pass
+        
+    def copy(self):
+        return copy.deepcopy(self)
+        
+    def __eq__(self, obj):
+        # This is equivance....   ==
+        if not isinstance(obj, WirelessNetwork):
+           return False
+          
+        if self.macAddr != obj.macAddr:
+            return False
+        if self.ssid != obj.ssid:
+            return False
+
+        if self.mode != obj.mode:
+            return False
+            
+        if self.security != obj.security:
+            return False
+            
+        if self.channel != obj.channel:
+            return False
+            
+        if self.lat != obj.lat:
+            return False
+            
+        if self.long != obj.long:
+            return False
+            
+        return True
+
+    def createFromJsonDict(jsondict):
+        retVal = WirelessNetwork()
+        retVal.fromJsondict(jsondict)
+        return retVal
+        
+    def fromJsondict(self, dictjson):
+        try:
+            self.macAddr = dictjson['macAddr']
+            self.ssid = dictjson['ssid']
+            self.mode = dictjson['mode']
+            self.security = dictjson['security']
+            self.privacy = dictjson['privacy']
+            self.cipher = dictjson['cipher']
+            self.frequency = int(dictjson['frequency'])
+            self.channel = int(dictjson['channel'])
+            self.secondaryChannel = int(dictjson['secondaryChannel'])
+            self.secondaryChannelLocation = dictjson['secondaryChannelLocation']
+            self.thirdChannel = int(dictjson['thirdChannel'])
+            self.signal = int(dictjson['signal'])
+            self.bandwidth = int(dictjson['bandwidth'])
+            self.firstSeen = parser.parse(dictjson['firstseen'])
+            self.lastSeen = parser.parse(dictjson['lastseen'])
+            self.lat = int(dictjson['lat'])
+            self.long = int(dictjson['long'])
+        except:
+            pass
+            
+    def fromJson(self, jsonstr):
+        dictjson = json.loads(jsonstr)
+        self.fromJsondict(dictjson)
+            
+    def toJsondict(self):
+        dictjson = {}
+        dictjson['macAddr'] = self.macAddr
+        dictjson['ssid'] = self.ssid
+        dictjson['mode'] = self.mode
+        dictjson['security'] = self.security
+        dictjson['privacy'] = self.privacy
+        dictjson['cipher'] = self.cipher
+        dictjson['frequency'] = self.frequency
+        dictjson['channel'] = self.channel
+        dictjson['secondaryChannel'] = self.secondaryChannel
+        dictjson['secondaryChannelLocation'] = self.secondaryChannelLocation
+        dictjson['thirdChannel'] = self.thirdChannel
+        dictjson['signal'] = self.signal
+        dictjson['bandwidth'] = self.bandwidth
+        dictjson['firstseen'] = str(self.firstSeen)
+        dictjson['lastseen'] = str(self.lastSeen)
+        dictjson['lat'] = self.lat
+        dictjson['long'] = self.long
+        
+        return dictjson
+        
+    def toJson(self):
+        dictjson = self.tojsondict()
+        return json.dumps(dictjson)
+        
     def getChannelString(self):
         retVal = self.channel
         
@@ -109,6 +206,24 @@ class WirelessEngine(object):
 
         return retVal
 
+    def getNetworksAsJson(interfaceName):
+        retCode, errString, wirelessNetworks = WirelessEngine.scanForNetworks(interfaceName)
+        retVal = {}
+        retVal['errCode'] = retCode
+        retVal['errString'] = errString
+        
+        netList = []
+        
+        for curKey in wirelessNetworks.keys():
+            curNet = wirelessNetworks[curKey]
+            netList.append(curNet.toJsondict())
+            
+        retVal['networks'] = netList
+        
+        jsonstr = json.dumps(retVal)
+        
+        return retCode, errString, jsonstr
+        
     def scanForNetworks(interfaceName, printResults=False):
         result = subprocess.run(['iw', 'dev', interfaceName, 'scan'], stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
         retCode = result.returncode
@@ -328,3 +443,37 @@ class WirelessEngine(object):
         
         return retVal
         
+if __name__ == '__main__':
+    if os.geteuid() != 0:
+        print("ERROR: You need to have root privileges to run this script.  Please try again, this time using 'sudo'. Exiting.\n")
+        exit(2)
+    # for debugging
+    
+    # change this interface name to test it.
+    wirelessInterfaces = WirelessEngine.getInterfaces()
+    
+    if len(wirelessInterfaces) == 0:
+        print("ERROR: Unable to find wireless interface.\n")
+        exit(1)
+        
+    winterface = wirelessInterfaces[0]
+    print('Scanning for wireless networks on ' + winterface + '...')
+    
+    # Testing to/from Json
+    # convert to Json
+    retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(winterface)
+    # Convert back
+    j=json.loads(jsonstr)
+    
+    # print results
+    print('Error Code: ' + str(j['errCode']) + '\n')
+    
+    if j['errCode'] == 0:
+        for curNetDict in j['networks']:
+            newNet = WirelessNetwork.createFromJsonDict(curNetDict)
+            print(newNet)
+            
+    else:    
+        print('Error String: ' + j['errString'] + '\n')
+    
+    print('Done.\n')
