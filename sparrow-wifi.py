@@ -21,12 +21,15 @@
 import sys
 import csv
 import os
+import re
+import json
 import datetime
+import requests
 from time import sleep
 from threading import Thread
 
 from PyQt5.QtWidgets import QApplication, QMainWindow,  QDesktopWidget
-from PyQt5.QtWidgets import QMessageBox, QFileDialog
+from PyQt5.QtWidgets import QMessageBox, QFileDialog, QInputDialog, QLineEdit
 from PyQt5.QtWidgets import QAction, QComboBox, QLabel, QPushButton, QCheckBox, QTableWidget,QTableWidgetItem, QHeaderView
 #from PyQt5.QtWidgets import QTabWidget, QWidget, QVBoxLayout
 from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
@@ -38,6 +41,38 @@ from PyQt5 import QtCore
 
 # from PyQt5.QtCore import QCoreApplication # programatic quit
 from wirelessengine import WirelessEngine, WirelessNetwork
+
+def makeGetRequest(url):
+    try:
+        response = requests.get(url)
+    except:
+        return -1, ""
+        
+    if response.status_code != 200:
+        return response.status_code, ""
+        
+    htmlResponse=response.text
+    return response.status_code, htmlResponse
+
+def requestRemoteNetworks(remoteIP, remotePort, remoteInterface):
+    url = "http://" + remoteIP + ":" + str(remotePort) + "/wireless/networks/" + remoteInterface
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            networkjson = json.loads(responsestr)
+            wirelessNetworks = {}
+            
+            for curNetDict in networkjson['networks']:
+                newNet = WirelessNetwork.createFromJsonDict(curNetDict)
+                wirelessNetworks[newNet.getKey()] = newNet
+                
+            return networkjson['errCode'], networkjson['errString'], wirelessNetworks
+        except:
+            return -2, "Error parsing remote agent response", None
+    else:
+        return -1, "Error connecting to remote agent", None
+
 
 class IntTableWidgetItem(QTableWidgetItem):
     def __lt__(self, other):
@@ -65,6 +100,14 @@ class IntTableWidgetItem(QTableWidgetItem):
         return super(IntTableWidgetItem, self).__lt__(other)
 
 class ScanThread(Thread):
+    def __init__(self, interface, mainWin):
+        super(ScanThread, self).__init__()
+        self.interface = interface
+        self.mainWin = mainWin
+        self.signalStop = False
+        self.scanDelay = 0.5  # seconds
+        self.threadRunning = False
+        
     def run(self):
         self.threadRunning = True
         
@@ -85,15 +128,40 @@ class ScanThread(Thread):
                 sleep(self.scanDelay)
             
         self.threadRunning = False
-        
+
+class RemoteScanThread(Thread):
     def __init__(self, interface, mainWin):
-        super(ScanThread, self).__init__()
+        super(RemoteScanThread, self).__init__()
         self.interface = interface
         self.mainWin = mainWin
         self.signalStop = False
         self.scanDelay = 0.5  # seconds
         self.threadRunning = False
+        self.remoteAgentIP = "127.0.0.1"
+        self.remoteAgentPort = 8020
         
+    def run(self):
+        self.threadRunning = True
+        
+        while (not self.signalStop):
+            retCode, errString, wirelessNetworks = requestRemoteNetworks(self.remoteAgentIP, self.remoteAgentPort, self.interface)
+            if (retCode == 0):
+                # self.statusBar().showMessage('Scan complete.  Found ' + str(len(wirelessNetworks)) + ' networks')
+                if len(wirelessNetworks) > 0:
+                    self.mainWin.scanresults.emit(wirelessNetworks)
+            else:
+                    if (retCode != WirelessNetwork.ERR_DEVICEBUSY):
+                        self.mainWin.errmsg.emit(retCode, errString)
+            
+            if (retCode == WirelessNetwork.ERR_DEVICEBUSY):
+                # Shorter sleep for faster results
+                sleep(0.2)
+            else:
+                sleep(self.scanDelay)
+            
+        self.threadRunning = False
+        
+# Global color list that we'll cycle through        
 colors = [Qt.black, Qt.red, Qt.darkRed, Qt.green, Qt.darkGreen, Qt.blue, Qt.darkBlue, Qt.cyan, Qt.darkCyan, Qt.magenta, Qt.darkMagenta, Qt.darkGray]
 
 class mainWindow(QMainWindow):
@@ -118,6 +186,15 @@ class mainWindow(QMainWindow):
         self.scanDelay = 0.5
         self.scanresults.connect(self.scanResults)
         self.errmsg.connect(self.onErrMsg)
+        
+        self.remoteAgentIP = ''
+        self.remoteAgentPort = 8020
+        self.remoteAutoUpdates = True
+        self.remoteScanRunning = False
+        self.remoteScanIsBlocking = False
+        self.remoteScanThread = None
+        self.remoteScanDelay = 0.5
+        self.lastRemoteState = False
         
         desktopSize = QApplication.desktop().screenGeometry()
         #self.mainWidth=1024
@@ -167,7 +244,7 @@ class mainWindow(QMainWindow):
         newAct = QAction('&New', self)        
         newAct.setShortcut('Ctrl+N')
         newAct.setStatusTip('Clear List')
-        newAct.triggered.connect(self.clearData)
+        newAct.triggered.connect(self.onClearData)
         fileMenu.addAction(newAct)
 
         # import
@@ -181,6 +258,14 @@ class mainWindow(QMainWindow):
         newAct.setStatusTip('Export to CSV')
         newAct.triggered.connect(self.exportData)
         fileMenu.addAction(newAct)
+        
+        # Agent Menu Items
+        helpMenu = menubar.addMenu('&Agent')
+        self.menuRemoteAgent = QAction('Remote Agent', self)        
+        self.menuRemoteAgent.setStatusTip('Remote Agent')
+        self.menuRemoteAgent.setCheckable(True)
+        self.menuRemoteAgent.changed.connect(self.onRemoteAgent)
+        helpMenu.addAction(self.menuRemoteAgent)
         
         # Help Menu Items
         helpMenu = menubar.addMenu('&Help')
@@ -206,11 +291,13 @@ class mainWindow(QMainWindow):
         # self.statusBar().setStyleSheet("QStatusBar{background:rgba(204,229,255,255);color:black;border: 1px solid blue; border-radius: 1px;}")
         self.statusBar().setStyleSheet("QStatusBar{background:rgba(192,192,192,255);color:black;border: 1px solid blue; border-radius: 1px;}")
         self.statusBar().showMessage('Ready')
-        self.lblInterface = QLabel("Interface", self)
-        self.lblInterface.move(5, 30)
 
+        # Interface droplist
+        self.lblInterface = QLabel("Local Interface", self)
+        self.lblInterface.setGeometry(5, 30, 120, 30)
+        
         self.combo = QComboBox(self)
-        self.combo.move(75, 30)
+        self.combo.move(130, 30)
 
         interfaces=WirelessEngine.getInterfaces()
         
@@ -222,12 +309,15 @@ class mainWindow(QMainWindow):
 
         self. combo.activated[str].connect(self.onInterface)        
         
+        # Scan Button
         self.btnScan = QPushButton("&Scan", self)
         self.btnScan.setCheckable(True)
-        self.btnScan.setShortcut('Ctrl+S');
-        self.btnScan.move(200, 30)
-        self.btnScan.clicked[bool].connect(self.scanClicked)
+        self.btnScan.setShortcut('Ctrl+S')
+        self.btnScan.setStyleSheet("background-color: rgba(0,128,192,255); border: none;")
+        self.btnScan.move(260, 30)
+        self.btnScan.clicked[bool].connect(self.onScanClicked)
         
+        # Network Table
         self.networkTable = QTableWidget(self)
         self.networkTable.setColumnCount(8)
         self.networkTable.setGeometry(30, 100, self.mainWidth-60, self.mainHeight/2-75)
@@ -377,7 +467,86 @@ class mainWindow(QMainWindow):
         self.Plot5.setRenderHint(QPainter.Antialiasing)
         # self.Plot5.setGeometry(self.mainWidth/2+10, self.mainHeight/2+10, self.mainWidth/2-10, self.mainHeight/2-75)
 
-    def scanClicked(self, pressed):
+    
+    def onRemoteScanClicked(self, pressed):
+        
+        if not self.remoteAutoUpdates:
+            # Single-shot mode.
+            if (self.combo.count() > 0):
+                curInterface = str(self.combo.currentText())
+                self.statusBar().showMessage('Scanning on interface ' + curInterface)
+            else:
+                self.btnScan.setChecked(False)
+                return
+                
+            self.btnScan.setEnabled(False)
+            self.btnScan.setStyleSheet("background-color: rgba(224,224,224,255); border: none;")
+            self.btnScan.setText('&Scanning')
+            self.btnScan.repaint()
+            retCode, errString, wirelessNetworks = requestRemoteNetworks(self.remoteAgentIP, self.remoteAgentPort, curInterface)
+            
+            self.btnScan.setEnabled(True)
+            self.btnScan.setStyleSheet("background-color: rgba(2,128,192,255); border: none;")
+            self.btnScan.setText('&Scan')
+            if (retCode == 0):
+                if len(wirelessNetworks) > 0:
+                    self.scanresults.emit(wirelessNetworks)
+                self.statusBar().showMessage('Ready')
+            else:
+                    if (retCode != WirelessNetwork.ERR_DEVICEBUSY):
+                        self.errmsg.emit(retCode, errString)
+                        
+                        
+            self.btnScan.setShortcut('Ctrl+S')
+            self.btnScan.setChecked(False)
+            return
+            
+        # Auto update
+        self.remoteScanRunning = pressed
+        
+        if not self.remoteScanRunning:
+            if self.remoteScanThread:
+                self.remoteScanThread.signalStop = True
+                
+                while (self.remoteScanThread.threadRunning):
+                    self.statusBar().showMessage('Waiting for active scan to terminate...')
+                    sleep(0.2)
+                    
+                self.remoteScanThread = None
+                    
+            self.statusBar().showMessage('Ready')
+        else:
+            if (self.combo.count() > 0):
+                curInterface = str(self.combo.currentText())
+                self.statusBar().showMessage('Scanning on interface ' + curInterface)
+                self.remoteScanThread = RemoteScanThread(curInterface, self)
+                self.remoteScanThread.scanDelay = self.remoteScanDelay
+                self.remoteScanThread.start()
+            else:
+                QMessageBox.question(self, 'Error',"No wireless adapters found.", QMessageBox.Ok)
+                self.remoteScanRunning = False
+                self.btnScan.setChecked(False)
+                
+        if self.btnScan.isChecked():
+            # Scanning is on.  Turn red to indicate click would stop
+            self.btnScan.setStyleSheet("background-color: rgba(255,0,0,255); border: none;")
+            self.btnScan.setText('&Stop scanning')
+            self.menuRemoteAgent.setEnabled(False)
+        else:
+            self.btnScan.setStyleSheet("background-color: rgba(2,128,192,255); border: none;")
+            self.btnScan.setText('&Scan')
+            self.menuRemoteAgent.setEnabled(True)
+
+        # Need to reset the shortcut after changing the text
+        self.btnScan.setShortcut('Ctrl+S')
+        
+    def onScanClicked(self, pressed):
+        if self.menuRemoteAgent.isChecked():
+            # We're in remote mode.  Let's handle it there
+            self.onRemoteScanClicked(pressed)
+            return
+            
+        # We're in local mode.
         self.scanRunning = pressed
         
         if not self.scanRunning:
@@ -403,10 +572,19 @@ class mainWindow(QMainWindow):
                 self.scanRunning = False
                 self.btnScan.setChecked(False)
                 
-        # For now mark it as done.
-        #self.scanRunning = False
-        #self.btnScan.setChecked(False)
-        #self.statusBar().showMessage('Ready')
+        if self.btnScan.isChecked():
+            # Scanning is on.  Turn red to indicate click would stop
+            self.btnScan.setStyleSheet("background-color: rgba(255,0,0,255); border: none;")
+            self.btnScan.setText('&Stop scanning')
+            self.menuRemoteAgent.setEnabled(False)
+        else:
+            self.btnScan.setStyleSheet("background-color: rgba(2,128,192,255); border: none;")
+            self.btnScan.setText('&Scan')
+            self.menuRemoteAgent.setEnabled(True)
+
+            
+        # Need to reset the shortcut after changing the text
+        self.btnScan.setShortcut('Ctrl+S')
         
     def scanResults(self, wirelessNetworks):
         self.populateTable(wirelessNetworks)
@@ -673,7 +851,7 @@ class mainWindow(QMainWindow):
     def onInterface(self):
         pass
             
-    def clearData(self):
+    def onClearData(self):
         self.networkTable.setRowCount(0)
         self.chart24.removeAllSeries()
         self.chart5.removeAllSeries()
@@ -774,6 +952,94 @@ class mainWindow(QMainWindow):
         # basically centering the window
         self.move(qr.topLeft())
         
+    def requestRemoteInterfaces(self):
+        url = "http://" + self.remoteAgentIP + ":" + str(self.remoteAgentPort) + "/wireless/interfaces"
+        statusCode, responsestr = makeGetRequest(url)
+        
+        if statusCode == 200:
+            try:
+                interfaces = json.loads(responsestr)
+                
+                retList = interfaces['interfaces']
+                return statusCode, retList
+            except:
+                return statusCode, None
+        else:
+            return statusCode, None
+
+    def onRemoteAgent(self):
+        if (self.menuRemoteAgent.isChecked() == self.lastRemoteState):
+            # There's an extra bounce in this for some reason.
+            return
+            
+        if self.menuRemoteAgent.isChecked():
+            # We're transitioning to a remote agent
+            text, okPressed = QInputDialog.getText(self, "Remote Agent","Please provide IP:port:", QLineEdit.Normal, "127.0.0.1:8020")
+            if okPressed and text != '':
+                # Validate the input
+                p = re.compile('^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]{1,5})')
+                specIsGood = True
+                try:
+                    agentSpec = p.search(text).group(1)
+                    self.remoteAgentIP = agentSpec.split(':')[0]
+                    self.remoteAgentPort = int(agentSpec.split(':')[1])
+                    
+                    if self.remoteAgentPort < 1 or self.remoteAgentPort > 65535:
+                        QMessageBox.question(self, 'Error',"Port must be in an acceptable IP range (1-65535)", QMessageBox.Ok)
+                        self.menuRemoteAgent.setChecked(False)
+                        specIsGood = False
+                except:
+                    QMessageBox.question(self, 'Error',"Please enter it in the format <IP>:<port>", QMessageBox.Ok)
+                    self.menuRemoteAgent.setChecked(False)
+                    specIsGood = False
+                    
+                if not specIsGood:
+                    return
+                    
+                # If we're here we're good.
+                reply = QMessageBox.question(self, 'Question',"Would you like updates to happen automatically?", QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+
+                if reply == QMessageBox.Yes:
+                    self.remoteAutoUpdates = True
+                else:
+                    self.remoteAutoUpdates = False
+
+                # Configure the GUI.
+                self.lblInterface.setText("Remote Interface")
+                statusCode, interfaces = self.requestRemoteInterfaces()
+                
+                if statusCode != 200:
+                    QMessageBox.question(self, 'Error',"An error occurred getting the remote interfaces.  Please check that the agent is running.", QMessageBox.Ok)
+                    self.menuRemoteAgent.setChecked(False)
+                    self.lblInterface.setText("Local Interface")
+                    return
+                    
+                # Okay, we have interfaces.  Let's load them
+                self.combo.clear()
+                if (len(interfaces) > 0):
+                    for curInterface in interfaces:
+                        self.combo.addItem(curInterface)
+                else:
+                    self.statusBar().showMessage('No wireless interfaces found.')
+                    
+                self.lastRemoteState = self.menuRemoteAgent.isChecked() 
+            else:
+                # Stay local.
+                self.menuRemoteAgent.setChecked(False)
+        else:
+            # We're transitioning local
+            self.lblInterface.setText("Local Interface")
+            self.combo.clear()
+            interfaces=WirelessEngine.getInterfaces()
+            
+            if (len(interfaces) > 0):
+                for curInterface in interfaces:
+                    self.combo.addItem(curInterface)
+            else:
+                self.statusBar().showMessage('No wireless interfaces found.')
+
+            self.lastRemoteState = self.menuRemoteAgent.isChecked() 
+
     def onAbout(self):
         aboutMsg = "Sparrow-wifi 802.11 WiFi Graphic Analyzer\n"
         aboutMsg += "Written by ghostop14\n"
