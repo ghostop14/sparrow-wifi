@@ -5,9 +5,9 @@ Like so many of us who have used tools like inSSIDer on Windows in the past, I'v
 
 Sparrow-wifi provides a nice graphical interface with tables of discovered networks and signal plots along with a few other nice features:
 
-- Sparrow-wifi has built-in GPS support for network location tagging
+- Sparrow-wifi has built-in GPS support via gpsd for network location tagging
 - Sparrow-wifi has a remotely deployable agent (sparrowwifiagent.py) that can be run on a separate system.  The GUI can then be connected to the remote agent for remote monitoring.
-- The agent provides a basic HTTP service and provides JSON responses to requests from the UI, so requests for wireless interfaces, networks, and gpsstatus can even be used in other applications
+- The agent provides a basic HTTP service and provides JSON responses to requests from the UI, so requests for wireless interfaces, networks, and GPS status can even be used in other applications
 
 Sample screenshot:
 
