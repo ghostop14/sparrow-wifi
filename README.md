@@ -11,7 +11,9 @@ Sparrow-wifi provides a nice graphical interface with tables of discovered netwo
 
 Sample screenshot:
 
-![Screenshot](https://github.com/ghostop14/sparrow-wifi/sample-screenshot.png)
+<p align="center">
+  <img src="https://github.com/ghostop14/sparrow-wifi/sample-screenshot.png" width="350"/>
+</p>
 
 ## Installation
 sparrow-wifi uses python3, qt5, and qtchart behind the scenes.  On a standard debian variant you will may already have python3 and qt5 installed.  The only addition to run is qtchart.  Therefore you may need to run the following command for setup:
