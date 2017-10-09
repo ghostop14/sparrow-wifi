@@ -25,6 +25,7 @@ import datetime
 from dateutil import parser
 import json
 import copy
+from sparrowgps import SparrowGPS
 
 class WirelessNetwork(object):
     ERR_NETDOWN = 156
@@ -49,8 +50,7 @@ class WirelessNetwork(object):
         now=datetime.datetime.now()
         self.firstSeen = now
         self.lastSeen = now
-        self.lat = 0.0
-        self.long = 0.0
+        self.gps = SparrowGPS()
         # Used for tracking in network table
         self.foundInList = False
         
@@ -74,8 +74,7 @@ class WirelessNetwork(object):
         retVal += "Bandwidth: " + str(self.bandwidth) + "\n"
         retVal += "First Seen: " + str(self.firstSeen) + "\n"
         retVal += "Last Seen: " + str(self.lastSeen) + "\n"
-        retVal += "Latitude: " + str(self.lat) + "\n"
-        retVal += "Longitude: " + str(self.long) + "\n"
+        retVal += str(self.gps)
 
         return retVal
 
@@ -104,12 +103,6 @@ class WirelessNetwork(object):
         if self.channel != obj.channel:
             return False
             
-        if self.lat != obj.lat:
-            return False
-            
-        if self.long != obj.long:
-            return False
-            
         return True
 
     def createFromJsonDict(jsondict):
@@ -134,8 +127,11 @@ class WirelessNetwork(object):
             self.bandwidth = int(dictjson['bandwidth'])
             self.firstSeen = parser.parse(dictjson['firstseen'])
             self.lastSeen = parser.parse(dictjson['lastseen'])
-            self.lat = int(dictjson['lat'])
-            self.long = int(dictjson['long'])
+            self.gps.latitude = int(dictjson['lat'])
+            self.gps.longitude = int(dictjson['lon'])
+            self.gps.altitude = int(dictjson['alt'])
+            self.gps.speed = int(dictjson['speed'])
+            self.gps.isValid = bool(dictjson['gpsvalid'])
         except:
             pass
             
@@ -160,8 +156,11 @@ class WirelessNetwork(object):
         dictjson['bandwidth'] = self.bandwidth
         dictjson['firstseen'] = str(self.firstSeen)
         dictjson['lastseen'] = str(self.lastSeen)
-        dictjson['lat'] = self.lat
-        dictjson['long'] = self.long
+        dictjson['lat'] = str(self.gps.latitude)
+        dictjson['lon'] = str(self.gps.longitude)
+        dictjson['alt'] = str(self.gps.altitude)
+        dictjson['speed'] = str(self.gps.speed)
+        dictjson['gpsvalid'] = str(self.gps.isValid)
         
         return dictjson
         
@@ -218,6 +217,15 @@ class WirelessEngine(object):
             curNet = wirelessNetworks[curKey]
             netList.append(curNet.toJsondict())
             
+        gpsdict = {}
+        gpsloc = SparrowGPS()
+        
+        gpsdict['latitude'] = gpsloc.latitude
+        gpsdict['longitude'] = gpsloc.longitude
+        gpsdict['altitude'] = gpsloc.altitude
+        gpsdict['speed'] = gpsloc.speed
+        retVal['gps'] = gpsdict
+        
         retVal['networks'] = netList
         
         jsonstr = json.dumps(retVal)

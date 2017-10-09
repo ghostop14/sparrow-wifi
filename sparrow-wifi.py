@@ -41,7 +41,9 @@ from PyQt5 import QtCore
 
 # from PyQt5.QtCore import QCoreApplication # programatic quit
 from wirelessengine import WirelessEngine, WirelessNetwork
+from sparrowgps import GPSEngine
 
+# ------------------  Global functions for agent HTTP requests ------------------------------
 def makeGetRequest(url):
     try:
         response = requests.get(url)
@@ -74,6 +76,7 @@ def requestRemoteNetworks(remoteIP, remotePort, remoteInterface):
         return -1, "Error connecting to remote agent", None
 
 
+# ------------------  Table Sorting by Number Class  ------------------------------
 class IntTableWidgetItem(QTableWidgetItem):
     def __lt__(self, other):
         if ( isinstance(other, QTableWidgetItem) ):
@@ -99,6 +102,7 @@ class IntTableWidgetItem(QTableWidgetItem):
 
         return super(IntTableWidgetItem, self).__lt__(other)
 
+# ------------------  Local network scan thread  ------------------------------
 class ScanThread(Thread):
     def __init__(self, interface, mainWin):
         super(ScanThread, self).__init__()
@@ -129,6 +133,7 @@ class ScanThread(Thread):
             
         self.threadRunning = False
 
+# ------------------  Remote agent network scan thread  ------------------------------
 class RemoteScanThread(Thread):
     def __init__(self, interface, mainWin):
         super(RemoteScanThread, self).__init__()
@@ -160,15 +165,33 @@ class RemoteScanThread(Thread):
                 sleep(self.scanDelay)
             
         self.threadRunning = False
+
+# ------------------  GPSEngine override onGPSResult to notify the main window when the GPS goes synchnronized  ------------------------------
+class GPSEngineNotifyWin(GPSEngine):
+    def __init__(self, mainWin):
+        super().__init__()
+        self.mainWin = mainWin
+        self.isSynchronized = False
+
+    def onGPSResult(self, gpsResult):
+        super().onGPSResult(gpsResult)
         
-# Global color list that we'll cycle through        
+        if not self.isSynchronized:
+            if gpsResult.isValid:
+                self.isSynchronized = True
+                self.mainWin.gpsSynchronizedsignal.emit()
+
+# ------------------  Global color list that we'll cycle through  ------------------------------
 colors = [Qt.black, Qt.red, Qt.darkRed, Qt.green, Qt.darkGreen, Qt.blue, Qt.darkBlue, Qt.cyan, Qt.darkCyan, Qt.magenta, Qt.darkMagenta, Qt.darkGray]
 
+# ------------------  Main Application Window  ------------------------------
 class mainWindow(QMainWindow):
     
+    # Notify signals
     resized = QtCore.pyqtSignal()
     scanresults = QtCore.pyqtSignal(dict)
     errmsg = QtCore.pyqtSignal(int, str)
+    gpsSynchronizedsignal = QtCore.pyqtSignal()
     
     # For help with qt5 GUI's this is a great tutorial:
     # http://zetcode.com/gui/pyqt5/
@@ -176,6 +199,12 @@ class mainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        # GPS engine
+        self.gpsEngine = GPSEngineNotifyWin(self)
+        self.gpsSynchronized = False
+        self.gpsSynchronizedsignal.connect(self.onGPSSynchronized)
+        
+        # Local network scan
         self.scanRunning = False
         self.scanIsBlocking = False
         
@@ -209,15 +238,12 @@ class mainWindow(QMainWindow):
             print("You need to have root privileges to run this script.\nPlease try again, this time using 'sudo'. Exiting.")
             #self.close()
     
-        
     def initUI(self):
         # self.setGeometry(10, 10, 800, 600)
         self.resize(self.mainWidth, self.mainHeight)
         self.center()
         self.setWindowTitle('Sparrow-WiFi Analyzer')
         self.setWindowIcon(QIcon('wifi_icon.png'))        
-    
-        self.statusBar().showMessage('Ready')
 
         self.createMenu()
         
@@ -267,6 +293,13 @@ class mainWindow(QMainWindow):
         self.menuRemoteAgent.changed.connect(self.onRemoteAgent)
         helpMenu.addAction(self.menuRemoteAgent)
         
+        # GPS Menu Items
+        gpsMenu = menubar.addMenu('&GPS')
+        newAct = QAction('Status', self)        
+        newAct.setStatusTip('Show GPS Status')
+        newAct.triggered.connect(self.onGPSStatus)
+        gpsMenu.addAction(newAct)
+        
         # Help Menu Items
         helpMenu = menubar.addMenu('&Help')
         newAct = QAction('About', self)        
@@ -290,7 +323,12 @@ class mainWindow(QMainWindow):
     def createControls(self):
         # self.statusBar().setStyleSheet("QStatusBar{background:rgba(204,229,255,255);color:black;border: 1px solid blue; border-radius: 1px;}")
         self.statusBar().setStyleSheet("QStatusBar{background:rgba(192,192,192,255);color:black;border: 1px solid blue; border-radius: 1px;}")
-        self.statusBar().showMessage('Ready')
+        if GPSEngine.GPSDRunning():
+            self.gpsEngine.start()
+            self.statusBar().showMessage('Local gpsd Found.  System Ready.')
+        else:
+            self.statusBar().showMessage('Note: No local gpsd running.  System Ready.')
+
 
         # Interface droplist
         self.lblInterface = QLabel("Local Interface", self)
@@ -344,6 +382,22 @@ class mainWindow(QMainWindow):
        # self.tabs.addTab(self.tab5Ghz,"5 GHz")
        
         self.createCharts()
+
+    def onGPSStatus(self):
+        if GPSEngine.GPSDRunning():
+            if self.gpsEngine.gpsValid():
+                self.statusBar().showMessage('Local gpsd service is running and satelites are synchronized.')
+            else:
+                self.statusBar().showMessage("Local gpsd service is running but it's not synchronized with the satelites yet.")
+                
+        else:
+            self.statusBar().showMessage('No local gpsd running.')
+        
+    def onGPSSynchronized(self):
+        if (self.scanRunning or self.remoteScanRunning):
+            self.statusBar().showMessage('GPS is synchronized and ready to provide coordinates.')
+        else:
+            self.statusBar().showMessage('Ready.  GPS is synchronized and ready to provide coordinates.')
 
     def onTableHeadingClicked(self, logical_index):
         header = self.networkTable.horizontalHeader()
@@ -587,6 +641,14 @@ class mainWindow(QMainWindow):
         self.btnScan.setShortcut('Ctrl+S')
         
     def scanResults(self, wirelessNetworks):
+        if self.scanRunning:
+            # Running local.  If we have a good GPS, update the networks
+            # NOTE: We don't have to worry about remote scans.  They'll fill the GPS results in the data that gets passed to us.
+            if (self.gpsSynchronized and (self.gpsEngine.lastCoord is not None)):
+                for curKey in wirelessNetworks.keys():
+                    curNet = wirelessNetworks[curKey]
+                    curNet.gps = GPSEngine.lastCoord
+                
         self.populateTable(wirelessNetworks)
         
     def onErrMsg(self, errCode, errMsg):
@@ -881,14 +943,13 @@ class mainWindow(QMainWindow):
         if not fileName:
             return
             
-        linesRead = 0
         wirelessNetworks = {}
         
         with open(fileName, 'r') as f:
             reader = csv.reader(f)
             raw_list = list(reader)
             
-            if len(raw_list) > 0:
+            if len(raw_list) > 1:
                 # Check header row looks okay
                 if raw_list[0][0] != 'macAddr':
                     QMessageBox.question(self, 'Error',"File format doesn't look like an exported scan.", QMessageBox.Ok)
@@ -896,23 +957,41 @@ class mainWindow(QMainWindow):
                         
                 # Ignore header row
                 for i in range (1, len(raw_list)):
-                    if linesRead > 0:
-                        newNet = WirelessNetwork()
-                        newNet.macAddr=raw_list[i][0]
-                        newNet.ssid = raw_list[i][1]
-                        newNet.security = raw_list[i][2]
-                        newNet.privacy = raw_list[i][3]
-                        newNet.channel = int(raw_list[i][4])
-                        newNet.frequency = int(raw_list[i][5])
-                        newNet.signal = int(raw_list[i][6])
-                        newNet.bandwidth = int(raw_list[i][7])
-                        
-                        wirelessNetworks[newNet.getKey()] = newNet
+                    newNet = WirelessNetwork()
+                    newNet.macAddr=raw_list[i][0]
+                    newNet.ssid = raw_list[i][1]
+                    newNet.security = raw_list[i][2]
+                    newNet.privacy = raw_list[i][3]
                     
-                    linesRead += 1
+                    # Channel could be primary+secondary
+                    channelstr = raw_list[i][4]
+                    
+                    if '+' in channelstr:
+                        newNet.channel = int(channelstr.split('+')[0])
+                        newNet.secondaryChannel = int(channelstr.split('+')[1])
+                        
+                        if newNet.secondaryChannel > newNet.channel:
+                            newNet.secondaryChannelLocation = 'above'
+                        else:
+                            newNet.secondaryChannelLocation = 'below'
+                    else:
+                        newNet.channel = int(raw_list[i][4])
+                        newNet.secondaryChannel = 0
+                        newNet.secondaryChannelLocation = 'none'
+                    
+                    newNet.frequency = int(raw_list[i][5])
+                    newNet.signal = int(raw_list[i][6])
+                    newNet.bandwidth = int(raw_list[i][7])
+                    newNet.gps.isValid = bool(raw_list[i][8])
+                    newNet.gps.latitude = float(raw_list[i][9])
+                    newNet.gps.longitude = float(raw_list[i][10])
+                    newNet.gps.altitude = float(raw_list[i][11])
+                    newNet.gps.speed = float(raw_list[i][12])
+                    
+                    wirelessNetworks[newNet.getKey()] = newNet
                     
         if len(wirelessNetworks) > 0:
-            self.clearData()
+            self.onClearData()
             self.populateTable(wirelessNetworks)
 
     def exportData(self):
@@ -927,7 +1006,7 @@ class mainWindow(QMainWindow):
             QMessageBox.question(self, 'Error',"Unable to write to " + fileName, QMessageBox.Ok)
             return
             
-        outputFile.write('macAddr,SSID,Security,Privacy,Channel,Frequency,Signal Strength,Bandwidth\n')
+        outputFile.write('macAddr,SSID,Security,Privacy,Channel,Frequency,Signal Strength,Bandwidth,GPS Valid,Latitude,Longitude,Altitude,Speed\n')
 
         numItems = self.networkTable.rowCount()
         
@@ -936,8 +1015,11 @@ class mainWindow(QMainWindow):
             return
            
         for i in range(0, numItems):
+            curData = self.networkTable.item(i, 1).data(Qt.UserRole+1)
+
             outputFile.write(self.networkTable.item(i, 0).text() + ',' + self.networkTable.item(i, 1).text() + ',' + self.networkTable.item(i, 2).text() + ',' + self.networkTable.item(i, 3).text())
-            outputFile.write(',' + self.networkTable.item(i, 4).text()+ ',' + self.networkTable.item(i, 5).text()+ ',' + self.networkTable.item(i, 6).text()+ ',' + self.networkTable.item(i, 7).text() + '\n')
+            outputFile.write(',' + self.networkTable.item(i, 4).text()+ ',' + self.networkTable.item(i, 5).text()+ ',' + self.networkTable.item(i, 6).text()+ ',' + self.networkTable.item(i, 7).text() + ',' +
+                                    str(curData.gps.isValid) + ',' + str(curData.gps.latitude) + ',' + str(curData.gps.longitude) + ',' + str(curData.gps.altitude) + ',' + str(curData.gps.speed) + '\n')
             
         outputFile.close()
         
