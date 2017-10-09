@@ -27,11 +27,12 @@ from wirelessengine import WirelessEngine
 from sparrowgps import GPSEngine
 
 gpsEngine = GPSEngine()
+curTime = datetime.datetime.now()
 if GPSEngine.GPSDRunning():
     gpsEngine.start()
-    print('Local gpsd Found.  Providing GPS coordinates when synchronized.')
+    print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] Local gpsd Found.  Providing GPS coordinates when synchronized.")
 else:
-    print('No local gpsd running.  No GPS data will be provided.')
+    print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] No local gpsd running.  No GPS data will be provided.")
 
 # Sample handler: https://wiki.python.org/moin/BaseHttpServer
 class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):

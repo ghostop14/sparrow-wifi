@@ -24,6 +24,7 @@ import os
 import re
 import json
 import datetime
+from dateutil import parser
 import requests
 from time import sleep
 from threading import Thread
@@ -101,6 +102,24 @@ class IntTableWidgetItem(QTableWidgetItem):
             return my_value < other_value
 
         return super(IntTableWidgetItem, self).__lt__(other)
+
+# ------------------  Table Sorting by Timestamp Class  ------------------------------
+class DateTableWidgetItem(QTableWidgetItem):
+    def __lt__(self, other):
+        if ( isinstance(other, QTableWidgetItem) ):
+            try:
+                my_value = parser.parse(self.data(Qt.EditRole))
+            except:
+                pass
+                
+            try:
+                other_value = parser.parse(other.data(Qt.EditRole))
+            except:
+                pass
+                
+            return my_value < other_value
+
+        return super(DateTableWidgetItem, self).__lt__(other)
 
 # ------------------  Local network scan thread  ------------------------------
 class ScanThread(Thread):
@@ -362,10 +381,10 @@ class mainWindow(QMainWindow):
         
         # Network Table
         self.networkTable = QTableWidget(self)
-        self.networkTable.setColumnCount(8)
+        self.networkTable.setColumnCount(11)
         self.networkTable.setGeometry(30, 100, self.mainWidth-60, self.mainHeight/2-75)
         self.networkTable.setShowGrid(True)
-        self.networkTable.setHorizontalHeaderLabels(['macAddr', 'SSID', 'Security', 'Privacy', 'Channel', 'Frequency', 'Signal Strength', 'Bandwidth'])
+        self.networkTable.setHorizontalHeaderLabels(['macAddr', 'SSID', 'Security', 'Privacy', 'Channel', 'Frequency', 'Signal Strength', 'Bandwidth', 'Last Seen', 'First Seen', 'GPS'])
         self.networkTable.resizeColumnsToContents()
         self.networkTable.setRowCount(0)
         self.networkTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
@@ -391,9 +410,9 @@ class mainWindow(QMainWindow):
     def onGPSStatus(self):
         if GPSEngine.GPSDRunning():
             if self.gpsEngine.gpsValid():
-                self.statusBar().showMessage('Local gpsd service is running and satelites are synchronized.')
+                self.statusBar().showMessage('Local gpsd service is running and satellites are synchronized.')
             else:
-                self.statusBar().showMessage("Local gpsd service is running but it's not synchronized with the satelites yet.")
+                self.statusBar().showMessage("Local gpsd service is running but it's not synchronized with the satellites yet.")
                 
         else:
             self.statusBar().showMessage('No local gpsd running.')
@@ -702,7 +721,13 @@ class mainWindow(QMainWindow):
                         self.networkTable.item(curRow, 5).setText(str(curNet.frequency))
                         self.networkTable.item(curRow, 6).setText(str(curNet.signal))
                         self.networkTable.item(curRow, 7).setText(str(curNet.bandwidth))
+                        self.networkTable.item(curRow, 8).setText(curNet.lastSeen.strftime("%m/%d/%Y %H:%M:%S"))
                         curNet.firstSeen = curData.firstSeen # This is one field to carry forward
+                        self.networkTable.item(curRow, 9).setText(curNet.firstSeen.strftime("%m/%d/%Y %H:%M:%S"))
+                        if curNet.gps.isValid:
+                            self.networkTable.item(curRow, 10).setText('Yes')
+                        else:
+                            self.networkTable.item(curRow, 10).setText('No')
                         curNet.foundInList = True
                         self.networkTable.item(curRow, 1).setData(Qt.UserRole+1, curNet)
                         
@@ -892,6 +917,12 @@ class mainWindow(QMainWindow):
             self.networkTable.setItem(rowPosition, 5, IntTableWidgetItem(str(wirelessNetworks[curKey].frequency)))
             self.networkTable.setItem(rowPosition, 6,  IntTableWidgetItem(str(wirelessNetworks[curKey].signal)))
             self.networkTable.setItem(rowPosition, 7, IntTableWidgetItem(str(wirelessNetworks[curKey].bandwidth)))
+            self.networkTable.setItem(rowPosition, 8, DateTableWidgetItem(wirelessNetworks[curKey].lastSeen.strftime("%m/%d/%Y %H:%M:%S")))
+            self.networkTable.setItem(rowPosition, 9, DateTableWidgetItem(wirelessNetworks[curKey].firstSeen.strftime("%m/%d/%Y %H:%M:%S")))
+            if wirelessNetworks[curKey].gps.isValid:
+                self.networkTable.setItem(rowPosition, 10, QTableWidgetItem('Yes'))
+            else:
+                self.networkTable.setItem(rowPosition, 10, QTableWidgetItem('No'))
 
         # Clean up any empty rows because of the way QTableWidget is handling row inserts
         rowPosition = self.networkTable.rowCount()
@@ -995,11 +1026,13 @@ class mainWindow(QMainWindow):
                     newNet.frequency = int(raw_list[i][5])
                     newNet.signal = int(raw_list[i][6])
                     newNet.bandwidth = int(raw_list[i][7])
-                    newNet.gps.isValid = bool(raw_list[i][8])
-                    newNet.gps.latitude = float(raw_list[i][9])
-                    newNet.gps.longitude = float(raw_list[i][10])
-                    newNet.gps.altitude = float(raw_list[i][11])
-                    newNet.gps.speed = float(raw_list[i][12])
+                    newNet.lastSeen = parser.parse(raw_list[i][8])
+                    newNet.firstSeen = parser.parse(raw_list[i][9])
+                    newNet.gps.isValid = bool(raw_list[i][10])
+                    newNet.gps.latitude = float(raw_list[i][11])
+                    newNet.gps.longitude = float(raw_list[i][12])
+                    newNet.gps.altitude = float(raw_list[i][13])
+                    newNet.gps.speed = float(raw_list[i][14])
                     
                     wirelessNetworks[newNet.getKey()] = newNet
                     
@@ -1019,7 +1052,7 @@ class mainWindow(QMainWindow):
             QMessageBox.question(self, 'Error',"Unable to write to " + fileName, QMessageBox.Ok)
             return
             
-        outputFile.write('macAddr,SSID,Security,Privacy,Channel,Frequency,Signal Strength,Bandwidth,GPS Valid,Latitude,Longitude,Altitude,Speed\n')
+        outputFile.write('macAddr,SSID,Security,Privacy,Channel,Frequency,Signal Strength,Bandwidth,Last Seen,First Seen,GPS Valid,Latitude,Longitude,Altitude,Speed\n')
 
         numItems = self.networkTable.rowCount()
         
@@ -1032,6 +1065,7 @@ class mainWindow(QMainWindow):
 
             outputFile.write(self.networkTable.item(i, 0).text() + ',' + self.networkTable.item(i, 1).text() + ',' + self.networkTable.item(i, 2).text() + ',' + self.networkTable.item(i, 3).text())
             outputFile.write(',' + self.networkTable.item(i, 4).text()+ ',' + self.networkTable.item(i, 5).text()+ ',' + self.networkTable.item(i, 6).text()+ ',' + self.networkTable.item(i, 7).text() + ',' +
+                                    curData.lastSeen.strftime("%m/%d/%Y %H:%M:%S") + ',' + curData.firstSeen.strftime("%m/%d/%Y %H:%M:%S") + ',' + 
                                     str(curData.gps.isValid) + ',' + str(curData.gps.latitude) + ',' + str(curData.gps.longitude) + ',' + str(curData.gps.altitude) + ',' + str(curData.gps.speed) + '\n')
             
         outputFile.close()

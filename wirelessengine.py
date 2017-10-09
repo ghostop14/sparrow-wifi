@@ -271,6 +271,8 @@ class WirelessEngine(object):
         
         retVal = {}
         curNetwork = None
+        now=datetime.datetime.now()
+        
         for curLine in iwOutput.splitlines():
             p = re.compile('^BSS (.*?)\(')
             try:
@@ -288,6 +290,8 @@ class WirelessEngine(object):
 
                 # Create a new netowrk.  BSSID will be the header for each network
                 curNetwork = WirelessNetwork()
+                curNetwork.lastSeen = now
+                curNetwork.firstSeen = now
                 curNetwork.macAddr = fieldValue
                 continue
             
