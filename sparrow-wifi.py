@@ -307,6 +307,9 @@ class mainWindow(QMainWindow):
         
         self.createControls()
         
+        self.setMinimumWidth(850)
+        self.setMinimumHeight(400)
+        
         self.show()
         
         # Debug Code:
