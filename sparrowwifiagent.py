@@ -44,7 +44,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
     def do_GET(s):
         global gpsEngine
         
-        if (s.path != '/wireless/interfaces') and ('/wireless/networks/' not in s.path):
+        if (s.path != '/wireless/interfaces') and (s.path != '/gps/status') and ('/wireless/networks/' not in s.path):
             s.send_response(404)
             s.send_header("Content-type", "text/html")
             s.end_headers()
@@ -65,6 +65,21 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
             wirelessInterfaces = WirelessEngine.getInterfaces()
             jsondict={}
             jsondict['interfaces']=wirelessInterfaces
+            jsonstr = json.dumps(jsondict)
+            s.wfile.write(jsonstr.encode("UTF-8"))
+        elif s.path == '/gps/status':
+            jsondict={}
+            jsondict['gpsinstalled'] = str(GPSEngine.GPSDInstalled())
+            jsondict['gpsrunning'] = str(GPSEngine.GPSDRunning())
+            jsondict['gpssynch'] = str(gpsEngine.gpsValid())
+            if gpsEngine.gpsValid():
+                gpsPos = {}
+                gpsPos['latitude'] = gpsEngine.lastCoord.latitude
+                gpsPos['longitude'] = gpsEngine.lastCoord.longitude
+                gpsPos['altitude'] = gpsEngine.lastCoord.altitude
+                gpsPos['speed'] = gpsEngine.lastCoord.speed
+                jsondict['gpspos'] = gpsPos
+
             jsonstr = json.dumps(jsondict)
             s.wfile.write(jsonstr.encode("UTF-8"))
         elif '/wireless/networks/' in s.path:

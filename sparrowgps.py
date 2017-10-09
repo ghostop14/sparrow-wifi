@@ -64,9 +64,20 @@ class GPSThread(Thread):
         self.threadRunning = False
 
 
+class GPSStatus(object):
+    def __init__(self):
+        super().__init__()
+        self.gpsInstalled = False
+        self.gpsRunning = False
+        self.gpsSynchronized = False
+        self.latitude = 0.0
+        self.longitude = 0.0
+        self.altitude = 0.0
+        self.speed = 0.0
+    
 class GPSEngine(object):
-    def __init(self):
-        super().__init()
+    def __init__(self):
+        super().__init__()
         
         self.lastCoord = None
         

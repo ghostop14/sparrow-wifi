@@ -42,8 +42,15 @@ from PyQt5 import QtCore
 
 # from PyQt5.QtCore import QCoreApplication # programatic quit
 from wirelessengine import WirelessEngine, WirelessNetwork
-from sparrowgps import GPSEngine
+from sparrowgps import GPSEngine, GPSStatus
 
+# ------------------  Global functions ------------------------------
+def stringtobool(instr):
+    if (instr == 'True' or instr == 'true'):
+        return True
+    else:
+        return False
+        
 # ------------------  Global functions for agent HTTP requests ------------------------------
 def makeGetRequest(url):
     try:
@@ -56,6 +63,33 @@ def makeGetRequest(url):
         
     htmlResponse=response.text
     return response.status_code, htmlResponse
+
+def requestRemoteGPS(remoteIP, remotePort):
+    url = "http://" + remoteIP + ":" + str(remotePort) + "/gps/status"
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            gpsjson = json.loads(responsestr)
+            gpsStatus = GPSStatus()
+            
+            gpsStatus.gpsInstalled = stringtobool(gpsjson['gpsinstalled'])
+            gpsStatus.gpsRunning = stringtobool(gpsjson['gpsrunning'])
+            gpsStatus.gpsSynchronized = stringtobool(gpsjson['gpssynch'])
+            
+            if gpsStatus.gpsSynchronized:
+                # These won't be there if it's not synchronized
+                gpsStatus.latitude = float(gpsjson['latitude'])
+                gpsStatus.longitude = float(gpsjson['longitude'])
+                gpsStatus.altitude = float(gpsjson['altitude'])
+                gpsStatus.speed = float(gpsjson['speed'])
+                
+            return 0, "", gpsStatus
+        except:
+            return -2, "Error parsing remote agent response", None
+    else:
+        return -1, "Error connecting to remote agent", None
+
 
 def requestRemoteNetworks(remoteIP, remotePort, remoteInterface):
     url = "http://" + remoteIP + ":" + str(remotePort) + "/wireless/networks/" + remoteInterface
@@ -408,15 +442,31 @@ class mainWindow(QMainWindow):
         self.createCharts()
 
     def onGPSStatus(self):
-        if GPSEngine.GPSDRunning():
-            if self.gpsEngine.gpsValid():
-                self.statusBar().showMessage('Local gpsd service is running and satellites are synchronized.')
+        if (not self.menuRemoteAgent.isChecked()):
+            # Checking local GPS
+            if GPSEngine.GPSDRunning():
+                if self.gpsEngine.gpsValid():
+                    self.statusBar().showMessage('Local gpsd service is running and satellites are synchronized.')
+                else:
+                    self.statusBar().showMessage("Local gpsd service is running but it's not synchronized with the satellites yet.")
+                    
             else:
-                self.statusBar().showMessage("Local gpsd service is running but it's not synchronized with the satellites yet.")
-                
+                self.statusBar().showMessage('No local gpsd running.')
         else:
-            self.statusBar().showMessage('No local gpsd running.')
-        
+            # Checking remote
+            errCode, errMsg, gpsStatus = requestRemoteGPS(self.remoteAgentIP, self.remoteAgentPort)
+            
+                
+            if errCode == 0:
+                if (gpsStatus.gpsSynchronized):
+                    self.statusBar().showMessage("Remote GPS is running and synchronized.")
+                elif (gpsStatus.gpsRunning):
+                    self.statusBar().showMessage("Remote GPS is running but it has not synchronized with the satellites yet.")
+                else:
+                    self.statusBar().showMessage("Remote GPS service is not running.")
+            else:
+                self.statusBar().showMessage("Remote GPS Error: " + errMsg)
+            
     def onGPSSynchronized(self):
         if (self.scanRunning or self.remoteScanRunning):
             self.statusBar().showMessage('GPS is synchronized and ready to provide coordinates.')
@@ -1028,7 +1078,7 @@ class mainWindow(QMainWindow):
                     newNet.bandwidth = int(raw_list[i][7])
                     newNet.lastSeen = parser.parse(raw_list[i][8])
                     newNet.firstSeen = parser.parse(raw_list[i][9])
-                    newNet.gps.isValid = bool(raw_list[i][10])
+                    newNet.gps.isValid = stringtobool(raw_list[i][10])
                     newNet.gps.latitude = float(raw_list[i][11])
                     newNet.gps.longitude = float(raw_list[i][12])
                     newNet.gps.altitude = float(raw_list[i][13])

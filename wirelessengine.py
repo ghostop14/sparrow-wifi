@@ -27,6 +27,16 @@ import json
 import copy
 from sparrowgps import SparrowGPS
 
+# ------------------  Global functions ------------------------------
+def stringtobool(instr):
+    if (instr == 'True' or instr == 'true'):
+        return True
+    else:
+        return False
+        
+
+# ------------------  Classes ------------------------------------
+
 class WirelessNetwork(object):
     ERR_NETDOWN = 156
     ERR_OPNOTSUPPORTED = 161
@@ -131,7 +141,7 @@ class WirelessNetwork(object):
             self.gps.longitude = float(dictjson['lon'])
             self.gps.altitude = float(dictjson['alt'])
             self.gps.speed = float(dictjson['speed'])
-            self.gps.isValid = bool(dictjson['gpsvalid'])
+            self.gps.isValid = stringtobool(dictjson['gpsvalid'])
         except:
             pass
             
