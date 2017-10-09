@@ -19,9 +19,11 @@
 # 
 
 import os
-import subprocess
-import re
-from gps3 import gps3
+#import subprocess
+#import re
+import socket
+from contextlib import closing
+#from gps3 import gps3
 from gps3.agps3threaded import AGPS3mechanism
 from time import sleep
 from threading import Thread
@@ -137,15 +139,19 @@ class GPSEngine(object):
         #    return False
         #else:
         #    return True
-        gps_socket = gps3.GPSDSocket()
+        # gps_socket = gps3.GPSDSocket()
         try:
-            gps_socket.connect()
-            gps_socket.close()
-            return True
+            # gps_socket.connect()
+            # gps_socket.close()
+            
+            with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
+                if sock.connect_ex(('127.0.0.1', 2947)) == 0:
+                    return True
+                else:
+                    return False
         except:
             return False
-
-
+           
 class SparrowGPS(object):
     def __init__(self):
         super().__init__()

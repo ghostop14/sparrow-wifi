@@ -467,7 +467,6 @@ class mainWindow(QMainWindow):
                 self.btnGPSStatus.setStyleSheet("background-color: green; border: 1px;")
             else:
                 self.btnGPSStatus.setStyleSheet("background-color: yellow; border: 1px;")
-                
         else:
             self.btnGPSStatus.setStyleSheet("background-color: red; border: 1px;")
         
