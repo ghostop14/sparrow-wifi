@@ -10,7 +10,8 @@ Sparrow-wifi provides a nice graphical interface with tables of discovered netwo
 - The agent provides a basic HTTP service and provides JSON responses to requests from the UI, so requests for wireless interfaces, networks, and gpsstatus can even be used in other applications
 
 Sample screenshot:
-![alt text](https://github.com/ghostop14/sparrow-wifi/sample-screenshot.png)
+
+![Screenshot](https://github.com/ghostop14/sparrow-wifi/sample-screenshot.png)
 
 ## Installation
 sparrow-wifi uses python3, qt5, and qtchart behind the scenes.  On a standard debian variant you will may already have python3 and qt5 installed.  The only addition to run is qtchart.  Therefore you may need to run the following command for setup:
