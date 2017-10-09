@@ -234,9 +234,14 @@ class mainWindow(QMainWindow):
         self.initUI()
         
         if os.geteuid() != 0:
-            self.statusBar().showMessage('You need to have root privileges to run this tool.  Please exit and rerun it as root')
+            self.runningAsRoot = False
+            self.statusBar().showMessage('You need to have root privileges to run local scans.  Please exit and rerun it as root')
             print("You need to have root privileges to run this script.\nPlease try again, this time using 'sudo'. Exiting.")
+            QMessageBox.question(self, 'Warning',"You need to have root privileges to run local scans.", QMessageBox.Ok)
+
             #self.close()
+        else:
+            self.runningAsRoot = True
     
     def initUI(self):
         # self.setGeometry(10, 10, 800, 600)
@@ -604,6 +609,7 @@ class mainWindow(QMainWindow):
         self.scanRunning = pressed
         
         if not self.scanRunning:
+            # Want to stop a running scan (self.scanRunning represents the NEW pressed state)
             if self.scanThread:
                 self.scanThread.signalStop = True
                 
@@ -615,6 +621,13 @@ class mainWindow(QMainWindow):
                     
             self.statusBar().showMessage('Ready')
         else:
+            # Want to start a new scan
+            if (not self.runningAsRoot):
+                QMessageBox.question(self, 'Warning',"You need to have root privileges to run local scans.", QMessageBox.Ok)
+                self.btnScan.setChecked(False)
+                self.scanRunning = False
+                return
+
             if (self.combo.count() > 0):
                 curInterface = str(self.combo.currentText())
                 self.statusBar().showMessage('Scanning on interface ' + curInterface)
