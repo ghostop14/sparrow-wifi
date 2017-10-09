@@ -127,10 +127,10 @@ class WirelessNetwork(object):
             self.bandwidth = int(dictjson['bandwidth'])
             self.firstSeen = parser.parse(dictjson['firstseen'])
             self.lastSeen = parser.parse(dictjson['lastseen'])
-            self.gps.latitude = int(dictjson['lat'])
-            self.gps.longitude = int(dictjson['lon'])
-            self.gps.altitude = int(dictjson['alt'])
-            self.gps.speed = int(dictjson['speed'])
+            self.gps.latitude = float(dictjson['lat'])
+            self.gps.longitude = float(dictjson['lon'])
+            self.gps.altitude = float(dictjson['alt'])
+            self.gps.speed = float(dictjson['speed'])
             self.gps.isValid = bool(dictjson['gpsvalid'])
         except:
             pass
@@ -205,7 +205,7 @@ class WirelessEngine(object):
 
         return retVal
 
-    def getNetworksAsJson(interfaceName):
+    def getNetworksAsJson(interfaceName, gpsData):
         retCode, errString, wirelessNetworks = WirelessEngine.scanForNetworks(interfaceName)
         retVal = {}
         retVal['errCode'] = retCode
@@ -215,10 +215,16 @@ class WirelessEngine(object):
         
         for curKey in wirelessNetworks.keys():
             curNet = wirelessNetworks[curKey]
+            if gpsData is not None:
+                curNet.gps = gpsData
             netList.append(curNet.toJsondict())
             
         gpsdict = {}
-        gpsloc = SparrowGPS()
+        
+        if (gpsData is None):
+            gpsloc = SparrowGPS()
+        else:
+            gpsloc = gpsData
         
         gpsdict['latitude'] = gpsloc.latitude
         gpsdict['longitude'] = gpsloc.longitude
@@ -469,7 +475,7 @@ if __name__ == '__main__':
     
     # Testing to/from Json
     # convert to Json
-    retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(winterface)
+    retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(winterface, None)
     # Convert back
     j=json.loads(jsonstr)
     

@@ -72,10 +72,10 @@ class GPSEngine(object):
         
         self.gpsThread = None
         
-        self.gpsAvailable = False
-        if GPSEngine.GPSDInstalled():
-            if GPSEngine.GPSDRunning():
-                self.gpsAvailable = True
+        if GPSEngine.GPSDRunning():
+            self.gpsAvailable = True
+        else:
+            self.gpsAvailable = False
 
     def getLastCoord(self):
         return self.lastCoord

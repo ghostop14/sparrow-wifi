@@ -24,6 +24,14 @@ import re
 import argparse
 from http import server as HTTPServer
 from wirelessengine import WirelessEngine
+from sparrowgps import GPSEngine
+
+gpsEngine = GPSEngine()
+if GPSEngine.GPSDRunning():
+    gpsEngine.start()
+    print('Local gpsd Found.  Providing GPS coordinates when synchronized.')
+else:
+    print('No local gpsd running.  No GPS data will be provided.')
 
 # Sample handler: https://wiki.python.org/moin/BaseHttpServer
 class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
@@ -33,6 +41,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
         s.end_headers()
 
     def do_GET(s):
+        global gpsEngine
         
         if (s.path != '/wireless/interfaces') and ('/wireless/networks/' not in s.path):
             s.send_response(404)
@@ -70,7 +79,11 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 return
                 
             # Get results for the specified interface
-            retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue)
+            if gpsEngine.gpsValid():
+                retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, gpsEngine.lastCoord)
+            else:
+                retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, None)
+                
             s.wfile.write(jsonstr.encode("UTF-8"))
 
 class SparrowWiFiAgent(object):
