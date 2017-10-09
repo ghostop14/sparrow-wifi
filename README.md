@@ -12,7 +12,7 @@ Sparrow-wifi provides a nice graphical interface with tables of discovered netwo
 Sample screenshot:
 
 <p align="center">
-  <img src="https://github.com/ghostop14/sparrow-wifi/sample-screenshot.png" width="350"/>
+  <img src="https://github.com/ghostop14/sparrow-wifi/blob/master/sparrow-screenshot.png" width="350"/>
 </p>
 
 ## Installation
