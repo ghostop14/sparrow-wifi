@@ -36,8 +36,8 @@ from PyQt5.QtWidgets import QAction, QComboBox, QLabel, QPushButton, QCheckBox, 
 from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
 from PyQt5.QtGui import QPen, QFont, QBrush, QColor, QPainter
 # Qt for global colors.  See http://doc.qt.io/qt-5/qt.html#GlobalColor-enum
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QIcon
+from PyQt5.QtCore import Qt, QRect
+from PyQt5.QtGui import QIcon, QRegion
 from PyQt5 import QtCore
 
 # from PyQt5.QtCore import QCoreApplication # programatic quit
@@ -308,6 +308,9 @@ class mainWindow(QMainWindow):
         self.createControls()
         
         self.show()
+        
+        # Debug Code:
+        
 
     def resizeEvent(self, event):
         # self.resized.emit()
@@ -318,6 +321,12 @@ class mainWindow(QMainWindow):
         # self.tabs.setGeometry(30, self.height()/2+20, self.width()-60, self.height()/2-55)
         self.Plot24.setGeometry(10, size.height()/2+10, size.width()/2-10, size.height()/2-40)
         self.Plot5.setGeometry(size.width()/2+5, size.height()/2+10,size.width()/2-15, size.height()/2-40)
+        self.lblGPS.move(size.width()-90, 30)
+        self.btnGPSStatus.move(size.width()-50, 34)
+        
+        if size.width() < 850:
+            self.setGeometry(size.x(), size.y(), 850, size.height())
+
             
     def createMenu(self):
         # Create main menu bar
@@ -440,38 +449,67 @@ class mainWindow(QMainWindow):
        # self.tabs.addTab(self.tab5Ghz,"5 GHz")
        
         self.createCharts()
-
+        
+        # GPS Indicator
+        self.lblGPS = QLabel("GPS:", self)
+        self.lblGPS.move(850, 30)
+        
+        rect = QRect(0,0,20,20)
+        region = QRegion(rect,QRegion.Ellipse)
+        self.btnGPSStatus = QPushButton("", self)
+        self.btnGPSStatus.move(900, 34)
+        self.btnGPSStatus.setFixedWidth(30)
+        self.btnGPSStatus.setFixedHeight(30)
+        self.btnGPSStatus.setMask(region)
+        
+        if GPSEngine.GPSDRunning():
+            if self.gpsEngine.gpsValid():
+                self.btnGPSStatus.setStyleSheet("background-color: green; border: 1px;")
+            else:
+                self.btnGPSStatus.setStyleSheet("background-color: yellow; border: 1px;")
+                
+        else:
+            self.btnGPSStatus.setStyleSheet("background-color: red; border: 1px;")
+        
     def onGPSStatus(self):
         if (not self.menuRemoteAgent.isChecked()):
             # Checking local GPS
             if GPSEngine.GPSDRunning():
                 if self.gpsEngine.gpsValid():
+                    self.btnGPSStatus.setStyleSheet("background-color: green; border: 1px;")
                     self.statusBar().showMessage('Local gpsd service is running and satellites are synchronized.')
                 else:
+                    self.btnGPSStatus.setStyleSheet("background-color: yellow; border: 1px;")
                     self.statusBar().showMessage("Local gpsd service is running but it's not synchronized with the satellites yet.")
                     
             else:
                 self.statusBar().showMessage('No local gpsd running.')
+                self.btnGPSStatus.setStyleSheet("background-color: red; border: 1px;")
         else:
             # Checking remote
             errCode, errMsg, gpsStatus = requestRemoteGPS(self.remoteAgentIP, self.remoteAgentPort)
             
-                
             if errCode == 0:
                 if (gpsStatus.gpsSynchronized):
+                    self.btnGPSStatus.setStyleSheet("background-color: green; border: 1px;")
                     self.statusBar().showMessage("Remote GPS is running and synchronized.")
                 elif (gpsStatus.gpsRunning):
+                    self.btnGPSStatus.setStyleSheet("background-color: yellow; border: 1px;")
                     self.statusBar().showMessage("Remote GPS is running but it has not synchronized with the satellites yet.")
                 else:
                     self.statusBar().showMessage("Remote GPS service is not running.")
+                    self.btnGPSStatus.setStyleSheet("background-color: red; border: 1px;")
             else:
                 self.statusBar().showMessage("Remote GPS Error: " + errMsg)
+                self.btnGPSStatus.setStyleSheet("background-color: red; border: 1px;")
             
     def onGPSSynchronized(self):
         if (self.scanRunning or self.remoteScanRunning):
             self.statusBar().showMessage('GPS is synchronized and ready to provide coordinates.')
         else:
             self.statusBar().showMessage('Ready.  GPS is synchronized and ready to provide coordinates.')
+
+        self.btnGPSStatus.setStyleSheet("background-color: green; border: 1px;")
 
     def onTableHeadingClicked(self, logical_index):
         header = self.networkTable.horizontalHeader()
@@ -1202,6 +1240,8 @@ class mainWindow(QMainWindow):
                     self.statusBar().showMessage('No wireless interfaces found.')
                     
                 self.lastRemoteState = self.menuRemoteAgent.isChecked() 
+                
+                self.onGPSStatus()
             else:
                 # Stay local.
                 self.menuRemoteAgent.setChecked(False)
@@ -1218,6 +1258,7 @@ class mainWindow(QMainWindow):
                 self.statusBar().showMessage('No wireless interfaces found.')
 
             self.lastRemoteState = self.menuRemoteAgent.isChecked() 
+            self.onGPSStatus()
 
     def onAbout(self):
         aboutMsg = "Sparrow-wifi 802.11 WiFi Graphic Analyzer\n"
@@ -1240,7 +1281,10 @@ class mainWindow(QMainWindow):
             event.ignore()
         else:
             event.accept()
-            
+
+
+# -------  Main Routine -------------------------
+
 if __name__ == '__main__':
     
     app = QApplication(sys.argv)
