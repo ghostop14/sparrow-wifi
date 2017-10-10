@@ -31,18 +31,20 @@ from threading import Thread
 
 from PyQt5.QtWidgets import QApplication, QMainWindow,  QDesktopWidget
 from PyQt5.QtWidgets import QMessageBox, QFileDialog, QInputDialog, QLineEdit
-from PyQt5.QtWidgets import QAction, QComboBox, QLabel, QPushButton, QCheckBox, QTableWidget,QTableWidgetItem, QHeaderView
+from PyQt5.QtWidgets import QAction, QComboBox, QLabel, QPushButton, QCheckBox, QTableWidget,QTableWidgetItem, QHeaderView, QMenu
 #from PyQt5.QtWidgets import QTabWidget, QWidget, QVBoxLayout
 from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
 from PyQt5.QtGui import QPen, QFont, QBrush, QColor, QPainter
 # Qt for global colors.  See http://doc.qt.io/qt-5/qt.html#GlobalColor-enum
-from PyQt5.QtCore import Qt, QRect
+from PyQt5.QtCore import Qt, QRect, QTimer
 from PyQt5.QtGui import QIcon, QRegion
 from PyQt5 import QtCore
 
 # from PyQt5.QtCore import QCoreApplication # programatic quit
 from wirelessengine import WirelessEngine, WirelessNetwork
 from sparrowgps import GPSEngine, GPSStatus
+from telemetry import TelemetryDialog
+from sparrowtablewidgets import IntTableWidgetItem, DateTableWidgetItem
 
 # ------------------  Global functions ------------------------------
 def stringtobool(instr):
@@ -110,50 +112,6 @@ def requestRemoteNetworks(remoteIP, remotePort, remoteInterface):
     else:
         return -1, "Error connecting to remote agent", None
 
-
-# ------------------  Table Sorting by Number Class  ------------------------------
-class IntTableWidgetItem(QTableWidgetItem):
-    def __lt__(self, other):
-        if ( isinstance(other, QTableWidgetItem) ):
-            try:
-                my_value = int(self.data(Qt.EditRole))
-            except:
-                # This will throw an exception if a channel is say "3+5" for multiple channels
-                # Break it down and sort it on the first channel #
-                cellData = str(self.data(Qt.EditRole))
-                firstChannel = cellData.split('+')[0]
-                my_value = int(firstChannel)
-                
-            try:
-                other_value = int(other.data(Qt.EditRole))
-            except:
-                # This will throw an exception if a channel is say "3+5" for multiple channels
-                # Break it down and sort it on the first channel #
-                cellData = str(self.data(Qt.EditRole))
-                firstChannel = cellData.split('+')[0]
-                other_value = int(firstChannel)
-
-            return my_value < other_value
-
-        return super(IntTableWidgetItem, self).__lt__(other)
-
-# ------------------  Table Sorting by Timestamp Class  ------------------------------
-class DateTableWidgetItem(QTableWidgetItem):
-    def __lt__(self, other):
-        if ( isinstance(other, QTableWidgetItem) ):
-            try:
-                my_value = parser.parse(self.data(Qt.EditRole))
-            except:
-                pass
-                
-            try:
-                other_value = parser.parse(other.data(Qt.EditRole))
-            except:
-                pass
-                
-            return my_value < other_value
-
-        return super(DateTableWidgetItem, self).__lt__(other)
 
 # ------------------  Local network scan thread  ------------------------------
 class ScanThread(Thread):
@@ -252,6 +210,8 @@ class mainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        self.telemetryWindow = None
+        
         # GPS engine
         self.gpsEngine = GPSEngineNotifyWin(self)
         self.gpsSynchronized = False
@@ -312,8 +272,13 @@ class mainWindow(QMainWindow):
         
         self.show()
         
-        # Debug Code:
+        # Set up GPS check timer
+        self.gpsTimer = QtCore.QTimer()
+        self.gpsTimer.timeout.connect(self.onGPSTimer)
+        self.gpsTimer.setSingleShot(True)
         
+        self.gpsTimerTimeout = 10000
+        self.gpsTimer.start(self.gpsTimerTimeout)   # Check every 10 seconds
 
     def resizeEvent(self, event):
         # self.resized.emit()
@@ -369,6 +334,13 @@ class mainWindow(QMainWindow):
         newAct.setStatusTip('Show GPS Status')
         newAct.triggered.connect(self.onGPSStatus)
         gpsMenu.addAction(newAct)
+        
+        # View Menu Items
+        ViewMenu = menubar.addMenu('&View')
+        newAct = QAction('Telemetry For Selected Network', self)        
+        newAct.setStatusTip('Show telemetry screen for selected network')
+        newAct.triggered.connect(self.onShowTelemetry)
+        ViewMenu.addAction(newAct)
         
         # Help Menu Items
         helpMenu = menubar.addMenu('&Help')
@@ -437,7 +409,21 @@ class mainWindow(QMainWindow):
 
         self.networkTable.horizontalHeader().sectionClicked.connect(self.onTableHeadingClicked)
         self.networkTable.cellClicked.connect(self.onTableClicked)
-
+        
+        # Network Table right-click menu
+        # self.networkTable.setContextMenuPolicy(Qt.ActionsContextMenu)
+        self.ntRightClickMenu = QMenu(self)
+        newAct = QAction('Telemetry', self)        
+        newAct.setStatusTip('View network telemetry data')
+        newAct.triggered.connect(self.onShowTelemetry)
+        self.ntRightClickMenu.addAction(newAct)
+        
+        # Attached it to the table
+        self.networkTable.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.networkTable.customContextMenuRequested.connect(self.showNTContextMenu)
+        # self.networkTable.contextMenuRequested[QPoint].connect(self.showNTContextMenu)
+        
+        # Age out checkbox
         self.cbAgeOut = QCheckBox(self)
         self.cbAgeOut.move(400, 30)
         self.lblAgeOut = QLabel("Remove networks not seen in the past 3 minutes", self)
@@ -472,6 +458,37 @@ class mainWindow(QMainWindow):
                 self.btnGPSStatus.setStyleSheet("background-color: yellow; border: 1px;")
         else:
             self.btnGPSStatus.setStyleSheet("background-color: red; border: 1px;")
+ 
+    def onShowTelemetry(self):
+        curRow = self.networkTable.currentRow()
+        
+        if curRow == -1:
+            return
+        
+        curNet = self.networkTable.item(curRow, 1).data(Qt.UserRole+1)
+        
+        if curNet == None:
+            return
+       
+        if self.telemetryWindow == None:
+            self.telemetryWindow = TelemetryDialog()
+            self.telemetryWindow.show()
+            
+        
+        # Can also key off of self.telemetryWindow.isVisible()
+        self.telemetryWindow.show()
+        self.telemetryWindow.activateWindow()
+        
+        # User could have selected a different network.
+        self.telemetryWindow.updateNetworkData(curNet)            
+        
+    def showNTContextMenu(self, pos):
+        self.ntRightClickMenu.exec_(self.networkTable.mapToGlobal(pos))
+        # self.ntRightClickMenu.exec_(pos)
+ 
+    def onGPSTimer(self):
+        self.onGPSStatus()
+        self.gpsTimer.start(self.gpsTimerTimeout)
         
     def onGPSStatus(self):
         if (not self.menuRemoteAgent.isChecked()):
@@ -515,7 +532,7 @@ class mainWindow(QMainWindow):
 
     def onTableHeadingClicked(self, logical_index):
         header = self.networkTable.horizontalHeader()
-        order = Qt.AscendingOrder
+        order = Qt.DescendingOrder
         # order = Qt.DescendingOrder
         if not header.isSortIndicatorShown():
             header.setSortIndicatorShown( True )
@@ -550,7 +567,13 @@ class mainWindow(QMainWindow):
         else:
             selectedSeries = None
 
+        curRow = self.networkTable.currentRow()
         
+        if curRow > -1:
+            if (self.telemetryWindow is not None and self.telemetryWindow.isVisible()):
+                curNet = self.networkTable.item(curRow, 1).data(Qt.UserRole+1)
+                self.telemetryWindow.updateNetworkData(curNet)
+       
     def createCharts(self):
 
         # https://doc.qt.io/qt-5/qtcharts-linechart-example.html
@@ -788,8 +811,7 @@ class mainWindow(QMainWindow):
                 self.scanRunning = False
                 self.btnScan.setChecked(False)
                 
-        
-        
+                
     def populateTable(self, wirelessNetworks):
         rowPosition = self.networkTable.rowCount()
         
@@ -987,7 +1009,16 @@ class mainWindow(QMainWindow):
             # Do the table second so we can attach the series to it.
             rowPosition = self.networkTable.rowCount()
             rowPosition -= 1
+            addedFirstRow = False
+            if rowPosition < 0:
+                addedFirstRow = True
+                rowPosition = 0
+                
             self.networkTable.insertRow(rowPosition)
+            
+            if (addedFirstRow):
+                self.networkTable.setRowCount(1)
+
             self.networkTable.setItem(rowPosition, 0, QTableWidgetItem(wirelessNetworks[curKey].macAddr))
             tmpssid = wirelessNetworks[curKey].ssid
             if (len(tmpssid) == 0):
@@ -1043,6 +1074,13 @@ class mainWindow(QMainWindow):
         # self.networkTable.horizontalHeader().setStretchLastSection(True)
         self.networkTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         #self.networkTable.setRowCount(len(wirelessNetworks))
+
+        curRow = self.networkTable.currentRow()
+        
+        if curRow > -1:
+            if (self.telemetryWindow is not None and self.telemetryWindow.isVisible()):
+                curNet = self.networkTable.item(curRow, 1).data(Qt.UserRole+1)
+                self.telemetryWindow.updateNetworkData(curNet)
         
     def onInterface(self):
         pass

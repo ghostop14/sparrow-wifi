@@ -133,7 +133,3 @@ if __name__ == '__main__':
     server = SparrowWiFiAgent()
     port = args.port
     server.run(port)
-
-    # Making client requests example (note this is in python2 versus python3):
-    # https://www.junian.net/2014/07/simple-http-server-and-client-in-python.html
-    
