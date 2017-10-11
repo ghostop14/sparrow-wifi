@@ -18,7 +18,7 @@
 # Boston, MA 02110-1301, USA.
 # 
 
-from PyQt5.QtWidgets import QDialog, QApplication  # QDialogButtonBox
+from PyQt5.QtWidgets import QDialog, QApplication,QDesktopWidget
 from PyQt5.QtWidgets import QTableWidget, QHeaderView,QTableWidgetItem, QMessageBox, QFileDialog
 # from PyQt5.QtWidgets import QLabel, QComboBox, QLineEdit, QPushButton, QFileDialog
 #from PyQt5.QtCore import Qt
@@ -150,6 +150,8 @@ class TelemetryDialog(QDialog):
         
         self.setMinimumWidth(600)
         self.setMinimumHeight(600)
+        
+        self.center()
 
     def resizeEvent(self, event):
         wDim = self.geometry().width()/2-20
@@ -170,6 +172,17 @@ class TelemetryDialog(QDialog):
         # Table
         self.locationTable.setGeometry(10, self.geometry().height()/2 + 50, self.geometry().width()-20, self.geometry().height()/2-60)
 
+    def center(self):
+        # Get our geometry
+        qr = self.frameGeometry()
+        # Find the desktop center point
+        cp = QDesktopWidget().availableGeometry().center()
+        # Move our center point to the desktop center point
+        qr.moveCenter(cp)
+        # Move the top-left point of the application window to the top-left point of the qr rectangle, 
+        # basically centering the window
+        self.move(qr.topLeft())
+        
     def onExportClicked(self):
         fileName = self.saveFileDialog()
 
@@ -261,7 +274,13 @@ class TelemetryDialog(QDialog):
             self.locationTable.setRowCount(0)
             self.timeSeries.clear()
             updateChartAndTable = True
-            self.timeChart.setTitle(curNet.ssid + ' Signal (Past ' + str(self.maxPoints) + ' Samples)')
+
+            ssidTitle = curNet.ssid
+            if len(ssidTitle) > 28:
+                ssidTitle = ssidTitle[:28]
+                ssidTitle = ssidTitle + '...'
+
+            self.timeChart.setTitle(ssidTitle + ' Signal (Past ' + str(self.maxPoints) + ' Samples)')
         else:
             if self.lastSeen != curNet.lastSeen:
                 updateChartAndTable = True

@@ -186,11 +186,11 @@ class GPSEngineNotifyWin(GPSEngine):
 
     def onGPSResult(self, gpsResult):
         super().onGPSResult(gpsResult)
-        
-        if not self.isSynchronized:
-            if gpsResult.isValid:
-                self.isSynchronized = True
-                self.mainWin.gpsSynchronizedsignal.emit()
+
+        if self.isSynchronized != gpsResult.isValid:
+            # Allow GPS to sync / de-sync and notify
+            self.mainWin.gpsSynchronizedsignal.emit()
+            self.isSynchronized = gpsResult.isValid
 
 # ------------------  Global color list that we'll cycle through  ------------------------------
 colors = [Qt.black, Qt.red, Qt.darkRed, Qt.green, Qt.darkGreen, Qt.blue, Qt.darkBlue, Qt.cyan, Qt.darkCyan, Qt.magenta, Qt.darkMagenta, Qt.darkGray]
@@ -215,7 +215,7 @@ class mainWindow(QMainWindow):
         # GPS engine
         self.gpsEngine = GPSEngineNotifyWin(self)
         self.gpsSynchronized = False
-        self.gpsSynchronizedsignal.connect(self.onGPSSynchronized)
+        self.gpsSynchronizedsignal.connect(self.onGPSSyncChanged)
         
         # Local network scan
         self.scanRunning = False
@@ -524,13 +524,9 @@ class mainWindow(QMainWindow):
                 self.statusBar().showMessage("Remote GPS Error: " + errMsg)
                 self.btnGPSStatus.setStyleSheet("background-color: red; border: 1px;")
             
-    def onGPSSynchronized(self):
-        if (self.scanRunning or self.remoteScanRunning):
-            self.statusBar().showMessage('GPS is synchronized and ready to provide coordinates.')
-        else:
-            self.statusBar().showMessage('Ready.  GPS is synchronized and ready to provide coordinates.')
-
-        self.btnGPSStatus.setStyleSheet("background-color: green; border: 1px;")
+    def onGPSSyncChanged(self):
+        # GPS status has changed
+        self.onGPSStatus()
 
     def onTableHeadingClicked(self, logical_index):
         header = self.networkTable.horizontalHeader()
@@ -929,7 +925,7 @@ class mainWindow(QMainWindow):
                                     
                         break;
                 
-        self.networkTable.insertRow(rowPosition)
+        # self.networkTable.insertRow(rowPosition)
         
         for curKey in wirelessNetworks.keys():
             # Don't add duplicate
@@ -1065,13 +1061,16 @@ class mainWindow(QMainWindow):
                 self.networkTable.setItem(rowPosition, 10, QTableWidgetItem('No'))
 
         # Clean up any empty rows because of the way QTableWidget is handling row inserts
-        rowPosition = self.networkTable.rowCount()
+        numRows = self.networkTable.rowCount()
 
-        maxTime = datetime.datetime.now() - datetime.timedelta(minutes=3)
-        # maxTime = datetime.datetime.now() - datetime.timedelta(seconds=5)
+        # Last rounds of checks and cleanups
+        
+        # Check for dangling QTableWidget rows and if we've checked the timeoutcheckbox, remove items.
+        if numRows > 0:
+            # Handle if timeout checkbox is checked
+            maxTime = datetime.datetime.now() - datetime.timedelta(minutes=3)
 
-        if rowPosition > 0:
-            rowPosition -= 1  #  convert count to index
+            rowPosition = numRows - 1  #  convert count to index
             for i in range(rowPosition, 0, -1):
                 try:
                     curData = self.networkTable.item(i, 1).data(Qt.UserRole+1)
@@ -1090,18 +1089,30 @@ class mainWindow(QMainWindow):
                 except:
                     curData = None
                     self.networkTable.removeRow(i)
-                
-        self.networkTable.resizeColumnsToContents()
-        # self.networkTable.horizontalHeader().setStretchLastSection(True)
-        self.networkTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        #self.networkTable.setRowCount(len(wirelessNetworks))
 
-        #curRow = self.networkTable.currentRow()
+        # See if we have any telemetry windows that are no longer in the network table and not visible
+        numRows = self.networkTable.rowCount()
         
-        # if curRow > -1:
-        #    if (self.telemetryWindow is not None and self.telemetryWindow.isVisible()):
-        #        curNet = self.networkTable.item(curRow, 1).data(Qt.UserRole+1)
-        #        self.telemetryWindow.updateNetworkData(curNet)
+        if (numRows > 0) and (len(self.telemetryWindows.keys()) > 0):
+            # Build key list just once to cut down # of loops
+            netKeyList = []
+            for i in range(0, numRows-1):
+                curNet = self.networkTable.item(i, 1).data(Qt.UserRole+1)
+                netKeyList.append(curNet.getKey())
+                
+            for curKey in self.telemetryWindows.keys():
+                # For each telemetry window we have stored,
+                # If it's no longer in the network table and it's not visible
+                # (Meaning the window was closed but we still have an active Window object)
+                # Let's inform the window to close and remove it from the list
+                if curKey not in netKeyList:
+                    if not self.telemetryWindows[curKey].isVisible():
+                        self.telemetryWindows[curKey].close()
+                        del self.telemetryWindows[curKey]
+                        
+        # Last formatting tweaks on network table
+        self.networkTable.resizeColumnsToContents()
+        self.networkTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         
     def onInterface(self):
         pass
