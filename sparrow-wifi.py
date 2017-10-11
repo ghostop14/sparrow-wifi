@@ -21,6 +21,7 @@
 import sys
 import csv
 import os
+import subprocess
 import re
 import json
 import datetime
@@ -273,7 +274,7 @@ class mainWindow(QMainWindow):
         self.show()
         
         # Set up GPS check timer
-        self.gpsTimer = QtCore.QTimer()
+        self.gpsTimer = QTimer()
         self.gpsTimer.timeout.connect(self.onGPSTimer)
         self.gpsTimer.setSingleShot(True)
         
@@ -335,6 +336,17 @@ class mainWindow(QMainWindow):
         newAct.triggered.connect(self.onGPSStatus)
         gpsMenu.addAction(newAct)
         
+        if (os.path.isfile('/usr/bin/xgps') or os.path.isfile('/usr/local/bin/xgps')):
+            newAct = QAction('Launch XGPS - Local', self)        
+            newAct.setStatusTip('Show GPS GUI against local gpsd')
+            newAct.triggered.connect(self.onXGPSLocal)
+            gpsMenu.addAction(newAct)
+        
+            newAct = QAction('Launch XGPS - Remote', self)        
+            newAct.setStatusTip('Show GPS GUI against remote gpsd')
+            newAct.triggered.connect(self.onXGPSRemote)
+            gpsMenu.addAction(newAct)
+            
         # View Menu Items
         ViewMenu = menubar.addMenu('&View')
         newAct = QAction('Telemetry For Selected Network', self)        
@@ -362,6 +374,23 @@ class mainWindow(QMainWindow):
         exitAct.triggered.connect(self.close)
         fileMenu.addAction(exitAct)
 
+    def onXGPSLocal(self):
+        subprocess.Popen('xgps')
+        
+    def onXGPSRemote(self):
+        text, okPressed = QInputDialog.getText(self, "Remote Agent","Please provide gpsd IP:", QLineEdit.Normal, "127.0.0.1")
+        if okPressed and text != '':
+            # Validate the input
+            p = re.compile('^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})')
+            try:
+                agentSpec = p.search(text).group(1) 
+                args = ['xgps', agentSpec + ":2947"]
+                subprocess.Popen(args)
+            except:
+                QMessageBox.question(self, 'Error',"Please enter an IP in the format a.b.c.d", QMessageBox.Ok)
+                self.menuRemoteAgent.setChecked(False)
+                return
+        
     def createControls(self):
         # self.statusBar().setStyleSheet("QStatusBar{background:rgba(204,229,255,255);color:black;border: 1px solid blue; border-radius: 1px;}")
         self.statusBar().setStyleSheet("QStatusBar{background:rgba(192,192,192,255);color:black;border: 1px solid blue; border-radius: 1px;}")
