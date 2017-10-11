@@ -210,7 +210,7 @@ class mainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.telemetryWindow = None
+        self.telemetryWindows = {}
         
         # GPS engine
         self.gpsEngine = GPSEngineNotifyWin(self)
@@ -470,17 +470,19 @@ class mainWindow(QMainWindow):
         if curNet == None:
             return
        
-        if self.telemetryWindow == None:
-            self.telemetryWindow = TelemetryDialog()
-            self.telemetryWindow.show()
-            
+        if curNet.getKey() not in self.telemetryWindows:
+            telemetryWindow = TelemetryDialog()
+            telemetryWindow.show()
+            self.telemetryWindows[curNet.getKey()] = telemetryWindow
+        else:
+            telemetryWindow = self.telemetryWindows[curNet.getKey()]
         
         # Can also key off of self.telemetryWindow.isVisible()
-        self.telemetryWindow.show()
-        self.telemetryWindow.activateWindow()
+        telemetryWindow.show()
+        telemetryWindow.activateWindow()
         
         # User could have selected a different network.
-        self.telemetryWindow.updateNetworkData(curNet)            
+        telemetryWindow.updateNetworkData(curNet)            
         
     def showNTContextMenu(self, pos):
         self.ntRightClickMenu.exec_(self.networkTable.mapToGlobal(pos))
@@ -567,12 +569,12 @@ class mainWindow(QMainWindow):
         else:
             selectedSeries = None
 
-        curRow = self.networkTable.currentRow()
+        # curRow = self.networkTable.currentRow()
         
-        if curRow > -1:
-            if (self.telemetryWindow is not None and self.telemetryWindow.isVisible()):
-                curNet = self.networkTable.item(curRow, 1).data(Qt.UserRole+1)
-                self.telemetryWindow.updateNetworkData(curNet)
+        # if curRow > -1:
+        #    if (self.telemetryWindow is not None and self.telemetryWindow.isVisible()):
+        #        curNet = self.networkTable.item(curRow, 1).data(Qt.UserRole+1)
+        #        self.telemetryWindow.updateNetworkData(curNet)
        
     def createCharts(self):
 
@@ -826,7 +828,7 @@ class mainWindow(QMainWindow):
                 for curKey in wirelessNetworks.keys():
                     curNet = wirelessNetworks[curKey]
                     if curData.getKey() == curNet.getKey():
-                        # Match
+                        # Match.  Item was already in the table.  Let's update it
                         self.networkTable.item(curRow, 2).setText(curNet.security)
                         self.networkTable.item(curRow, 3).setText(curNet.privacy)
                         self.networkTable.item(curRow, 4).setText(str(curNet.getChannelString()))
@@ -834,7 +836,18 @@ class mainWindow(QMainWindow):
                         self.networkTable.item(curRow, 6).setText(str(curNet.signal))
                         self.networkTable.item(curRow, 7).setText(str(curNet.bandwidth))
                         self.networkTable.item(curRow, 8).setText(curNet.lastSeen.strftime("%m/%d/%Y %H:%M:%S"))
+                        
+                        # Carry forward firstSeen
                         curNet.firstSeen = curData.firstSeen # This is one field to carry forward
+                        
+                        # Check strongest signal
+                        if curData.signal > curNet.signal:
+                            curNet.strongestsignal = curData.signal
+                            curNet.strongestgps.latitude = curData.gps.latitude
+                            curNet.strongestgps.longitude = curData.gps.longitude
+                            curNet.strongestgps.altitude = curData.gps.altitude
+                            curNet.strongestgps.speed = curData.gps.speed
+                        
                         self.networkTable.item(curRow, 9).setText(curNet.firstSeen.strftime("%m/%d/%Y %H:%M:%S"))
                         if curNet.gps.isValid:
                             self.networkTable.item(curRow, 10).setText('Yes')
@@ -846,6 +859,11 @@ class mainWindow(QMainWindow):
                         # Update series
                         curSeries = self.networkTable.item(curRow, 1).data(Qt.UserRole)
                         
+                        # Check if we have a telemetry window
+                        if curNet.getKey() in self.telemetryWindows:
+                            telemetryWindow = self.telemetryWindows[curNet.getKey()]
+                            telemetryWindow.updateNetworkData(curNet)            
+
                         # 3 scenarios: 
                         # 20 MHz, 1 channel
                         # 40 MHz, 2nd channel above/below or non-contiguous for 5 GHz
@@ -1030,6 +1048,7 @@ class mainWindow(QMainWindow):
             # https://stackoverflow.com/questions/2579579/qt-how-to-associate-data-with-qtablewidgetitem
             newSSID.setData(Qt.UserRole, newSeries)
             newSSID.setData(Qt.UserRole+1, wirelessNetworks[curKey])
+            newSSID.setData(Qt.UserRole+2, None)
             
             self.networkTable.setItem(rowPosition, 1, newSSID)
             self.networkTable.setItem(rowPosition, 2, QTableWidgetItem(wirelessNetworks[curKey].security))
@@ -1051,36 +1070,38 @@ class mainWindow(QMainWindow):
         maxTime = datetime.datetime.now() - datetime.timedelta(minutes=3)
         # maxTime = datetime.datetime.now() - datetime.timedelta(seconds=5)
 
-        for i in range(rowPosition, 0, -1):
-            try:
-                curData = self.networkTable.item(i, 1).data(Qt.UserRole+1)
-                
-                # Age out
-                if self.cbAgeOut.isChecked():
-                    if curData.lastSeen < maxTime:
-                        curSeries = self.networkTable.item(i, 1).data(Qt.UserRole)
-                        if curData.channel < 20:
-                            self.chart24.removeSeries(curSeries)
-                        else:
-                            self.chart5.removeSeries(curSeries)
-                            
-                        self.networkTable.removeRow(i)
+        if rowPosition > 0:
+            rowPosition -= 1  #  convert count to index
+            for i in range(rowPosition, 0, -1):
+                try:
+                    curData = self.networkTable.item(i, 1).data(Qt.UserRole+1)
                     
-            except:
-                curData = None
-                self.networkTable.removeRow(i)
+                    # Age out
+                    if self.cbAgeOut.isChecked():
+                        if curData.lastSeen < maxTime:
+                            curSeries = self.networkTable.item(i, 1).data(Qt.UserRole)
+                            if curData.channel < 20:
+                                self.chart24.removeSeries(curSeries)
+                            else:
+                                self.chart5.removeSeries(curSeries)
+                                
+                            self.networkTable.removeRow(i)
+                        
+                except:
+                    curData = None
+                    self.networkTable.removeRow(i)
                 
         self.networkTable.resizeColumnsToContents()
         # self.networkTable.horizontalHeader().setStretchLastSection(True)
         self.networkTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         #self.networkTable.setRowCount(len(wirelessNetworks))
 
-        curRow = self.networkTable.currentRow()
+        #curRow = self.networkTable.currentRow()
         
-        if curRow > -1:
-            if (self.telemetryWindow is not None and self.telemetryWindow.isVisible()):
-                curNet = self.networkTable.item(curRow, 1).data(Qt.UserRole+1)
-                self.telemetryWindow.updateNetworkData(curNet)
+        # if curRow > -1:
+        #    if (self.telemetryWindow is not None and self.telemetryWindow.isVisible()):
+        #        curNet = self.networkTable.item(curRow, 1).data(Qt.UserRole+1)
+        #        self.telemetryWindow.updateNetworkData(curNet)
         
     def onInterface(self):
         pass
@@ -1153,14 +1174,20 @@ class mainWindow(QMainWindow):
                     
                     newNet.frequency = int(raw_list[i][5])
                     newNet.signal = int(raw_list[i][6])
-                    newNet.bandwidth = int(raw_list[i][7])
-                    newNet.lastSeen = parser.parse(raw_list[i][8])
-                    newNet.firstSeen = parser.parse(raw_list[i][9])
-                    newNet.gps.isValid = stringtobool(raw_list[i][10])
-                    newNet.gps.latitude = float(raw_list[i][11])
-                    newNet.gps.longitude = float(raw_list[i][12])
-                    newNet.gps.altitude = float(raw_list[i][13])
-                    newNet.gps.speed = float(raw_list[i][14])
+                    newNet.strongestsignal = int(raw_list[i][7])
+                    newNet.bandwidth = int(raw_list[i][8])
+                    newNet.lastSeen = parser.parse(raw_list[i][9])
+                    newNet.firstSeen = parser.parse(raw_list[i][10])
+                    newNet.gps.isValid = stringtobool(raw_list[i][11])
+                    newNet.gps.latitude = float(raw_list[i][12])
+                    newNet.gps.longitude = float(raw_list[i][13])
+                    newNet.gps.altitude = float(raw_list[i][14])
+                    newNet.gps.speed = float(raw_list[i][15])
+                    newNet.strongestgps.isValid = stringtobool(raw_list[i][16])
+                    newNet.strongestgps.latitude = float(raw_list[i][17])
+                    newNet.strongestgps.longitude = float(raw_list[i][18])
+                    newNet.strongestgps.altitude = float(raw_list[i][19])
+                    newNet.strongestgps.speed = float(raw_list[i][20])
                     
                     wirelessNetworks[newNet.getKey()] = newNet
                     
@@ -1180,7 +1207,7 @@ class mainWindow(QMainWindow):
             QMessageBox.question(self, 'Error',"Unable to write to " + fileName, QMessageBox.Ok)
             return
             
-        outputFile.write('macAddr,SSID,Security,Privacy,Channel,Frequency,Signal Strength,Bandwidth,Last Seen,First Seen,GPS Valid,Latitude,Longitude,Altitude,Speed\n')
+        outputFile.write('macAddr,SSID,Security,Privacy,Channel,Frequency,Signal Strength,Strongest Signal Strength, Bandwidth,Last Seen,First Seen,GPS Valid,Latitude,Longitude,Altitude,Speed,Strongest GPS Valid,Strongest Latitude,Strongest Longitude,Strongest Altitude,Strongest Speed\n')
 
         numItems = self.networkTable.rowCount()
         
@@ -1192,9 +1219,10 @@ class mainWindow(QMainWindow):
             curData = self.networkTable.item(i, 1).data(Qt.UserRole+1)
 
             outputFile.write(self.networkTable.item(i, 0).text() + ',' + self.networkTable.item(i, 1).text() + ',' + self.networkTable.item(i, 2).text() + ',' + self.networkTable.item(i, 3).text())
-            outputFile.write(',' + self.networkTable.item(i, 4).text()+ ',' + self.networkTable.item(i, 5).text()+ ',' + self.networkTable.item(i, 6).text()+ ',' + self.networkTable.item(i, 7).text() + ',' +
+            outputFile.write(',' + self.networkTable.item(i, 4).text()+ ',' + self.networkTable.item(i, 5).text()+ ',' + self.networkTable.item(i, 6).text()+ ',' + str(curData.strongestsignal) + ',' + self.networkTable.item(i, 7).text() + ',' +
                                     curData.lastSeen.strftime("%m/%d/%Y %H:%M:%S") + ',' + curData.firstSeen.strftime("%m/%d/%Y %H:%M:%S") + ',' + 
-                                    str(curData.gps.isValid) + ',' + str(curData.gps.latitude) + ',' + str(curData.gps.longitude) + ',' + str(curData.gps.altitude) + ',' + str(curData.gps.speed) + '\n')
+                                    str(curData.gps.isValid) + ',' + str(curData.gps.latitude) + ',' + str(curData.gps.longitude) + ',' + str(curData.gps.altitude) + ',' + str(curData.gps.speed) + ',' + 
+                                    str(curData.strongestgps.isValid) + ',' + str(curData.strongestgps.latitude) + ',' + str(curData.strongestgps.longitude) + ',' + str(curData.strongestgps.altitude) + ',' + str(curData.strongestgps.speed) + '\n')
             
         outputFile.close()
         

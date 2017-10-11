@@ -61,6 +61,9 @@ class WirelessNetwork(object):
         self.firstSeen = now
         self.lastSeen = now
         self.gps = SparrowGPS()
+        self.strongestsignal = self.signal
+        self.strongestgps = SparrowGPS()
+        
         # Used for tracking in network table
         self.foundInList = False
         
@@ -81,10 +84,14 @@ class WirelessNetwork(object):
         retVal += "Secondary Channel Location: " + self.secondaryChannelLocation + "\n"
         retVal += "Third Channel: " + str(self.thirdChannel) + "\n"
         retVal += "Signal: " + str(self.signal) + " dBm\n"
+        retVal += "Strongest Signal: " + str(self.strongestsignal) + " dBm\n"
         retVal += "Bandwidth: " + str(self.bandwidth) + "\n"
         retVal += "First Seen: " + str(self.firstSeen) + "\n"
         retVal += "Last Seen: " + str(self.lastSeen) + "\n"
+        retVal += "Last GPS:\n"
         retVal += str(self.gps)
+        retVal += "Strongest GPS:\n"
+        retVal += str(self.strongestgps)
 
         return retVal
 
@@ -134,6 +141,7 @@ class WirelessNetwork(object):
             self.secondaryChannelLocation = dictjson['secondaryChannelLocation']
             self.thirdChannel = int(dictjson['thirdChannel'])
             self.signal = int(dictjson['signal'])
+            self.signal = int(dictjson['strongestsignal'])
             self.bandwidth = int(dictjson['bandwidth'])
             self.firstSeen = parser.parse(dictjson['firstseen'])
             self.lastSeen = parser.parse(dictjson['lastseen'])
@@ -142,6 +150,11 @@ class WirelessNetwork(object):
             self.gps.altitude = float(dictjson['alt'])
             self.gps.speed = float(dictjson['speed'])
             self.gps.isValid = stringtobool(dictjson['gpsvalid'])
+            self.gps.latitude = float(dictjson['strongestlat'])
+            self.gps.longitude = float(dictjson['strongestlon'])
+            self.gps.altitude = float(dictjson['strongestalt'])
+            self.gps.speed = float(dictjson['strongestspeed'])
+            self.gps.isValid = stringtobool(dictjson['strongestgpsvalid'])
         except:
             pass
             
@@ -163,6 +176,7 @@ class WirelessNetwork(object):
         dictjson['secondaryChannelLocation'] = self.secondaryChannelLocation
         dictjson['thirdChannel'] = self.thirdChannel
         dictjson['signal'] = self.signal
+        dictjson['strongestsignal'] = self.strongest
         dictjson['bandwidth'] = self.bandwidth
         dictjson['firstseen'] = str(self.firstSeen)
         dictjson['lastseen'] = str(self.lastSeen)
@@ -171,6 +185,12 @@ class WirelessNetwork(object):
         dictjson['alt'] = str(self.gps.altitude)
         dictjson['speed'] = str(self.gps.speed)
         dictjson['gpsvalid'] = str(self.gps.isValid)
+        
+        dictjson['strongestlat'] = str(self.strongestgps.latitude)
+        dictjson['strongestlon'] = str(self.strongestgps.longitude)
+        dictjson['strongestalt'] = str(self.strongestgps.altitude)
+        dictjson['strongestspeed'] = str(self.strongestgps.speed)
+        dictjson['strongestgpsvalid'] = str(self.strongestgps.isValid)
         
         return dictjson
         
@@ -408,8 +428,7 @@ class WirelessEngine(object):
             # This test is different.  dBm is negative so can't test > 0.  10dBm is really high so lets use that
             if (fieldValue < 10):
                 curNetwork.signal = fieldValue
-                curNetwork.minSignal = fieldValue
-                curNetwork.maxSignal = fieldValue
+                curNetwork.strongestsignal = fieldValue
                 continue #Found the item
                 
             p = re.compile('.*?HT20/HT40.*')
