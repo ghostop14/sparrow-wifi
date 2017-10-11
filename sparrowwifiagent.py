@@ -94,11 +94,30 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
             if len(fieldValue) == 0:
                 return
                 
-            # Get results for the specified interface
+            p = re.compile('.*Frequencies=(.*)', re.IGNORECASE)
+            try:
+                channelStr = p.search(curInterface).group(1)
+            except:
+                channelStr = ""
+
+            huntChannelList = []
+            
+            tmpList = channelStr.split(',')
+            
+            if len(tmpList) > 0:
+                for curItem in tmpList:
+                    try:
+                        if len(curItem) > 0:
+                            huntChannelList.append(int(curItem))
+                            # Get results for the specified interface
+                            # Need to iterate through the channels and aggregate the results
+                    except:
+                        pass
+                
             if gpsEngine.gpsValid():
-                retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, gpsEngine.lastCoord)
+                retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, gpsEngine.lastCoord, huntChannelList)
             else:
-                retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, None)
+                retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, None, huntChannelList)
                 
             s.wfile.write(jsonstr.encode("UTF-8"))
 

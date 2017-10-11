@@ -35,6 +35,82 @@ def stringtobool(instr):
         return False
         
 
+# ------------------  Global channel to frequency definitions ------------------------------
+channelToFreq = {}
+channelToFreq['1'] = '2412'
+channelToFreq['2'] = '2417'
+channelToFreq['3'] = '2422'
+channelToFreq['4'] = '2427'
+channelToFreq['5'] = '2432'
+channelToFreq['6'] = '2437'
+channelToFreq['7'] = '2442'
+channelToFreq['8'] = '2447'
+channelToFreq['9'] = '2452'
+channelToFreq['10'] = '2457'
+channelToFreq['11'] = '2462'
+channelToFreq['12'] = '2467'
+channelToFreq['13'] = '2472'
+channelToFreq['14'] = '2484'
+
+channelToFreq['16'] = '5080'
+channelToFreq['34'] = '5170'
+channelToFreq['36'] = '5180'
+channelToFreq['38'] = '5190'
+channelToFreq['40'] = '5200'
+channelToFreq['42'] = '5210'
+channelToFreq['44'] = '5220'
+channelToFreq['46'] = '5230'
+channelToFreq['48'] = '5240'
+channelToFreq['50'] = '5250'
+channelToFreq['52'] = '5260'
+channelToFreq['54'] = '5270'
+channelToFreq['56'] = '5280'
+channelToFreq['58'] = '5290'
+channelToFreq['60'] = '5300'
+channelToFreq['62'] = '5310'
+channelToFreq['64'] = '5320'
+channelToFreq['100'] = '5500'
+channelToFreq['102'] = '5510'
+channelToFreq['104'] = '5520'
+channelToFreq['106'] = '5530'
+channelToFreq['108'] = '5540'
+channelToFreq['110'] = '5550'
+channelToFreq['112'] = '5560'
+channelToFreq['114'] = '5570'
+channelToFreq['116'] = '5580'
+channelToFreq['118'] = '5590'
+channelToFreq['120'] = '5600'
+channelToFreq['122'] = '5610'
+channelToFreq['124'] = '5620'
+channelToFreq['126'] = '5630'
+channelToFreq['128'] = '5640'
+channelToFreq['132'] = '5660'
+channelToFreq['134'] = '5670'
+channelToFreq['136'] = '5680'
+channelToFreq['138'] = '5690'
+channelToFreq['140'] = '5700'
+channelToFreq['142'] = '5710'
+channelToFreq['144'] = '5720'
+channelToFreq['149'] = '5745'
+channelToFreq['151'] = '5755'
+channelToFreq['153'] = '5765'
+channelToFreq['155'] = '5775'
+channelToFreq['157'] = '5785'
+channelToFreq['159'] = '5795'
+channelToFreq['161'] = '5805'
+channelToFreq['165'] = '5825'
+channelToFreq['169'] = '5845'
+channelToFreq['173'] = '5865'
+channelToFreq['183'] = '4915'
+channelToFreq['184'] = '4920'
+channelToFreq['185'] = '4925'
+channelToFreq['187'] = '4935'
+channelToFreq['188'] = '4940'
+channelToFreq['189'] = '4945'
+channelToFreq['192'] = '4960'
+channelToFreq['196'] = '4980'
+
+      
 # ------------------  Classes ------------------------------------
 
 class WirelessNetwork(object):
@@ -176,7 +252,7 @@ class WirelessNetwork(object):
         dictjson['secondaryChannelLocation'] = self.secondaryChannelLocation
         dictjson['thirdChannel'] = self.thirdChannel
         dictjson['signal'] = self.signal
-        dictjson['strongestsignal'] = self.strongest
+        dictjson['strongestsignal'] = self.strongestsignal
         dictjson['bandwidth'] = self.bandwidth
         dictjson['firstseen'] = str(self.firstSeen)
         dictjson['lastseen'] = str(self.lastSeen)
@@ -213,6 +289,13 @@ class WirelessEngine(object):
     def __init__(self):
         super().__init__()
 
+    def getFrequencyForChannel(channelNumber):
+        channelStr = str(channelNumber)
+        if channelStr in channelToFreq:
+            return channelToFreq[channelStr]
+        else:
+            return None
+            
     def getInterfaces(printResults=False):
         result = subprocess.run(['iwconfig'], stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
         wirelessResult = result.stdout.decode('ASCII')
@@ -235,8 +318,19 @@ class WirelessEngine(object):
 
         return retVal
 
-    def getNetworksAsJson(interfaceName, gpsData):
-        retCode, errString, wirelessNetworks = WirelessEngine.scanForNetworks(interfaceName)
+    def getNetworksAsJson(interfaceName, gpsData, huntChannelList=None):
+        
+        if (huntChannelList is None) or (len(huntChannelList) == 0):
+            retCode, errString, wirelessNetworks = WirelessEngine.scanForNetworks(interfaceName)
+        else:
+            wirelessNetworks = {}
+            for curFrequency in huntChannelList:
+                retCode, errString, tmpWirelessNetworks = WirelessEngine.scanForNetworks(interfaceName,curFrequency )
+                
+                for curKey in tmpWirelessNetworks.keys():
+                    curNet = tmpWirelessNetworks[curKey]
+                    wirelessNetworks[curNet.getKey()] = tmpWirelessNetworks[curNet.getKey()]
+            
         retVal = {}
         retVal['errCode'] = retCode
         retVal['errString'] = errString
@@ -268,8 +362,13 @@ class WirelessEngine(object):
         
         return retCode, errString, jsonstr
         
-    def scanForNetworks(interfaceName, printResults=False):
-        result = subprocess.run(['iw', 'dev', interfaceName, 'scan'], stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+    def scanForNetworks(interfaceName, frequency=0, printResults=False):
+        
+        if frequency == 0:
+            result = subprocess.run(['iw', 'dev', interfaceName, 'scan'], stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+        else:
+            result = subprocess.run(['iw', 'dev', interfaceName, 'scan', 'freq', str(frequency)], stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+
         retCode = result.returncode
         errString = ""
         wirelessResult = result.stdout.decode('ASCII')

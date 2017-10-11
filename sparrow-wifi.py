@@ -53,7 +53,7 @@ def stringtobool(instr):
         return True
     else:
         return False
-        
+
 # ------------------  Global functions for agent HTTP requests ------------------------------
 def makeGetRequest(url):
     try:
@@ -94,8 +94,17 @@ def requestRemoteGPS(remoteIP, remotePort):
         return -1, "Error connecting to remote agent", None
 
 
-def requestRemoteNetworks(remoteIP, remotePort, remoteInterface):
+def requestRemoteNetworks(remoteIP, remotePort, remoteInterface, channelList=None):
     url = "http://" + remoteIP + ":" + str(remotePort) + "/wireless/networks/" + remoteInterface
+    
+    if (channelList is not None) and (len(channelList) > 0):
+        url += "?frequencies="
+        for curChannel in channelList:
+            url += str(curChannel) + ','
+            
+    if url.endswith(','):
+        url = url[:-1]
+        
     statusCode, responsestr = makeGetRequest(url)
     
     if statusCode == 200:
@@ -116,38 +125,59 @@ def requestRemoteNetworks(remoteIP, remotePort, remoteInterface):
 
 # ------------------  Local network scan thread  ------------------------------
 class ScanThread(Thread):
-    def __init__(self, interface, mainWin):
+    def __init__(self, interface, mainWin, channelList=None):
         super(ScanThread, self).__init__()
         self.interface = interface
         self.mainWin = mainWin
         self.signalStop = False
         self.scanDelay = 0.5  # seconds
         self.threadRunning = False
+        self.channelList = channelList
         
     def run(self):
         self.threadRunning = True
         
         while (not self.signalStop):
-            retCode, errString, wirelessNetworks = WirelessEngine.scanForNetworks(self.interface)
-            if (retCode == 0):
-                # self.statusBar().showMessage('Scan complete.  Found ' + str(len(wirelessNetworks)) + ' networks')
-                if len(wirelessNetworks) > 0:
-                    self.mainWin.scanresults.emit(wirelessNetworks)
-            else:
-                    if (retCode != WirelessNetwork.ERR_DEVICEBUSY):
-                        self.mainWin.errmsg.emit(retCode, errString)
+            # Scan all / normal mode
+            if (self.channelList is None) or (len(self.channelList) == 0):
+                retCode, errString, wirelessNetworks = WirelessEngine.scanForNetworks(self.interface)
+                if (retCode == 0):
+                    # self.statusBar().showMessage('Scan complete.  Found ' + str(len(wirelessNetworks)) + ' networks')
+                    if len(wirelessNetworks) > 0:
+                        self.mainWin.scanresults.emit(wirelessNetworks)
+                else:
+                        if (retCode != WirelessNetwork.ERR_DEVICEBUSY):
+                            self.mainWin.errmsg.emit(retCode, errString)
             
-            if (retCode == WirelessNetwork.ERR_DEVICEBUSY):
-                # Shorter sleep for faster results
-                sleep(0.2)
+                if (retCode == WirelessNetwork.ERR_DEVICEBUSY):
+                    # Shorter sleep for faster results
+                    sleep(0.2)
+                else:
+                    sleep(self.scanDelay)
             else:
-                sleep(self.scanDelay)
+                # Channel hunt mode
+                for curFrequency in self.channelList:
+                    retCode, errString, wirelessNetworks = WirelessEngine.scanForNetworks(self.interface, curFrequency)
+                    if (retCode == 0):
+                        # self.statusBar().showMessage('Scan complete.  Found ' + str(len(wirelessNetworks)) + ' networks')
+                        if len(wirelessNetworks) > 0:
+                            self.mainWin.scanresults.emit(wirelessNetworks)
+                    else:
+                            if (retCode != WirelessNetwork.ERR_DEVICEBUSY):
+                                self.mainWin.errmsg.emit(retCode, errString)
+                
+                    if (retCode == WirelessNetwork.ERR_DEVICEBUSY):
+                        # Shorter sleep for faster results
+                        sleep(0.2)
+                    else:
+                        sleep(self.scanDelay)
+                    
             
         self.threadRunning = False
 
 # ------------------  Remote agent network scan thread  ------------------------------
 class RemoteScanThread(Thread):
-    def __init__(self, interface, mainWin):
+    def __init__(self, interface, mainWin, channelList=None):
         super(RemoteScanThread, self).__init__()
         self.interface = interface
         self.mainWin = mainWin
@@ -156,12 +186,13 @@ class RemoteScanThread(Thread):
         self.threadRunning = False
         self.remoteAgentIP = "127.0.0.1"
         self.remoteAgentPort = 8020
+        self.channelList = channelList
         
     def run(self):
         self.threadRunning = True
         
         while (not self.signalStop):
-            retCode, errString, wirelessNetworks = requestRemoteNetworks(self.remoteAgentIP, self.remoteAgentPort, self.interface)
+            retCode, errString, wirelessNetworks = requestRemoteNetworks(self.remoteAgentIP, self.remoteAgentPort, self.interface, self.channelList)
             if (retCode == 0):
                 # self.statusBar().showMessage('Scan complete.  Found ' + str(len(wirelessNetworks)) + ' networks')
                 if len(wirelessNetworks) > 0:
@@ -212,6 +243,9 @@ class mainWindow(QMainWindow):
         super().__init__()
 
         self.telemetryWindows = {}
+        
+        self.scanMode="Normal"
+        self.huntChannelList = []
         
         # GPS engine
         self.gpsEngine = GPSEngineNotifyWin(self)
@@ -268,7 +302,7 @@ class mainWindow(QMainWindow):
         
         self.createControls()
         
-        self.setMinimumWidth(850)
+        self.setMinimumWidth(1024)
         self.setMinimumHeight(400)
         
         self.show()
@@ -286,7 +320,7 @@ class mainWindow(QMainWindow):
         # self.statusBar().showMessage('Window resized.')
         # return super(mainWin, self).resizeEvent(event)
         size = self.geometry()
-        self.networkTable.setGeometry(10, 80, size.width()-20, size.height()/2-75)
+        self.networkTable.setGeometry(10, 103, size.width()-20, size.height()/2-105)
         # self.tabs.setGeometry(30, self.height()/2+20, self.width()-60, self.height()/2-55)
         self.Plot24.setGeometry(10, size.height()/2+10, size.width()/2-10, size.height()/2-40)
         self.Plot5.setGeometry(size.width()/2+5, size.height()/2+10,size.width()/2-15, size.height()/2-40)
@@ -297,6 +331,115 @@ class mainWindow(QMainWindow):
             self.setGeometry(size.x(), size.y(), 850, size.height())
 
             
+    def createControls(self):
+        # self.statusBar().setStyleSheet("QStatusBar{background:rgba(204,229,255,255);color:black;border: 1px solid blue; border-radius: 1px;}")
+        self.statusBar().setStyleSheet("QStatusBar{background:rgba(192,192,192,255);color:black;border: 1px solid blue; border-radius: 1px;}")
+        if GPSEngine.GPSDRunning():
+            self.gpsEngine.start()
+            self.statusBar().showMessage('Local gpsd Found.  System Ready.')
+        else:
+            self.statusBar().showMessage('Note: No local gpsd running.  System Ready.')
+
+
+        # Interface droplist
+        self.lblInterface = QLabel("Local Interface", self)
+        self.lblInterface.setGeometry(5, 30, 120, 30)
+        
+        self.combo = QComboBox(self)
+        self.combo.move(130, 30)
+
+        interfaces=WirelessEngine.getInterfaces()
+        
+        if (len(interfaces) > 0):
+            for curInterface in interfaces:
+                self.combo.addItem(curInterface)
+        else:
+            self.statusBar().showMessage('No wireless interfaces found.')
+
+        self. combo.activated[str].connect(self.onInterface)        
+        
+        # Scan Button
+        self.btnScan = QPushButton("&Scan", self)
+        self.btnScan.setCheckable(True)
+        self.btnScan.setShortcut('Ctrl+S')
+        self.btnScan.setStyleSheet("background-color: rgba(0,128,192,255); border: none;")
+        self.btnScan.move(260, 30)
+        self.btnScan.clicked[bool].connect(self.onScanClicked)
+        
+        # Scan Mode
+        self.lblScanMode = QLabel("Scan Mode:", self)
+        self.lblScanMode.setGeometry(380, 30, 120, 30)
+        
+        self.scanModeCombo = QComboBox(self)
+        self.scanModeCombo.setStatusTip('All-channel normal scans can take 5-10 seconds per sweep.  Use Hunt mode for faster response time on a selected channel.')
+        self.scanModeCombo.move(455, 30)
+        self.scanModeCombo.addItem("Normal")
+        self.scanModeCombo.addItem("Hunt")
+        self.scanModeCombo.currentIndexChanged.connect(self.onScanModeChanged)
+        
+        self.lblScanMode = QLabel("Hunt Channel or Frequencies(s):", self)
+        self.lblScanMode.setGeometry(565, 30, 200, 30)
+        self.huntChannels = QLineEdit(self)
+        self.huntChannels.setStatusTip('Channels or center frequencies can be specified.  List should be comma-separated.')
+        self.huntChannels.setGeometry(763, 30, 100, 30)
+        self.huntChannels.setText('1')
+
+        # Hide them to start
+        self.huntChannels.setVisible(False)
+        self.lblScanMode.setVisible(False)
+        
+        # Age out checkbox
+        self.cbAgeOut = QCheckBox(self)
+        self.cbAgeOut.move(10, 70)
+        self.lblAgeOut = QLabel("Remove networks not seen in the past 3 minutes", self)
+        self.lblAgeOut.setGeometry(30, 70, 300, 30)
+        
+        # Network Table
+        self.networkTable = QTableWidget(self)
+        self.networkTable.setColumnCount(11)
+        # self.networkTable.setGeometry(10, 100, self.mainWidth-60, self.mainHeight/2-105)
+        self.networkTable.setShowGrid(True)
+        self.networkTable.setHorizontalHeaderLabels(['macAddr', 'SSID', 'Security', 'Privacy', 'Channel', 'Frequency', 'Signal Strength', 'Bandwidth', 'Last Seen', 'First Seen', 'GPS'])
+        self.networkTable.resizeColumnsToContents()
+        self.networkTable.setRowCount(0)
+        self.networkTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+
+        self.networkTable.horizontalHeader().sectionClicked.connect(self.onTableHeadingClicked)
+        self.networkTable.cellClicked.connect(self.onTableClicked)
+        
+        # Network Table right-click menu
+        self.ntRightClickMenu = QMenu(self)
+        newAct = QAction('Telemetry', self)        
+        newAct.setStatusTip('View network telemetry data')
+        newAct.triggered.connect(self.onShowTelemetry)
+        self.ntRightClickMenu.addAction(newAct)
+        
+        # Attached it to the table
+        self.networkTable.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.networkTable.customContextMenuRequested.connect(self.showNTContextMenu)
+        
+        self.createCharts()
+        
+        # GPS Indicator
+        self.lblGPS = QLabel("GPS:", self)
+        self.lblGPS.move(850, 30)
+        
+        rect = QRect(0,0,20,20)
+        region = QRegion(rect,QRegion.Ellipse)
+        self.btnGPSStatus = QPushButton("", self)
+        self.btnGPSStatus.move(900, 34)
+        self.btnGPSStatus.setFixedWidth(30)
+        self.btnGPSStatus.setFixedHeight(30)
+        self.btnGPSStatus.setMask(region)
+        
+        if GPSEngine.GPSDRunning():
+            if self.gpsEngine.gpsValid():
+                self.btnGPSStatus.setStyleSheet("background-color: green; border: 1px;")
+            else:
+                self.btnGPSStatus.setStyleSheet("background-color: yellow; border: 1px;")
+        else:
+            self.btnGPSStatus.setStyleSheet("background-color: red; border: 1px;")
+ 
     def createMenu(self):
         # Create main menu bar
         menubar = self.menuBar()
@@ -374,6 +517,35 @@ class mainWindow(QMainWindow):
         exitAct.triggered.connect(self.close)
         fileMenu.addAction(exitAct)
 
+    def onScanModeChanged(self):
+        self.scanMode = str(self.scanModeCombo.currentText())
+        
+        if self.scanMode == "Normal":
+            self.huntChannels.setVisible(False)
+            self.lblScanMode.setVisible(False)
+        else:
+            self.huntChannels.setVisible(True)
+            self.lblScanMode.setVisible(True)
+            
+        self.getHuntChannels()
+        
+    def getHuntChannels(self):
+        channelStr = self.huntChannels.text()
+        channelStr = channelStr.replace(' ', '')
+        tmpList = channelStr.split(',')
+        
+        for curItem in tmpList:
+            if len(curItem) > 0:
+                try:
+                    freqForChannel = WirelessEngine.getFrequencyForChannel(curItem)
+                    
+                    if freqForChannel is not None:
+                        self.huntChannelList.append(int(freqForChannel))
+                    else:
+                        self.huntChannelList.append(int(curItem))
+                except:
+                    QMessageBox.question(self, 'Error',"Could not figure channel out from " + curItem, QMessageBox.Ok)
+        
     def onXGPSLocal(self):
         subprocess.Popen('xgps')
         
@@ -391,103 +563,6 @@ class mainWindow(QMainWindow):
                 self.menuRemoteAgent.setChecked(False)
                 return
         
-    def createControls(self):
-        # self.statusBar().setStyleSheet("QStatusBar{background:rgba(204,229,255,255);color:black;border: 1px solid blue; border-radius: 1px;}")
-        self.statusBar().setStyleSheet("QStatusBar{background:rgba(192,192,192,255);color:black;border: 1px solid blue; border-radius: 1px;}")
-        if GPSEngine.GPSDRunning():
-            self.gpsEngine.start()
-            self.statusBar().showMessage('Local gpsd Found.  System Ready.')
-        else:
-            self.statusBar().showMessage('Note: No local gpsd running.  System Ready.')
-
-
-        # Interface droplist
-        self.lblInterface = QLabel("Local Interface", self)
-        self.lblInterface.setGeometry(5, 30, 120, 30)
-        
-        self.combo = QComboBox(self)
-        self.combo.move(130, 30)
-
-        interfaces=WirelessEngine.getInterfaces()
-        
-        if (len(interfaces) > 0):
-            for curInterface in interfaces:
-                self.combo.addItem(curInterface)
-        else:
-            self.statusBar().showMessage('No wireless interfaces found.')
-
-        self. combo.activated[str].connect(self.onInterface)        
-        
-        # Scan Button
-        self.btnScan = QPushButton("&Scan", self)
-        self.btnScan.setCheckable(True)
-        self.btnScan.setShortcut('Ctrl+S')
-        self.btnScan.setStyleSheet("background-color: rgba(0,128,192,255); border: none;")
-        self.btnScan.move(260, 30)
-        self.btnScan.clicked[bool].connect(self.onScanClicked)
-        
-        # Network Table
-        self.networkTable = QTableWidget(self)
-        self.networkTable.setColumnCount(11)
-        self.networkTable.setGeometry(30, 100, self.mainWidth-60, self.mainHeight/2-75)
-        self.networkTable.setShowGrid(True)
-        self.networkTable.setHorizontalHeaderLabels(['macAddr', 'SSID', 'Security', 'Privacy', 'Channel', 'Frequency', 'Signal Strength', 'Bandwidth', 'Last Seen', 'First Seen', 'GPS'])
-        self.networkTable.resizeColumnsToContents()
-        self.networkTable.setRowCount(0)
-        self.networkTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-
-        self.networkTable.horizontalHeader().sectionClicked.connect(self.onTableHeadingClicked)
-        self.networkTable.cellClicked.connect(self.onTableClicked)
-        
-        # Network Table right-click menu
-        # self.networkTable.setContextMenuPolicy(Qt.ActionsContextMenu)
-        self.ntRightClickMenu = QMenu(self)
-        newAct = QAction('Telemetry', self)        
-        newAct.setStatusTip('View network telemetry data')
-        newAct.triggered.connect(self.onShowTelemetry)
-        self.ntRightClickMenu.addAction(newAct)
-        
-        # Attached it to the table
-        self.networkTable.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.networkTable.customContextMenuRequested.connect(self.showNTContextMenu)
-        # self.networkTable.contextMenuRequested[QPoint].connect(self.showNTContextMenu)
-        
-        # Age out checkbox
-        self.cbAgeOut = QCheckBox(self)
-        self.cbAgeOut.move(400, 30)
-        self.lblAgeOut = QLabel("Remove networks not seen in the past 3 minutes", self)
-        self.lblAgeOut.setGeometry(425, 30, 300, 30)
-        #self.tabs = QTabWidget(self)
-        #self.tab24Ghz = QWidget()	
-        #self.tab5Ghz = QWidget()
-        #self.tabs.setGeometry(30, self.mainHeight/2+20, self.mainWidth-60, self.mainHeight/2-75)
- 
-        # Add tabs
-        #self.tabs.addTab(self.tab24Ghz,"2.4 GHz")
-       # self.tabs.addTab(self.tab5Ghz,"5 GHz")
-       
-        self.createCharts()
-        
-        # GPS Indicator
-        self.lblGPS = QLabel("GPS:", self)
-        self.lblGPS.move(850, 30)
-        
-        rect = QRect(0,0,20,20)
-        region = QRegion(rect,QRegion.Ellipse)
-        self.btnGPSStatus = QPushButton("", self)
-        self.btnGPSStatus.move(900, 34)
-        self.btnGPSStatus.setFixedWidth(30)
-        self.btnGPSStatus.setFixedHeight(30)
-        self.btnGPSStatus.setMask(region)
-        
-        if GPSEngine.GPSDRunning():
-            if self.gpsEngine.gpsValid():
-                self.btnGPSStatus.setStyleSheet("background-color: green; border: 1px;")
-            else:
-                self.btnGPSStatus.setStyleSheet("background-color: yellow; border: 1px;")
-        else:
-            self.btnGPSStatus.setStyleSheet("background-color: red; border: 1px;")
- 
     def onShowTelemetry(self):
         curRow = self.networkTable.currentRow()
         
@@ -697,11 +772,21 @@ class mainWindow(QMainWindow):
                 self.btnScan.setChecked(False)
                 return
                 
+            
+            self.scanModeCombo.setEnabled(False)
+            self.huntChannels.setEnabled(False)
+            
             self.btnScan.setEnabled(False)
             self.btnScan.setStyleSheet("background-color: rgba(224,224,224,255); border: none;")
             self.btnScan.setText('&Scanning')
             self.btnScan.repaint()
-            retCode, errString, wirelessNetworks = requestRemoteNetworks(self.remoteAgentIP, self.remoteAgentPort, curInterface)
+            if self.scanMode == "Normal" or (len(self.huntChannelList) == 0):
+                retCode, errString, wirelessNetworks = requestRemoteNetworks(self.remoteAgentIP, self.remoteAgentPort, curInterface)
+            else:
+                retCode, errString, wirelessNetworks = requestRemoteNetworks(self.remoteAgentIP, self.remoteAgentPort, curInterface, self.huntChannelList)
+            
+            self.scanModeCombo.setEnabled(True)
+            self.huntChannels.setEnabled(True)
             
             self.btnScan.setEnabled(True)
             self.btnScan.setStyleSheet("background-color: rgba(2,128,192,255); border: none;")
@@ -737,7 +822,11 @@ class mainWindow(QMainWindow):
             if (self.combo.count() > 0):
                 curInterface = str(self.combo.currentText())
                 self.statusBar().showMessage('Scanning on interface ' + curInterface)
-                self.remoteScanThread = RemoteScanThread(curInterface, self)
+                if self.scanMode == "Normal" or (len(self.huntChannelList) == 0):
+                    self.remoteScanThread = RemoteScanThread(curInterface, self)
+                else:
+                    self.remoteScanThread = RemoteScanThread(curInterface, self, self.huntChannelList)
+                    
                 self.remoteScanThread.scanDelay = self.remoteScanDelay
                 self.remoteScanThread.start()
             else:
@@ -790,7 +879,10 @@ class mainWindow(QMainWindow):
             if (self.combo.count() > 0):
                 curInterface = str(self.combo.currentText())
                 self.statusBar().showMessage('Scanning on interface ' + curInterface)
-                self.scanThread = ScanThread(curInterface, self)
+                if self.scanMode == "Normal" or (len(self.huntChannelList) == 0):
+                    self.scanThread = ScanThread(curInterface, self)
+                else:
+                    self.scanThread = ScanThread(curInterface, self, self.huntChannelList)
                 self.scanThread.scanDelay = self.scanDelay
                 self.scanThread.start()
             else:
@@ -803,11 +895,14 @@ class mainWindow(QMainWindow):
             self.btnScan.setStyleSheet("background-color: rgba(255,0,0,255); border: none;")
             self.btnScan.setText('&Stop scanning')
             self.menuRemoteAgent.setEnabled(False)
+            self.scanModeCombo.setEnabled(False)
+            self.huntChannels.setEnabled(False)
         else:
             self.btnScan.setStyleSheet("background-color: rgba(2,128,192,255); border: none;")
             self.btnScan.setText('&Scan')
             self.menuRemoteAgent.setEnabled(True)
-
+            self.scanModeCombo.setEnabled(True)
+            self.huntChannels.setEnabled(True)
             
         # Need to reset the shortcut after changing the text
         self.btnScan.setShortcut('Ctrl+S')

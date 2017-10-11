@@ -69,7 +69,7 @@ class RadarWidget(FigureCanvas):
         # self.filledcircle = self.axes.add_artist(circle)
         self.filledcircle = None
         # Create bullseye
-        circle = plt.Circle((0.0, 0.0), 2, transform=self.axes.transData._b, color="black", alpha=0.4)
+        circle = plt.Circle((0.0, 0.0), 20, transform=self.axes.transData._b, color="black", alpha=0.4)
         self.bullseye = self.axes.add_artist(circle)
 
         # Rotate zero up
@@ -101,7 +101,7 @@ class RadarWidget(FigureCanvas):
         circle = plt.Circle((0.0, 0.0), radius, transform=self.axes.transData._b, color="red", alpha=0.4)
         self.filledcircle = self.axes.add_artist(circle)
         # Create bullseye
-        circle = plt.Circle((0.0, 0.0), 2, transform=self.axes.transData._b, color="black", alpha=0.4)
+        circle = plt.Circle((0.0, 0.0), 20, transform=self.axes.transData._b, color="black", alpha=0.4)
         self.bullseye = self.axes.add_artist(circle)
         
 class TelemetryDialog(QDialog):
@@ -298,7 +298,11 @@ class TelemetryDialog(QDialog):
                     self.timeSeries.replace(counter, counter, curPoint.y())
                     counter += 1
                     
-            self.timeSeries.append(numPoints,curNet.signal)
+            if curNet.signal <= 100:
+                self.timeSeries.append(numPoints,curNet.signal)
+            else:
+                self.timeSeries.append(numPoints,100)
+                
             
             
             # Update Table
