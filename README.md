@@ -5,9 +5,10 @@ Like so many of us who have used tools like inSSIDer on Windows in the past, I'v
 
 Sparrow-wifi provides a nice graphical interface with tables of discovered networks and signal plots along with a few other nice features:
 
+- Enhanced per-network telemetry display ('tracker' style signal meter, time plots, GPS log which can be exported)
 - Ability to export results to CSV and import them back in to revisualize a scan
 - Sparrow-wifi has built-in GPS support via gpsd for network location tagging
-- Sparrow-wifi has a remotely deployable agent (sparrowwifiagent.py) that can be run on a separate system.  The GUI can then be connected to the remote agent for remote monitoring.
+- Sparrow-wifi has a remotely deployable agent (sparrowwifiagent.py) that can be run on a separate system.  The GUI can then be connected to the remote agent for remote monitoring, including remote GPS.
 - The agent provides a basic HTTP service and provides JSON responses to requests from the UI, so requests for wireless interfaces, networks, and GPS status can even be used in other applications
 
 Sample screenshot:
@@ -15,6 +16,8 @@ Sample screenshot:
 <p align="center">
   <img src="https://github.com/ghostop14/sparrow-wifi/blob/master/sparrow-screenshot.png" width="800"/>
 </p>
+
+NOTE: This project is under active development so check back regularly for updates, bugfixes, and new features.
 
 ## Installation
 sparrow-wifi uses python3, qt5, and qtchart behind the scenes.  On a standard debian variant you will may already have python3 and qt5 installed.  The only addition to run is qtchart.  Therefore you may need to run the following command for setup:
