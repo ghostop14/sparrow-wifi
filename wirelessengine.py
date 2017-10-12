@@ -25,6 +25,7 @@ import datetime
 from dateutil import parser
 import json
 import copy
+from time import sleep
 from sparrowgps import SparrowGPS
 
 # ------------------  Global functions ------------------------------
@@ -319,13 +320,31 @@ class WirelessEngine(object):
         return retVal
 
     def getNetworksAsJson(interfaceName, gpsData, huntChannelList=None):
-        
+        # This is only used by the remote agent to get and return networks
         if (huntChannelList is None) or (len(huntChannelList) == 0):
-            retCode, errString, wirelessNetworks = WirelessEngine.scanForNetworks(interfaceName)
+            # This code handles the thought that "what if we query for networks and the interface
+            # reports busy (it does happen if we query too fast.)
+            retries = 0
+            retCode = WirelessNetwork.ERR_DEVICEBUSY
+            
+            while (retCode == WirelessNetwork.ERR_DEVICEBUSY) and (retries < 3):
+                # Handle retries in case we get a busy response
+                retCode, errString, wirelessNetworks = WirelessEngine.scanForNetworks(interfaceName)
+                retries += 1
+                if retCode == WirelessNetwork.ERR_DEVICEBUSY:
+                    sleep(0.4)
         else:
             wirelessNetworks = {}
             for curFrequency in huntChannelList:
-                retCode, errString, tmpWirelessNetworks = WirelessEngine.scanForNetworks(interfaceName,curFrequency )
+                # Handle if the device reports busy with some retries
+                retries = 0
+                retCode = WirelessNetwork.ERR_DEVICEBUSY
+                while (retCode == WirelessNetwork.ERR_DEVICEBUSY) and (retries < 3):
+                    # Handle retries in case we get a busy response
+                    retCode, errString, tmpWirelessNetworks = WirelessEngine.scanForNetworks(interfaceName,curFrequency )
+                    retries += 1
+                    if retCode == WirelessNetwork.ERR_DEVICEBUSY:
+                        sleep(0.2)
                 
                 for curKey in tmpWirelessNetworks.keys():
                     curNet = tmpWirelessNetworks[curKey]

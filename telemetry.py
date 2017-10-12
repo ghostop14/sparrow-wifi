@@ -106,15 +106,24 @@ class RadarWidget(FigureCanvas):
         
 class TelemetryDialog(QDialog):
     resized = QtCore.pyqtSignal()
+    visibility = QtCore.pyqtSignal(bool)
 
     def __init__(self, parent = None):
         super(TelemetryDialog, self).__init__(parent)
         
+        self.visibility.connect(self.onVisibilityChanged)
+
         # Used to detect network change
         self.lastNetKey = ""
         self.lastSeen = None
         self.maxPoints = 20
-        self.maxRowPoints = 500
+        self.maxRowPoints = 60
+        
+        self.paused = False
+        self.streamingSave = False
+        self.streamingFile = None
+        self.linesBeforeFlush = 10
+        self.currentLine = 0
         
         # OK and Cancel buttons
         #buttons = QDialogButtonBox(QDialogButtonBox.Ok,Qt.Horizontal, self)
@@ -145,7 +154,18 @@ class TelemetryDialog(QDialog):
         
         self.btnExport = QPushButton("Export Table", self)
         self.btnExport.clicked[bool].connect(self.onExportClicked)
+        self.btnExport.setStyleSheet("background-color: rgba(2,128,192,255);")
 
+        self.btnPause = QPushButton("Pause Table", self)
+        self.btnPause.setCheckable(True)
+        self.btnPause.clicked[bool].connect(self.onPauseClicked)
+        self.btnPause.setStyleSheet("background-color: rgba(2,128,192,255);")
+        
+        self.btnStream = QPushButton("Streaming Save", self)
+        self.btnStream.setCheckable(True)
+        self.btnStream.clicked[bool].connect(self.onStreamClicked)
+        self.btnStream.setStyleSheet("background-color: rgba(2,128,192,255);")
+        
         self.createChart()
         
         self.setMinimumWidth(600)
@@ -167,8 +187,11 @@ class TelemetryDialog(QDialog):
         # chart
         self.timePlot.setGeometry(10, 10, self.geometry().width() - smallerDim - 30, smallerDim)
 
-        # Export Button
-        self.btnExport.move(10, self.geometry().height()/2+20)
+        # Buttons
+        self.btnPause.setGeometry(10, self.geometry().height()/2+18, 110, 25)
+        self.btnExport.setGeometry(150, self.geometry().height()/2+18, 110, 25)
+        self.btnStream.setGeometry(290, self.geometry().height()/2+18, 110, 25)
+        
         # Table
         self.locationTable.setGeometry(10, self.geometry().height()/2 + 50, self.geometry().width()-20, self.geometry().height()/2-60)
 
@@ -182,7 +205,68 @@ class TelemetryDialog(QDialog):
         # Move the top-left point of the application window to the top-left point of the qr rectangle, 
         # basically centering the window
         self.move(qr.topLeft())
+
+    def onVisibilityChanged(self, visible):
+        if not visible:
+            self.paused = True
+            self.btnPause.setStyleSheet("background-color: rgba(255,0,0,255);")
+            # We're coming out of streaming
+            self.streamingSave = False
+            self.btnStream.setStyleSheet("background-color: rgba(2,128,192,255);")
+            self.btnStream.setChecked(False)
+            if (self.streamingFile):
+                self.streamingFile.close()
+                self.streamingFile = None
+            return
+        else:
+            self.paused = False
+            self.btnPause.setStyleSheet("background-color: rgba(2,128,192,255);")
+            if self.locationTable.rowCount() > 1:
+                self.locationTable.scrollToItem(self.locationTable.item(0, 0))
         
+    def hideEvent(self, event):
+        self.visibility.emit(False)
+        
+    def showEvent(self, event):
+        self.visibility.emit(True)
+        
+    def onPauseClicked(self, pressed):
+        if self.btnPause.isChecked():
+            self.paused = True
+            self.btnPause.setStyleSheet("background-color: rgba(255,0,0,255);")
+        else:
+            self.paused = False
+            self.btnPause.setStyleSheet("background-color: rgba(2,128,192,255);")
+        
+    def onStreamClicked(self, pressed):
+        if not self.btnStream.isChecked():
+            # We're coming out of streaming
+            self.streamingSave = False
+            self.btnStream.setStyleSheet("background-color: rgba(2,128,192,255);")
+            if (self.streamingFile):
+                self.streamingFile.close()
+                self.streamingFile = None
+            return
+            
+        self.btnStream.setStyleSheet("background-color: rgba(255,0,0,255);")
+        self.streamingSave = True
+        
+        fileName = self.saveFileDialog()
+
+        if not fileName:
+            return
+            
+        try:
+            self.streamingFile = open(fileName, 'w', 1)  # 1 says use line buffering, otherwise it fully buffers and doesn't write
+        except:
+            QMessageBox.question(self, 'Error',"Unable to write to " + fileName, QMessageBox.Ok)
+            self.streamingFile = None
+            self.streamingSave = False
+            self.btnStream.setStyleSheet("background-color: rgba(2,128,192,255);")
+            return
+            
+        self.streamingFile.write('macAddr,SSID,Strength,Timestamp,GPS,Latitude,Longitude,Altitude\n')
+                    
     def onExportClicked(self):
         fileName = self.saveFileDialog()
 
@@ -314,13 +398,12 @@ class TelemetryDialog(QDialog):
             
         
     def addTableData(self, curNet):
-        rowPosition = self.locationTable.rowCount()
-        #rowPosition -= 1
-        
-        #addedFirstRow = False
-        #if rowPosition < 0:
-        #    addedFirstRow = True
-        #    rowPosition = 0
+        if self.paused:
+            return
+
+        # rowPosition = self.locationTable.rowCount()
+        # Always insert at row(0)
+        rowPosition = 0
             
         self.locationTable.insertRow(rowPosition)
         
@@ -345,9 +428,18 @@ class TelemetryDialog(QDialog):
         self.locationTable.setItem(rowPosition, 5,  FloatTableWidgetItem(str(curNet.gps.latitude)))
         self.locationTable.setItem(rowPosition, 6,  FloatTableWidgetItem(str(curNet.gps.longitude)))
         self.locationTable.setItem(rowPosition, 7,  FloatTableWidgetItem(str(curNet.gps.altitude)))
-        order = Qt.DescendingOrder
-        self.locationTable.sortItems(3, order )
+        #order = Qt.DescendingOrder
+        #self.locationTable.sortItems(3, order )
                     
+
+        # If we're in streaming mode, write the data out to disk as well
+        if self.streamingFile:
+            self.streamingFile.write(self.locationTable.item(rowPosition, 0).text() + ',' + self.locationTable.item(rowPosition, 1).text() + ',' + self.locationTable.item(rowPosition, 2).text() + ',' + 
+            self.locationTable.item(rowPosition, 3).text() + ',' + self.locationTable.item(rowPosition, 4).text()+ ',' + self.locationTable.item(rowPosition, 5).text()+ ',' + self.locationTable.item(rowPosition, 6).text()+ ',' + self.locationTable.item(rowPosition, 7).text() + '\n')
+
+            if (self.currentLine > self.linesBeforeFlush):
+                self.streamingFile.flush()
+                self.currentLine += 1
                     
         numRows = self.locationTable.rowCount()
         

@@ -151,7 +151,9 @@ class ScanThread(Thread):
             
                 if (retCode == WirelessNetwork.ERR_DEVICEBUSY):
                     # Shorter sleep for faster results
-                    sleep(0.2)
+                    # sleep(0.2)
+                    # Switched back for now.  Might be running too fast.
+                    sleep(self.scanDelay)
                 else:
                     sleep(self.scanDelay)
             else:
@@ -168,11 +170,12 @@ class ScanThread(Thread):
                 
                     if (retCode == WirelessNetwork.ERR_DEVICEBUSY):
                         # Shorter sleep for faster results
-                        sleep(0.2)
+                        # sleep(0.2)
+                        # Switched back for now.  Might be running too fast.
+                        sleep(self.scanDelay)
                     else:
                         sleep(self.scanDelay)
                     
-            
         self.threadRunning = False
 
 # ------------------  Remote agent network scan thread  ------------------------------
@@ -302,7 +305,7 @@ class mainWindow(QMainWindow):
         
         self.createControls()
         
-        self.setMinimumWidth(1024)
+        self.setMinimumWidth(800)
         self.setMinimumHeight(400)
         
         self.show()
@@ -431,6 +434,7 @@ class mainWindow(QMainWindow):
         self.btnGPSStatus.setFixedWidth(30)
         self.btnGPSStatus.setFixedHeight(30)
         self.btnGPSStatus.setMask(region)
+        self.btnGPSStatus.clicked.connect(self.onGPSStatusIndicatorClicked)
         
         if GPSEngine.GPSDRunning():
             if self.gpsEngine.gpsValid():
@@ -517,6 +521,65 @@ class mainWindow(QMainWindow):
         exitAct.triggered.connect(self.close)
         fileMenu.addAction(exitAct)
 
+    def createCharts(self):
+        self.chart24 = QChart()
+        titleFont = QFont()
+        titleFont.setPixelSize(18)
+        titleBrush = QBrush(QColor(0, 0, 255))
+        self.chart24.setTitleFont(titleFont)
+        self.chart24.setTitleBrush(titleBrush)
+        self.chart24.setTitle('2.4 GHz')
+        self.chart24.legend().hide()
+        
+        # Axis examples: https://doc.qt.io/qt-5/qtcharts-multiaxis-example.html
+        newAxis = QValueAxis()
+        newAxis.setMin(0)
+        newAxis.setMax(15)
+        newAxis.setTickCount(16)
+        newAxis.setLabelFormat("%d")
+        newAxis.setTitleText("Channel")
+        self.chart24.addAxis(newAxis, Qt.AlignBottom)
+        
+        newAxis = QValueAxis()
+        newAxis.setMin(-100)
+        newAxis.setMax(-20)
+        newAxis.setTickCount(9)
+        newAxis.setLabelFormat("%d")
+        newAxis.setTitleText("dBm")
+        self.chart24.addAxis(newAxis, Qt.AlignLeft)
+        
+        chartBorder = Qt.darkGray
+        self.Plot24 = QChartView(self.chart24, self)
+        self.Plot24.setBackgroundBrush(chartBorder)
+        self.Plot24.setRenderHint(QPainter.Antialiasing)
+
+        self.chart5 = QChart()
+        self.chart5.setTitleFont(titleFont)
+        self.chart5.setTitleBrush(titleBrush)
+        self.chart5.setTitle('5 GHz')
+        self.chart5.createDefaultAxes()
+        self.chart5.legend().hide()
+        
+        newAxis = QValueAxis()
+        newAxis.setMin(30)
+        newAxis.setMax(170)
+        newAxis.setTickCount(14)
+        newAxis.setLabelFormat("%d")
+        newAxis.setTitleText("Channel")
+        self.chart5.addAxis(newAxis, Qt.AlignBottom)
+        
+        newAxis = QValueAxis()
+        newAxis.setMin(-100)
+        newAxis.setMax(-20)
+        newAxis.setTickCount(9)
+        newAxis.setLabelFormat("%d")
+        newAxis.setTitleText("dBm")
+        self.chart5.addAxis(newAxis, Qt.AlignLeft)
+        
+        self.Plot5 = QChartView(self.chart5, self)
+        self.Plot5.setBackgroundBrush(chartBorder)
+        self.Plot5.setRenderHint(QPainter.Antialiasing)
+    
     def onScanModeChanged(self):
         self.scanMode = str(self.scanModeCombo.currentText())
         
@@ -550,18 +613,29 @@ class mainWindow(QMainWindow):
         subprocess.Popen('xgps')
         
     def onXGPSRemote(self):
-        text, okPressed = QInputDialog.getText(self, "Remote Agent","Please provide gpsd IP:", QLineEdit.Normal, "127.0.0.1")
+        text, okPressed = QInputDialog.getText(self, "Remote Agent","Please provide gpsd IP:", QLineEdit.Normal, "127.0.0.1:2947")
         if okPressed and text != '':
             # Validate the input
-            p = re.compile('^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})')
+            p = re.compile('^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]{1,5})')
+            specIsGood = True
             try:
-                agentSpec = p.search(text).group(1) 
-                args = ['xgps', agentSpec + ":2947"]
-                subprocess.Popen(args)
+                agentSpec = p.search(text).group(1)
+                remoteIP = agentSpec.split(':')[0]
+                remotePort = int(agentSpec.split(':')[1])
+                
+                if remotePort < 1 or remotePort > 65535:
+                    QMessageBox.question(self, 'Error',"Port must be in an acceptable IP range (1-65535)", QMessageBox.Ok)
+                    specIsGood = False
             except:
-                QMessageBox.question(self, 'Error',"Please enter an IP in the format a.b.c.d", QMessageBox.Ok)
+                QMessageBox.question(self, 'Error',"Please enter it in the format <IP>:<port>", QMessageBox.Ok)
+                specIsGood = False
+                
+            if not specIsGood:
                 self.menuRemoteAgent.setChecked(False)
                 return
+                    
+            args = ['xgps', remoteIP + ":" + str(remotePort)]
+            subprocess.Popen(args)
         
     def onShowTelemetry(self):
         curRow = self.networkTable.currentRow()
@@ -669,98 +743,6 @@ class mainWindow(QMainWindow):
         else:
             selectedSeries = None
 
-        # curRow = self.networkTable.currentRow()
-        
-        # if curRow > -1:
-        #    if (self.telemetryWindow is not None and self.telemetryWindow.isVisible()):
-        #        curNet = self.networkTable.item(curRow, 1).data(Qt.UserRole+1)
-        #        self.telemetryWindow.updateNetworkData(curNet)
-       
-    def createCharts(self):
-
-        # https://doc.qt.io/qt-5/qtcharts-linechart-example.html
-        #testseries = QLineSeries()
-        #testseries.append(1,0)
-        #testseries.append(2, 0)
-        #testseries.append(3, 0)
-        #testseries.append(4, 0)
-        #testseries.append(5, 0)
-        #testseries.append(6, 1)
-        #testseries.append(7, 1)
-        #testseries.append(8, 1)
-        #testseries.append(9, 0)
-        #testseries.append(10, 0)
-        #testseries.append(11, 0)
-        #testseries.append(12, 0)
-        #testseries.append(13, 0)
-        # pen = QPen(QColor(0, 0, 0))
-        #pen.setWidth(2)
-        # testseries.setPen(pen)
-    
-        self.chart24 = QChart()
-        titleFont = QFont()
-        titleFont.setPixelSize(18)
-        titleBrush = QBrush(QColor(0, 0, 255))
-        self.chart24.setTitleFont(titleFont)
-        self.chart24.setTitleBrush(titleBrush)
-        self.chart24.setTitle('2.4 GHz')
-        # self.chart24.addSeries(testseries)
-        # self.chart24.createDefaultAxes()
-        self.chart24.legend().hide()
-        
-        # Axis examples: https://doc.qt.io/qt-5/qtcharts-multiaxis-example.html
-        newAxis = QValueAxis()
-        newAxis.setMin(0)
-        newAxis.setMax(15)
-        newAxis.setTickCount(16)
-        newAxis.setLabelFormat("%d")
-        newAxis.setTitleText("Channel")
-        self.chart24.addAxis(newAxis, Qt.AlignBottom)
-        
-        newAxis = QValueAxis()
-        newAxis.setMin(-100)
-        newAxis.setMax(-20)
-        newAxis.setTickCount(9)
-        newAxis.setLabelFormat("%d")
-        newAxis.setTitleText("dBm")
-        self.chart24.addAxis(newAxis, Qt.AlignLeft)
-        
-        chartBorder = Qt.darkGray
-        self.Plot24 = QChartView(self.chart24, self)
-        self.Plot24.setBackgroundBrush(chartBorder)
-        self.Plot24.setRenderHint(QPainter.Antialiasing)
-        # self.Plot24.setGeometry(10, self.mainHeight/2+10, self.mainWidth/2-10, self.mainHeight/2-75)
-
-        self.chart5 = QChart()
-        self.chart5.setTitleFont(titleFont)
-        self.chart5.setTitleBrush(titleBrush)
-        self.chart5.setTitle('5 GHz')
-        #self.chart5.addSeries(testseries)
-        self.chart5.createDefaultAxes()
-        self.chart5.legend().hide()
-        
-        newAxis = QValueAxis()
-        newAxis.setMin(30)
-        newAxis.setMax(170)
-        newAxis.setTickCount(14)
-        newAxis.setLabelFormat("%d")
-        newAxis.setTitleText("Channel")
-        self.chart5.addAxis(newAxis, Qt.AlignBottom)
-        
-        newAxis = QValueAxis()
-        newAxis.setMin(-100)
-        newAxis.setMax(-20)
-        newAxis.setTickCount(9)
-        newAxis.setLabelFormat("%d")
-        newAxis.setTitleText("dBm")
-        self.chart5.addAxis(newAxis, Qt.AlignLeft)
-        
-        self.Plot5 = QChartView(self.chart5, self)
-        self.Plot5.setBackgroundBrush(chartBorder)
-        self.Plot5.setRenderHint(QPainter.Antialiasing)
-        # self.Plot5.setGeometry(self.mainWidth/2+10, self.mainHeight/2+10, self.mainWidth/2-10, self.mainHeight/2-75)
-
-    
     def onRemoteScanClicked(self, pressed):
         
         if not self.remoteAutoUpdates:
@@ -846,6 +828,13 @@ class mainWindow(QMainWindow):
 
         # Need to reset the shortcut after changing the text
         self.btnScan.setShortcut('Ctrl+S')
+
+    def onGPSStatusIndicatorClicked(self):
+        if self.menuRemoteAgent.isChecked():
+            self.onXGPSRemote()
+        else:
+            if GPSEngine.GPSDRunning():
+                self.onXGPSLocal()
         
     def onScanClicked(self, pressed):
         if self.menuRemoteAgent.isChecked():
@@ -882,6 +871,7 @@ class mainWindow(QMainWindow):
                 if self.scanMode == "Normal" or (len(self.huntChannelList) == 0):
                     self.scanThread = ScanThread(curInterface, self)
                 else:
+                    self.getHuntChannels()
                     self.scanThread = ScanThread(curInterface, self, self.huntChannelList)
                 self.scanThread.scanDelay = self.scanDelay
                 self.scanThread.start()
@@ -1224,16 +1214,21 @@ class mainWindow(QMainWindow):
                 curNet = self.networkTable.item(i, 1).data(Qt.UserRole+1)
                 netKeyList.append(curNet.getKey())
                 
-            for curKey in self.telemetryWindows.keys():
-                # For each telemetry window we have stored,
-                # If it's no longer in the network table and it's not visible
-                # (Meaning the window was closed but we still have an active Window object)
-                # Let's inform the window to close and remove it from the list
-                if curKey not in netKeyList:
-                    if not self.telemetryWindows[curKey].isVisible():
-                        self.telemetryWindows[curKey].close()
-                        del self.telemetryWindows[curKey]
-                        
+            try:
+                # If the length of this dictionary changes it may throw an exception.
+                # We'll just pick it up next pass.  This is low-priority cleanup
+                
+                for curKey in self.telemetryWindows.keys():
+                    # For each telemetry window we have stored,
+                    # If it's no longer in the network table and it's not visible
+                    # (Meaning the window was closed but we still have an active Window object)
+                    # Let's inform the window to close and remove it from the list
+                    if curKey not in netKeyList:
+                        if not self.telemetryWindows[curKey].isVisible():
+                            self.telemetryWindows[curKey].close()
+                            del self.telemetryWindows[curKey]
+            except:
+                pass
         # Last formatting tweaks on network table
         self.networkTable.resizeColumnsToContents()
         self.networkTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
