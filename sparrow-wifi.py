@@ -595,7 +595,18 @@ class mainWindow(QMainWindow):
     def getHuntChannels(self):
         channelStr = self.huntChannels.text()
         channelStr = channelStr.replace(' ', '')
-        tmpList = channelStr.split(',')
+        
+        if (',' in channelStr):
+            tmpList = channelStr.split(',')
+        else:
+            tmpList = []
+            if (len(channelStr)>0):
+                try:
+                    # quick check that we really have a number
+                    intVal = int(channelStr)
+                    tmpList.append(channelStr)
+                except:
+                    pass
         
         for curItem in tmpList:
             if len(curItem) > 0:
