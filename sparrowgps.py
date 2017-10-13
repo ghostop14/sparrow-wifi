@@ -47,10 +47,22 @@ class GPSThread(Thread):
                 gpsResult = SparrowGPS()
                 
                 try:
-                    gpsResult.altitude = float(self.agps_thread.data_stream.alt)
+                    if (type(self.agps_thread.data_stream.alt) != str):
+                        try:
+                            gpsResult.altitude = float(self.agps_thread.data_stream.alt)
+                        except:
+                            gpsResult.altitude = 0.0
+                    else:
+                        gpsResult.altitude = 0.0
+                        
                     gpsResult.latitude = float(self.agps_thread.data_stream.lat)
                     gpsResult.longitude = float(self.agps_thread.data_stream.lon)
-                    gpsResult.speed = float(self.agps_thread.data_stream.speed)
+                    
+                    try:
+                        gpsResult.speed = float(self.agps_thread.data_stream.speed)
+                    except:
+                        gpsResult.speed = 0.0
+                        
                     gpsResult.isValid = True
                 except:
                     gpsResult.isValid = False

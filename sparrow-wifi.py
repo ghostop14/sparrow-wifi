@@ -226,8 +226,8 @@ class GPSEngineNotifyWin(GPSEngine):
 
         if self.isSynchronized != gpsResult.isValid:
             # Allow GPS to sync / de-sync and notify
-            self.mainWin.gpsSynchronizedsignal.emit()
             self.isSynchronized = gpsResult.isValid
+            self.mainWin.gpsSynchronizedsignal.emit()
 
 # ------------------  Global color list that we'll cycle through  ------------------------------
 colors = [Qt.black, Qt.red, Qt.darkRed, Qt.green, Qt.darkGreen, Qt.blue, Qt.darkBlue, Qt.cyan, Qt.darkCyan, Qt.magenta, Qt.darkMagenta, Qt.darkGray]
@@ -802,13 +802,16 @@ class mainWindow(QMainWindow):
             # Checking local GPS
             if GPSEngine.GPSDRunning():
                 if self.gpsEngine.gpsValid():
+                    self.gpsSynchronized = True
                     self.btnGPSStatus.setStyleSheet("background-color: green; border: 1px;")
                     self.statusBar().showMessage('Local gpsd service is running and satellites are synchronized.')
                 else:
+                    self.gpsSynchronized = False
                     self.btnGPSStatus.setStyleSheet("background-color: yellow; border: 1px;")
                     self.statusBar().showMessage("Local gpsd service is running but it's not synchronized with the satellites yet.")
                     
             else:
+                self.gpsSynchronized = False
                 self.statusBar().showMessage('No local gpsd running.')
                 self.btnGPSStatus.setStyleSheet("background-color: red; border: 1px;")
         else:
@@ -817,12 +820,15 @@ class mainWindow(QMainWindow):
             
             if errCode == 0:
                 if (gpsStatus.gpsSynchronized):
+                    self.gpsSynchronized = True
                     self.btnGPSStatus.setStyleSheet("background-color: green; border: 1px;")
                     self.statusBar().showMessage("Remote GPS is running and synchronized.")
                 elif (gpsStatus.gpsRunning):
+                    self.gpsSynchronized = False
                     self.btnGPSStatus.setStyleSheet("background-color: yellow; border: 1px;")
                     self.statusBar().showMessage("Remote GPS is running but it has not synchronized with the satellites yet.")
                 else:
+                    self.gpsSynchronized = False
                     self.statusBar().showMessage("Remote GPS service is not running.")
                     self.btnGPSStatus.setStyleSheet("background-color: red; border: 1px;")
             else:
@@ -1031,7 +1037,7 @@ class mainWindow(QMainWindow):
             if (self.gpsSynchronized and (self.gpsEngine.lastCoord is not None)):
                 for curKey in wirelessNetworks.keys():
                     curNet = wirelessNetworks[curKey]
-                    curNet.gps = GPSEngine.lastCoord
+                    curNet.gps = self.gpsEngine.lastCoord
                 
         self.populateTable(wirelessNetworks)
         
