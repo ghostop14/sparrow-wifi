@@ -18,7 +18,7 @@
 # Boston, MA 02110-1301, USA.
 # 
 
-from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QApplication, QLabel, QComboBox, QLineEdit, QPushButton, QFileDialog, QSpinBox
+from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QApplication, QLabel, QComboBox, QLineEdit, QPushButton, QFileDialog, QSpinBox, QDesktopWidget
 from PyQt5.QtCore import Qt
 
 from sparrowmap import MapEngine
@@ -171,9 +171,14 @@ class MapSettings(object):
         self.maxLabelLength = 15
         
 class MapSettingsDialog(QDialog):
-    def __init__(self, parent = None):
+    def __init__(self, parent = None, skipControls = False):
         super(MapSettingsDialog, self).__init__(parent)
 
+        self.center()
+        
+        if skipControls:
+            return
+            
         # Map Type droplist
         self.lblMapType = QLabel("Map Type", self)
         self.lblMapType.setGeometry(30, 26, 100, 30)
@@ -199,7 +204,7 @@ class MapSettingsDialog(QDialog):
         self.lblFile.move(30, 124)
         self.fileinput = QLineEdit(self)
         self.fileinput.setGeometry(115, 120, 250, 20)
-        self.btnOpen = QPushButton("&Open", self)
+        self.btnOpen = QPushButton("&Save", self)
         self.btnOpen.move(380, 120)
         self.btnOpen.clicked.connect(self.onFileClicked)
 
@@ -230,6 +235,17 @@ class MapSettingsDialog(QDialog):
         self.setGeometry(self.geometry().x(), self.geometry().y(), 500,320)
         self.setWindowTitle("Map Settings")
 
+    def center(self):
+        # Get our geometry
+        qr = self.frameGeometry()
+        # Find the desktop center point
+        cp = QDesktopWidget().availableGeometry().center()
+        # Move our center point to the desktop center point
+        qr.moveCenter(cp)
+        # Move the top-left point of the application window to the top-left point of the qr rectangle, 
+        # basically centering the window
+        self.move(qr.topLeft())
+        
     def onFileClicked(self):
         fileName = self.saveFileDialog()
 
@@ -281,12 +297,138 @@ class MapSettingsDialog(QDialog):
         mapSettings = dialog.getMapSettings()
         return (mapSettings, result == QDialog.Accepted)
 
+class TelemetryMapSettings(MapSettings):
+    def __init__(self):
+        super().__init__()
+        self.inputfile = ""
+        self.plotNthPoint = 1
+        
+class TelemetryMapSettingsDialog(MapSettingsDialog):
+    def __init__(self, parent = None):
+        super(TelemetryMapSettingsDialog, self).__init__(parent, True)
+
+        # Map Type droplist
+        self.lblMapType = QLabel("Map Type", self)
+        self.lblMapType.setGeometry(30, 26, 100, 30)
+        
+        self.combo = QComboBox(self)
+        self.combo.setGeometry(115, 30, 140, 30)
+        self.combo.addItem("Standard Street")
+        self.combo.addItem("Hybrid Satellite")
+        self.combo.addItem("Satellite Only")
+        self.combo.addItem("Terrain")
+
+        # Input File:
+        self.lblInputFile = QLabel("Input File: ", self)
+        self.lblInputFile.move(30, 84)
+        self.inputfileinput = QLineEdit(self)
+        self.inputfileinput.setGeometry(115, 84, 250, 20)
+        self.btnInputOpen = QPushButton("&Open", self)
+        self.btnInputOpen.move(380, 84)
+        self.btnInputOpen.clicked.connect(self.onInputFileClicked)
+
+        # Output File:
+        self.lblFile = QLabel("Output File: ", self)
+        self.lblFile.move(30, 124)
+        self.fileinput = QLineEdit(self)
+        self.fileinput.setGeometry(115, 120, 250, 20)
+        self.btnOpen = QPushButton("&Save", self)
+        self.btnOpen.move(380, 120)
+        self.btnOpen.clicked.connect(self.onFileClicked)
+
+        spacing = 35
+        # Map Title
+        self.lblTitle = QLabel("Map Title: ", self)
+        self.lblTitle.move(30, 129+spacing)
+        self.title = QLineEdit(self)
+        self.title.setText("SSID Map")
+        self.title.setGeometry(115, 124+spacing, 200, 20)
+
+        # Max label length
+        self.lblMaxLen = QLabel("Max Label Length: ", self)
+        self.lblMaxLen.move(30, 133+spacing*2)
+        self.spinMaxLen = QSpinBox(self)
+        self.spinMaxLen.setRange(1, 100)
+        self.spinMaxLen.setValue(15)
+        self.spinMaxLen.setGeometry(145, 126+spacing*2, 50, 28)
+        
+        # Nth Point
+        self.lblplot = QLabel("Plot every ", self)
+        self.lblplot.move(30, 133+spacing*3)
+        self.spinplot = QSpinBox(self)
+        self.spinplot.setRange(1, 1000)
+        self.lblplot2 = QLabel("points", self)
+        self.lblplot2.move(170, 133+spacing*3)
+        
+        self.spinplot.setValue(1)
+        self.spinplot.setGeometry(115, 125+spacing*3, 50, 28)
+
+        # OK and Cancel buttons
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel,
+            Qt.Horizontal, self)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        buttons.move(170, 280)
+        
+        self.setGeometry(self.geometry().x(), self.geometry().y(), 500,320)
+        self.setWindowTitle("SSID Map Settings")
+
+    def onInputFileClicked(self):
+        fileName = self.openFileDialog()
+
+        if not fileName:
+            return
+        else:
+            self.inputfileinput.setText(fileName)
+        
+    def openFileDialog(self):    
+        options = QFileDialog.Options()
+        options |= QFileDialog.DontUseNativeDialog
+        fileName, _ = QFileDialog.getOpenFileName(self,"QFileDialog.getOpenFileName()", "","CSV Files (*.csv);;All Files (*)", options=options)
+        if fileName:
+            return fileName
+        else:
+            return None
+ 
+    def getMapSettings(self):
+        mapSettings = TelemetryMapSettings()
+        
+        strType = self.combo.currentText()
+        
+        if (strType == 'Hybrid Satellite'):
+            mapSettings.mapType = MapEngine.MAP_TYPE_HYBRID
+        elif (strType == 'Satellite Only'):
+            mapSettings.mapType = MapEngine.MAP_TYPE_SATELLITE_ONLY
+        elif (strType == 'Terrain'):
+            mapSettings.mapType = MapEngine.MAP_TYPE_TERRAIN
+        else:
+            mapSettings.mapType = MapEngine.MAP_TYPE_DEFAULT
+            
+        mapSettings.title = self.title.text()
+        mapSettings.outputfile = self.fileinput.text()
+        mapSettings.maxLabelLength = self.spinMaxLen.value()
+        
+        mapSettings.inputfile = self.inputfileinput.text()
+        
+        mapSettings.plotNthPoint = self.spinplot.value()
+        
+        return mapSettings
+        
+    # static method to create the dialog and return (date, time, accepted)
+    @staticmethod
+    def getSettings(parent = None):
+        dialog = TelemetryMapSettingsDialog(parent)
+        result = dialog.exec_()
+        # date = dialog.dateTime()
+        mapSettings = dialog.getMapSettings()
+        return (mapSettings, result == QDialog.Accepted)
+
 # -------  Main Routine For Debugging-------------------------
 
 if __name__ == '__main__':
     app = QApplication([])
-    # date, time, ok = DB2Dialog.getDateTime()
     #dbSettings, ok = DBSettingsDialog.getSettings()
-    mapSettings, ok = MapSettingsDialog.getSettings()
-    #print("{} {} {}".format(date, time, ok))
+    #mapSettings, ok = MapSettingsDialog.getSettings()
+    mapSettings, ok = TelemetryMapSettingsDialog.getSettings()
     app.exec_()

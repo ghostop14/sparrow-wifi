@@ -494,7 +494,7 @@ class WirelessEngine(object):
                 fieldValue = ""
                 
             if (len(fieldValue) > 0):
-                curNetwork.ssid = fieldValue
+                curNetwork.ssid = WirelessEngine.convertUnknownToString(fieldValue)
                 
             p = re.compile('^	capability:.*(ESS)')
             try:
@@ -536,9 +536,11 @@ class WirelessEngine(object):
                 curNetwork.security = fieldValue
                 continue #Found the item
                 
-            p = re.compile('.*?Group cipher: *(.*)')
+            # p = re.compile('.*?Group cipher: *(.*)')
+            p = re.compile('.*?Pairwise ciphers: *(.*)')
             try:
                 fieldValue = p.search(curLine).group(1)
+                fieldValue = fieldValue.replace(' ', '/')
             except:
                 fieldValue = ""
                 

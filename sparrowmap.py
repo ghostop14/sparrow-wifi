@@ -131,15 +131,21 @@ class MapEngine(object):
             # htmlString +="		var img = new google.maps.MarkerImage('/usr/local/lib/python3.5/dist-packages/gmplot/markers/32CD32.png');\n"
             htmlString +='		var marker = new google.maps.Marker({\n'
             htmlString +='		title: "' + curMarker.label + '",\n'
-            htmlString +='		label: {\n'
-            htmlString +="		        text: '" + curMarker.label + "',\n"
-            htmlString +="		        color: '" + labelColor+ "',\n"
-            htmlString +='		},\n'
+            if (len(curMarker.label) > 0):
+                htmlString +='		label: {\n'
+                htmlString +="		        text: '" + curMarker.label + "',\n"
+                htmlString +="		        color: '" + labelColor+ "',\n"
+                htmlString +='		},\n'
             # htmlString +='		icon: img,\n'
-            htmlString +='		icon: markerIcon' + str(curMarker.barCount) + ',\n'
+            bc = curMarker.barCount
+            if bc < 1:
+                bc = 1
+            elif bc > 4:
+                bc = 4
+            htmlString +='		icon: markerIcon' + str(bc )+ ',\n'
             htmlString +='		position: latlng\n'
             htmlString +='		});\n'
-            htmlString +='		marker.setMap(map);\n'
+            htmlString +='		marker.setMap(map);\n\n'
 
         # If we're drawing lines between markers, draw the polyline
         if connectMarkers:
@@ -154,7 +160,7 @@ class MapEngine(object):
             htmlString +='		path: PolylineCoordinates,\n'
             htmlString +='		strokeColor: "#6495ED",\n'
             htmlString +='		strokeOpacity: 1.000000,\n'
-            htmlString +='		strokeWeight: 10\n'
+            htmlString +='		strokeWeight: 5\n'
             htmlString +='		});\n'
             htmlString +='		Path.setMap(map);\n'
 

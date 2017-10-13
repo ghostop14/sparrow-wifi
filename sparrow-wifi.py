@@ -47,7 +47,7 @@ from sparrowgps import GPSEngine, GPSStatus
 from telemetry import TelemetryDialog
 from sparrowtablewidgets import IntTableWidgetItem, DateTableWidgetItem
 from sparrowmap import MapMarker, MapEngine
-from sparrowdialogs import MapSettingsDialog
+from sparrowdialogs import MapSettingsDialog, TelemetryMapSettingsDialog
 
 # ------------------  Global functions ------------------------------
 def stringtobool(instr):
@@ -480,9 +480,14 @@ class mainWindow(QMainWindow):
         
         # GPS Menu Items
         gpsMenu = menubar.addMenu('&Geo')
-        newAct = QAction('Create Map', self)        
-        newAct.setStatusTip('Plot coordinate on Google map')
+        newAct = QAction('Create Access Point Map', self)        
+        newAct.setStatusTip('Plot access point coordinates from the table on a Google map')
         newAct.triggered.connect(self.onGoogleMap)
+        gpsMenu.addAction(newAct)
+        
+        newAct = QAction('Create SSID Map', self)        
+        newAct.setStatusTip('Plot coordinates for a single SSID saved from telemetry window on a Google map')
+        newAct.triggered.connect(self.onGoogleMapTelemetry)
         gpsMenu.addAction(newAct)
         
         gpsMenu.addSeparator()
@@ -732,11 +737,65 @@ class mainWindow(QMainWindow):
                 markers.append(newMarker)
                     
         if len(markers) > 0:
-            retVal = MapEngine.createMap(mapSettings.outputfile,mapSettings.title,markers, connectMarkers=True, openWhenDone=True, mapType=mapSettings.mapType)
+            retVal = MapEngine.createMap(mapSettings.outputfile,mapSettings.title,markers, connectMarkers=False, openWhenDone=True, mapType=mapSettings.mapType)
             
             if not retVal:
                 QMessageBox.question(self, 'Error',"Unable to generate map to " + mapSettings.outputfile, QMessageBox.Ok)
 
+    def onGoogleMapTelemetry(self):
+        mapSettings, ok = TelemetryMapSettingsDialog.getSettings()
+
+        if not ok:
+            return
+            
+        if len(mapSettings.inputfile) == 0:
+            QMessageBox.question(self, 'Error',"Please provide an input file.", QMessageBox.Ok)
+            return
+            
+        if len(mapSettings.outputfile) == 0:
+            QMessageBox.question(self, 'Error',"Please provide an output file.", QMessageBox.Ok)
+            return
+            
+        markers = []
+        
+        with open(mapSettings.inputfile, 'r') as f:
+            reader = csv.reader(f)
+            raw_list = list(reader)
+            
+            # remove blank lines
+            while [] in raw_list:
+                raw_list.remove([])
+                
+            if len(raw_list) > 1:
+                # Check header row looks okay
+                if str(raw_list[0]) != "['macAddr', 'SSID', 'Strength', 'Timestamp', 'GPS', 'Latitude', 'Longitude', 'Altitude']":
+                    QMessageBox.question(self, 'Error',"File format doesn't look like exported telemetry data saved from the telemetry window.", QMessageBox.Ok)
+                    return
+                        
+                # Ignore header row
+                # Range goes to last # - 1
+                for i in range (1, len(raw_list)):
+                    
+                    # Plot first, last, and every Nth point
+                    if ((i % mapSettings.plotNthPoint == 0) or (i == 1) or (i == (len(raw_list)-1))) and (len(raw_list[i]) > 0):
+                        newMarker = MapMarker()
+                        
+                        if (i == 1) or (i == (len(raw_list)-1)):
+                            # Only put first and last marker labels on.  No need to pollute the map if there's a lot of points
+                            newMarker.label = WirelessEngine.convertUnknownToString(raw_list[i][1])
+                            newMarker.label = newMarker.label[:mapSettings.maxLabelLength]
+                        
+                        newMarker.latitude = float(raw_list[i][5])
+                        newMarker.longitude = float(raw_list[i][6])
+                        newMarker.barCount = WirelessEngine.getSignalQualityFromDB0To5(int(raw_list[i][2]))
+                            
+                        markers.append(newMarker)
+                    
+        if len(markers) > 0:
+            retVal = MapEngine.createMap(mapSettings.outputfile,mapSettings.title,markers, connectMarkers=True, openWhenDone=True, mapType=mapSettings.mapType)
+            
+            if not retVal:
+                QMessageBox.question(self, 'Error',"Unable to generate map to " + mapSettings.outputfile, QMessageBox.Ok)
         
     def onGPSStatus(self):
         if (not self.menuRemoteAgent.isChecked()):
@@ -1343,54 +1402,59 @@ class mainWindow(QMainWindow):
             reader = csv.reader(f)
             raw_list = list(reader)
             
+            # remove blank lines
+            while [] in raw_list:
+                raw_list.remove([])
+                
             if len(raw_list) > 1:
                 # Check header row looks okay
-                if raw_list[0][0] != 'macAddr':
+                if raw_list[0][0] != 'macAddr' or (len(raw_list[0]) < 21):
                     QMessageBox.question(self, 'Error',"File format doesn't look like an exported scan.", QMessageBox.Ok)
                     return
                         
                 # Ignore header row
                 for i in range (1, len(raw_list)):
-                    newNet = WirelessNetwork()
-                    newNet.macAddr=raw_list[i][0]
-                    newNet.ssid = raw_list[i][1]
-                    newNet.security = raw_list[i][2]
-                    newNet.privacy = raw_list[i][3]
-                    
-                    # Channel could be primary+secondary
-                    channelstr = raw_list[i][4]
-                    
-                    if '+' in channelstr:
-                        newNet.channel = int(channelstr.split('+')[0])
-                        newNet.secondaryChannel = int(channelstr.split('+')[1])
+                    if (len(raw_list[i]) >= 21):
+                        newNet = WirelessNetwork()
+                        newNet.macAddr=raw_list[i][0]
+                        newNet.ssid = raw_list[i][1]
+                        newNet.security = raw_list[i][2]
+                        newNet.privacy = raw_list[i][3]
                         
-                        if newNet.secondaryChannel > newNet.channel:
-                            newNet.secondaryChannelLocation = 'above'
+                        # Channel could be primary+secondary
+                        channelstr = raw_list[i][4]
+                        
+                        if '+' in channelstr:
+                            newNet.channel = int(channelstr.split('+')[0])
+                            newNet.secondaryChannel = int(channelstr.split('+')[1])
+                            
+                            if newNet.secondaryChannel > newNet.channel:
+                                newNet.secondaryChannelLocation = 'above'
+                            else:
+                                newNet.secondaryChannelLocation = 'below'
                         else:
-                            newNet.secondaryChannelLocation = 'below'
-                    else:
-                        newNet.channel = int(raw_list[i][4])
-                        newNet.secondaryChannel = 0
-                        newNet.secondaryChannelLocation = 'none'
-                    
-                    newNet.frequency = int(raw_list[i][5])
-                    newNet.signal = int(raw_list[i][6])
-                    newNet.strongestsignal = int(raw_list[i][7])
-                    newNet.bandwidth = int(raw_list[i][8])
-                    newNet.lastSeen = parser.parse(raw_list[i][9])
-                    newNet.firstSeen = parser.parse(raw_list[i][10])
-                    newNet.gps.isValid = stringtobool(raw_list[i][11])
-                    newNet.gps.latitude = float(raw_list[i][12])
-                    newNet.gps.longitude = float(raw_list[i][13])
-                    newNet.gps.altitude = float(raw_list[i][14])
-                    newNet.gps.speed = float(raw_list[i][15])
-                    newNet.strongestgps.isValid = stringtobool(raw_list[i][16])
-                    newNet.strongestgps.latitude = float(raw_list[i][17])
-                    newNet.strongestgps.longitude = float(raw_list[i][18])
-                    newNet.strongestgps.altitude = float(raw_list[i][19])
-                    newNet.strongestgps.speed = float(raw_list[i][20])
-                    
-                    wirelessNetworks[newNet.getKey()] = newNet
+                            newNet.channel = int(raw_list[i][4])
+                            newNet.secondaryChannel = 0
+                            newNet.secondaryChannelLocation = 'none'
+                        
+                        newNet.frequency = int(raw_list[i][5])
+                        newNet.signal = int(raw_list[i][6])
+                        newNet.strongestsignal = int(raw_list[i][7])
+                        newNet.bandwidth = int(raw_list[i][8])
+                        newNet.lastSeen = parser.parse(raw_list[i][9])
+                        newNet.firstSeen = parser.parse(raw_list[i][10])
+                        newNet.gps.isValid = stringtobool(raw_list[i][11])
+                        newNet.gps.latitude = float(raw_list[i][12])
+                        newNet.gps.longitude = float(raw_list[i][13])
+                        newNet.gps.altitude = float(raw_list[i][14])
+                        newNet.gps.speed = float(raw_list[i][15])
+                        newNet.strongestgps.isValid = stringtobool(raw_list[i][16])
+                        newNet.strongestgps.latitude = float(raw_list[i][17])
+                        newNet.strongestgps.longitude = float(raw_list[i][18])
+                        newNet.strongestgps.altitude = float(raw_list[i][19])
+                        newNet.strongestgps.speed = float(raw_list[i][20])
+                        
+                        wirelessNetworks[newNet.getKey()] = newNet
                     
         if len(wirelessNetworks) > 0:
             self.onClearData()
