@@ -18,7 +18,8 @@
 # Boston, MA 02110-1301, USA.
 # 
 
-from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QApplication, QLabel, QComboBox, QLineEdit, QPushButton, QFileDialog, QSpinBox, QDesktopWidget
+from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QApplication, QLabel, QComboBox, QLineEdit, QPushButton
+from PyQt5.QtWidgets  import QFileDialog, QSpinBox, QDesktopWidget, QMessageBox
 from PyQt5.QtCore import Qt
 
 from sparrowmap import MapEngine
@@ -196,8 +197,8 @@ class MapSettingsDialog(QDialog):
         
         self.comboplot = QComboBox(self)
         self.comboplot.move(115, 84)
-        self.comboplot.addItem("Strongest Signal")
         self.comboplot.addItem("Last Signal")
+        self.comboplot.addItem("Strongest Signal")
 
         # File:
         self.lblFile = QLabel("Output File: ", self)
@@ -263,6 +264,15 @@ class MapSettingsDialog(QDialog):
         else:
             return None
 
+    def done(self, result):
+        if result == QDialog.Accepted:
+            if len(self.fileinput.text()) == 0:
+                QMessageBox.question(self, 'Error',"Please provide an output file.", QMessageBox.Ok)
+
+                return
+            
+        super().done(result)
+        
     def getMapSettings(self):
         mapSettings = MapSettings()
         
@@ -381,6 +391,18 @@ class TelemetryMapSettingsDialog(MapSettingsDialog):
             return
         else:
             self.inputfileinput.setText(fileName)
+        
+    def done(self, result):
+        if result == QDialog.Accepted:
+            if len(self.inputfileinput.text()) == 0:
+                QMessageBox.question(self, 'Error',"Please provide an input file.", QMessageBox.Ok)
+                return
+                
+            if len(self.fileinput.text()) == 0:
+                QMessageBox.question(self, 'Error',"Please provide an output file.", QMessageBox.Ok)
+                return
+            
+        super().done(result)
         
     def openFileDialog(self):    
         options = QFileDialog.Options()

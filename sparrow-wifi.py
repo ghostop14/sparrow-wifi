@@ -720,16 +720,21 @@ class mainWindow(QMainWindow):
                 curData = None
             
             if (curData):
+                gpsValid = False
                 newMarker = MapMarker()
                 
                 newMarker.label = WirelessEngine.convertUnknownToString(curData.ssid)
                 newMarker.label = newMarker.label[:mapSettings.maxLabelLength]
                 
                 if mapSettings.plotstrongest:
+                    if gpsValid == curData.strongestgps.isValid:
+                        gpsValid = True
                     newMarker.latitude = curData.strongestgps.latitude
                     newMarker.longitude = curData.strongestgps.longitude
                     newMarker.barCount = WirelessEngine.getSignalQualityFromDB0To5(curData.strongestsignal)
                 else:
+                    if gpsValid == curData.gps.isValid:
+                        gpsValid = True
                     newMarker.latitude = curData.gps.latitude
                     newMarker.longitude = curData.gps.longitude
                     newMarker.barCount = WirelessEngine.getSignalQualityFromDB0To5(curData.signal)
@@ -778,18 +783,21 @@ class mainWindow(QMainWindow):
                     
                     # Plot first, last, and every Nth point
                     if ((i % mapSettings.plotNthPoint == 0) or (i == 1) or (i == (len(raw_list)-1))) and (len(raw_list[i]) > 0):
-                        newMarker = MapMarker()
                         
-                        if (i == 1) or (i == (len(raw_list)-1)):
-                            # Only put first and last marker labels on.  No need to pollute the map if there's a lot of points
-                            newMarker.label = WirelessEngine.convertUnknownToString(raw_list[i][1])
-                            newMarker.label = newMarker.label[:mapSettings.maxLabelLength]
-                        
-                        newMarker.latitude = float(raw_list[i][5])
-                        newMarker.longitude = float(raw_list[i][6])
-                        newMarker.barCount = WirelessEngine.getSignalQualityFromDB0To5(int(raw_list[i][2]))
+                        if raw_list[i][4] == 'Yes':
+                            # The GPS entry is valid
+                            newMarker = MapMarker()
                             
-                        markers.append(newMarker)
+                            if (i == 1) or (i == (len(raw_list)-1)):
+                                # Only put first and last marker labels on.  No need to pollute the map if there's a lot of points
+                                newMarker.label = WirelessEngine.convertUnknownToString(raw_list[i][1])
+                                newMarker.label = newMarker.label[:mapSettings.maxLabelLength]
+                            
+                            newMarker.latitude = float(raw_list[i][5])
+                            newMarker.longitude = float(raw_list[i][6])
+                            newMarker.barCount = WirelessEngine.getSignalQualityFromDB0To5(int(raw_list[i][2]))
+                                
+                            markers.append(newMarker)
                     
         if len(markers) > 0:
             retVal = MapEngine.createMap(mapSettings.outputfile,mapSettings.title,markers, connectMarkers=True, openWhenDone=True, mapType=mapSettings.mapType)
@@ -988,7 +996,7 @@ class mainWindow(QMainWindow):
                     sleep(0.2)
                     
                 self.scanThread = None
-                    
+                
             self.statusBar().showMessage('Ready')
         else:
             # Want to start a new scan
@@ -1038,8 +1046,11 @@ class mainWindow(QMainWindow):
                 for curKey in wirelessNetworks.keys():
                     curNet = wirelessNetworks[curKey]
                     curNet.gps = self.gpsEngine.lastCoord
-                
-        self.populateTable(wirelessNetworks)
+                    curNet.strongestgps = self.gpsEngine.lastCoord
+        
+        if self.menuRemoteAgent.isChecked() or ((not self.menuRemoteAgent.isChecked()) and self.scanRunning):
+            # If is to prevent a messaging issue on last iteration
+            self.populateTable(wirelessNetworks)
         
     def onErrMsg(self, errCode, errMsg):
         self.statusBar().showMessage("Error ["+str(errCode) + "]: " + errMsg)
@@ -1092,6 +1103,7 @@ class mainWindow(QMainWindow):
                                 curNet.strongestgps.longitude = curData.gps.longitude
                                 curNet.strongestgps.altitude = curData.gps.altitude
                                 curNet.strongestgps.speed = curData.gps.speed
+                                curNet.strongestgps.isValid = curData.gps.isValid
                             
                             self.networkTable.item(curRow, 9).setText(curNet.firstSeen.strftime("%m/%d/%Y %H:%M:%S"))
                             if curNet.gps.isValid:
