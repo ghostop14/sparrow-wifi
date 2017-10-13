@@ -345,6 +345,9 @@ class TelemetryDialog(QDialog):
         self.timeSeries.attachAxis(self.timeChart.axisY())
 
     def updateNetworkData(self, curNet):
+        if not self.isVisible():
+            return
+            
         # Signal is -NN dBm.  Need to make it positive for the plot
         self.radar.updateData(curNet.signal*-1)
         self.setWindowTitle("Network Telemetry - " + curNet.ssid)

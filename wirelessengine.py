@@ -297,6 +297,45 @@ class WirelessEngine(object):
         else:
             return None
             
+    def getSignalQualityFromDB0To5(dBm):
+        # Based on same scale tha Microsoft uses.
+        # See https://stackoverflow.com/questions/15797920/how-to-convert-wifi-signal-strength-from-quality-percent-to-rssi-dbm
+        if (dBm <= -100):
+            quality = 0
+        elif dBm >= -50:
+            quality = 100
+        else:
+            quality = 2 * (dBm + 100)      
+        
+        return int(4*quality/100)
+
+    def getSignalQualityFromDB(dBm):
+        # Based on same scale tha Microsoft uses.
+        # See https://stackoverflow.com/questions/15797920/how-to-convert-wifi-signal-strength-from-quality-percent-to-rssi-dbm
+        if (dBm <= -100):
+            quality = 0
+        elif dBm >= -50:
+            quality = 100
+        else:
+            quality = 2 * (dBm + 100)      
+        
+        return quality
+
+    def convertUnknownToString(ssid):
+        if '\\x00' not in ssid:
+            return ssid
+            
+        retVal = ssid.replace('\\x00', '')
+        numblanks = ssid.count('\\x00')
+        
+        if len(retVal) == 0:
+            if numblanks > 0:
+                return '<Unknown (' + str(numblanks )+ ')>'
+            else:
+                return '<Unknown>'
+        else:
+            return ssid
+        
     def getInterfaces(printResults=False):
         result = subprocess.run(['iwconfig'], stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
         wirelessResult = result.stdout.decode('ASCII')

@@ -8,6 +8,7 @@ Sparrow-wifi provides a nice graphical interface with tables of discovered netwo
 - Enhanced per-network telemetry display ('tracker' style signal meter, time plots, GPS log which can be exported)
 - Signal "hunt" mode.  Normal scans running across all 2.4 GHz and 5 GHz channels can take 5-10 seconds per sweep as the radio needs to retune to each frequency and listen.  If you're trying to locate a particular SSID, this can be too slow.  Hunt mode allows you to specify the channel number or center frequency and only scan that one channel for much faster hunt performance (generally less than 0.2 seconds/channel).
 - Ability to export results to CSV and import them back in to revisualize a scan
+- Plot SSID GPS coordinates on Google maps
 - Sparrow-wifi has built-in GPS support via gpsd for network location tagging
 - Sparrow-wifi has a remotely deployable agent (sparrowwifiagent.py) that can be run on a separate system.  The GUI can then be connected to the remote agent for remote monitoring, including remote GPS.
 - The agent provides a basic HTTP service and provides JSON responses to requests from the UI, so requests for wireless interfaces, networks, and GPS status can even be used in other applications

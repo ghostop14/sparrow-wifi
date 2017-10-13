@@ -18,8 +18,10 @@
 # Boston, MA 02110-1301, USA.
 # 
 
-from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QApplication, QLabel, QComboBox, QLineEdit, QPushButton, QFileDialog
+from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QApplication, QLabel, QComboBox, QLineEdit, QPushButton, QFileDialog, QSpinBox
 from PyQt5.QtCore import Qt
+
+from sparrowmap import MapEngine
 
 # Example dialog:
 # https://stackoverflow.com/questions/18196799/how-can-i-show-a-pyqt-modal-dialog-and-get-data-out-of-its-controls-once-its-clo
@@ -159,11 +161,132 @@ class DBSettingsDialog(QDialog):
         dbSettings = dialog.getDBSettings()
         return (dbSettings, result == QDialog.Accepted)
 
+class MapSettings(object):
+    def __init__(self):
+        super().__init__()
+        self.maptype = MapEngine.MAP_TYPE_DEFAULT
+        self.plotstrongest = True
+        self.outputfile = ""
+        self.title = ""
+        self.maxLabelLength = 15
+        
+class MapSettingsDialog(QDialog):
+    def __init__(self, parent = None):
+        super(MapSettingsDialog, self).__init__(parent)
+
+        # Map Type droplist
+        self.lblMapType = QLabel("Map Type", self)
+        self.lblMapType.setGeometry(30, 26, 100, 30)
+        
+        self.combo = QComboBox(self)
+        self.combo.setGeometry(115, 30, 140, 30)
+        self.combo.addItem("Standard Street")
+        self.combo.addItem("Hybrid Satellite")
+        self.combo.addItem("Satellite Only")
+        self.combo.addItem("Terrain")
+
+        # Plot strongest or last
+        self.lblMapType = QLabel("Coord Set", self)
+        self.lblMapType.setGeometry(30, 84, 100, 30)
+        
+        self.comboplot = QComboBox(self)
+        self.comboplot.move(115, 84)
+        self.comboplot.addItem("Strongest Signal")
+        self.comboplot.addItem("Last Signal")
+
+        # File:
+        self.lblFile = QLabel("Output File: ", self)
+        self.lblFile.move(30, 124)
+        self.fileinput = QLineEdit(self)
+        self.fileinput.setGeometry(115, 120, 250, 20)
+        self.btnOpen = QPushButton("&Open", self)
+        self.btnOpen.move(380, 120)
+        self.btnOpen.clicked.connect(self.onFileClicked)
+
+        spacing = 35
+        # Table name
+        self.lblTitle = QLabel("Map Title: ", self)
+        self.lblTitle.move(30, 129+spacing)
+        self.title = QLineEdit(self)
+        self.title.setText("Access Point Map")
+        self.title.setGeometry(115, 124+spacing, 200, 20)
+
+        self.lblMaxLen = QLabel("Max Label Length: ", self)
+        self.lblMaxLen.move(30, 133+spacing*2)
+        self.spinMaxLen = QSpinBox(self)
+        self.spinMaxLen.setRange(1, 100)
+        
+        self.spinMaxLen.setValue(15)
+        self.spinMaxLen.setGeometry(150, 125+spacing*2, 50, 28)
+
+        # OK and Cancel buttons
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel,
+            Qt.Horizontal, self)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        buttons.move(170, 280)
+        #layout.addWidget(buttons)
+        self.setGeometry(self.geometry().x(), self.geometry().y(), 500,320)
+        self.setWindowTitle("Map Settings")
+
+    def onFileClicked(self):
+        fileName = self.saveFileDialog()
+
+        if not fileName:
+            return
+        else:
+            self.fileinput.setText(fileName)
+
+    def saveFileDialog(self):    
+        options = QFileDialog.Options()
+        options |= QFileDialog.DontUseNativeDialog
+        fileName, _ = QFileDialog.getSaveFileName(self,"QFileDialog.getSaveFileName()","","HTML Files (*.html);;All Files (*)", options=options)
+        if fileName:
+            return fileName
+        else:
+            return None
+
+    def getMapSettings(self):
+        mapSettings = MapSettings()
+        
+        strType = self.combo.currentText()
+        
+        if (strType == 'Hybrid Satellite'):
+            mapSettings.mapType = MapEngine.MAP_TYPE_HYBRID
+        elif (strType == 'Satellite Only'):
+            mapSettings.mapType = MapEngine.MAP_TYPE_SATELLITE_ONLY
+        elif (strType == 'Terrain'):
+            mapSettings.mapType = MapEngine.MAP_TYPE_TERRAIN
+        else:
+            mapSettings.mapType = MapEngine.MAP_TYPE_DEFAULT
+            
+        if (self.comboplot.currentText() == 'Strongest Signal'):
+            mapSettings.plotstrongest = True
+        else:
+            mapSettings.plotstrongest = False
+
+        mapSettings.title = self.title.text()
+        mapSettings.outputfile = self.fileinput.text()
+        mapSettings.maxLabelLength = self.spinMaxLen.value()
+        
+        return mapSettings
+        
+    # static method to create the dialog and return (date, time, accepted)
+    @staticmethod
+    def getSettings(parent = None):
+        dialog = MapSettingsDialog(parent)
+        result = dialog.exec_()
+        # date = dialog.dateTime()
+        mapSettings = dialog.getMapSettings()
+        return (mapSettings, result == QDialog.Accepted)
+
 # -------  Main Routine For Debugging-------------------------
 
 if __name__ == '__main__':
     app = QApplication([])
     # date, time, ok = DB2Dialog.getDateTime()
-    dbSettings, ok = DBSettingsDialog.getSettings()
+    #dbSettings, ok = DBSettingsDialog.getSettings()
+    mapSettings, ok = MapSettingsDialog.getSettings()
     #print("{} {} {}".format(date, time, ok))
     app.exec_()

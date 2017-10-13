@@ -46,6 +46,8 @@ from wirelessengine import WirelessEngine, WirelessNetwork
 from sparrowgps import GPSEngine, GPSStatus
 from telemetry import TelemetryDialog
 from sparrowtablewidgets import IntTableWidgetItem, DateTableWidgetItem
+from sparrowmap import MapMarker, MapEngine
+from sparrowdialogs import MapSettingsDialog
 
 # ------------------  Global functions ------------------------------
 def stringtobool(instr):
@@ -477,8 +479,15 @@ class mainWindow(QMainWindow):
         helpMenu.addAction(self.menuRemoteAgent)
         
         # GPS Menu Items
-        gpsMenu = menubar.addMenu('&GPS')
-        newAct = QAction('Status', self)        
+        gpsMenu = menubar.addMenu('&Geo')
+        newAct = QAction('Create Map', self)        
+        newAct.setStatusTip('Plot coordinate on Google map')
+        newAct.triggered.connect(self.onGoogleMap)
+        gpsMenu.addAction(newAct)
+        
+        gpsMenu.addSeparator()
+        
+        newAct = QAction('GPS Status', self)        
         newAct.setStatusTip('Show GPS Status')
         newAct.triggered.connect(self.onGPSStatus)
         gpsMenu.addAction(newAct)
@@ -680,6 +689,54 @@ class mainWindow(QMainWindow):
     def onGPSTimer(self):
         self.onGPSStatus()
         self.gpsTimer.start(self.gpsTimerTimeout)
+        
+    def onGoogleMap(self):
+        rowPosition = self.networkTable.rowCount()
+
+        if rowPosition <= 0:
+            return
+            
+        mapSettings, ok = MapSettingsDialog.getSettings()
+
+        if not ok:
+            return
+            
+        if len(mapSettings.outputfile) == 0:
+            QMessageBox.question(self, 'Error',"Please provide an output file.", QMessageBox.Ok)
+            return
+            
+        markers = []
+        
+        # Range goes to last # - 1
+        for curRow in range(0, rowPosition):
+            try:
+                curData = self.networkTable.item(curRow, 1).data(Qt.UserRole+1)
+            except:
+                curData = None
+            
+            if (curData):
+                newMarker = MapMarker()
+                
+                newMarker.label = WirelessEngine.convertUnknownToString(curData.ssid)
+                newMarker.label = newMarker.label[:mapSettings.maxLabelLength]
+                
+                if mapSettings.plotstrongest:
+                    newMarker.latitude = curData.strongestgps.latitude
+                    newMarker.longitude = curData.strongestgps.longitude
+                    newMarker.barCount = WirelessEngine.getSignalQualityFromDB0To5(curData.strongestsignal)
+                else:
+                    newMarker.latitude = curData.gps.latitude
+                    newMarker.longitude = curData.gps.longitude
+                    newMarker.barCount = WirelessEngine.getSignalQualityFromDB0To5(curData.signal)
+                    
+                markers.append(newMarker)
+                    
+        if len(markers) > 0:
+            retVal = MapEngine.createMap(mapSettings.outputfile,mapSettings.title,markers, connectMarkers=True, openWhenDone=True, mapType=mapSettings.mapType)
+            
+            if not retVal:
+                QMessageBox.question(self, 'Error',"Unable to generate map to " + mapSettings.outputfile, QMessageBox.Ok)
+
         
     def onGPSStatus(self):
         if (not self.menuRemoteAgent.isChecked()):
@@ -938,118 +995,120 @@ class mainWindow(QMainWindow):
     def populateTable(self, wirelessNetworks):
         rowPosition = self.networkTable.rowCount()
         
-        for curRow in range(0, rowPosition):
-            try:
-                curData = self.networkTable.item(curRow, 1).data(Qt.UserRole+1)
-            except:
-                curData = None
-                
-            if (curData):
-                # We already have the network.  just update it
-                for curKey in wirelessNetworks.keys():
-                    curNet = wirelessNetworks[curKey]
-                    if curData.getKey() == curNet.getKey():
-                        # Match.  Item was already in the table.  Let's update it
-                        self.networkTable.item(curRow, 2).setText(curNet.security)
-                        self.networkTable.item(curRow, 3).setText(curNet.privacy)
-                        self.networkTable.item(curRow, 4).setText(str(curNet.getChannelString()))
-                        self.networkTable.item(curRow, 5).setText(str(curNet.frequency))
-                        self.networkTable.item(curRow, 6).setText(str(curNet.signal))
-                        self.networkTable.item(curRow, 7).setText(str(curNet.bandwidth))
-                        self.networkTable.item(curRow, 8).setText(curNet.lastSeen.strftime("%m/%d/%Y %H:%M:%S"))
-                        
-                        # Carry forward firstSeen
-                        curNet.firstSeen = curData.firstSeen # This is one field to carry forward
-                        
-                        # Check strongest signal
-                        if curData.signal > curNet.signal:
-                            curNet.strongestsignal = curData.signal
-                            curNet.strongestgps.latitude = curData.gps.latitude
-                            curNet.strongestgps.longitude = curData.gps.longitude
-                            curNet.strongestgps.altitude = curData.gps.altitude
-                            curNet.strongestgps.speed = curData.gps.speed
-                        
-                        self.networkTable.item(curRow, 9).setText(curNet.firstSeen.strftime("%m/%d/%Y %H:%M:%S"))
-                        if curNet.gps.isValid:
-                            self.networkTable.item(curRow, 10).setText('Yes')
-                        else:
-                            self.networkTable.item(curRow, 10).setText('No')
-                        curNet.foundInList = True
-                        self.networkTable.item(curRow, 1).setData(Qt.UserRole+1, curNet)
-                        
-                        # Update series
-                        curSeries = self.networkTable.item(curRow, 1).data(Qt.UserRole)
-                        
-                        # Check if we have a telemetry window
-                        if curNet.getKey() in self.telemetryWindows:
-                            telemetryWindow = self.telemetryWindows[curNet.getKey()]
-                            telemetryWindow.updateNetworkData(curNet)            
+        if rowPosition > 0:
+            # Range goes to last # - 1
+            for curRow in range(0, rowPosition):
+                try:
+                    curData = self.networkTable.item(curRow, 1).data(Qt.UserRole+1)
+                except:
+                    curData = None
+                    
+                if (curData):
+                    # We already have the network.  just update it
+                    for curKey in wirelessNetworks.keys():
+                        curNet = wirelessNetworks[curKey]
+                        if curData.getKey() == curNet.getKey():
+                            # Match.  Item was already in the table.  Let's update it
+                            self.networkTable.item(curRow, 2).setText(curNet.security)
+                            self.networkTable.item(curRow, 3).setText(curNet.privacy)
+                            self.networkTable.item(curRow, 4).setText(str(curNet.getChannelString()))
+                            self.networkTable.item(curRow, 5).setText(str(curNet.frequency))
+                            self.networkTable.item(curRow, 6).setText(str(curNet.signal))
+                            self.networkTable.item(curRow, 7).setText(str(curNet.bandwidth))
+                            self.networkTable.item(curRow, 8).setText(curNet.lastSeen.strftime("%m/%d/%Y %H:%M:%S"))
+                            
+                            # Carry forward firstSeen
+                            curNet.firstSeen = curData.firstSeen # This is one field to carry forward
+                            
+                            # Check strongest signal
+                            if curData.signal > curNet.signal:
+                                curNet.strongestsignal = curData.signal
+                                curNet.strongestgps.latitude = curData.gps.latitude
+                                curNet.strongestgps.longitude = curData.gps.longitude
+                                curNet.strongestgps.altitude = curData.gps.altitude
+                                curNet.strongestgps.speed = curData.gps.speed
+                            
+                            self.networkTable.item(curRow, 9).setText(curNet.firstSeen.strftime("%m/%d/%Y %H:%M:%S"))
+                            if curNet.gps.isValid:
+                                self.networkTable.item(curRow, 10).setText('Yes')
+                            else:
+                                self.networkTable.item(curRow, 10).setText('No')
+                            curNet.foundInList = True
+                            self.networkTable.item(curRow, 1).setData(Qt.UserRole+1, curNet)
+                            
+                            # Update series
+                            curSeries = self.networkTable.item(curRow, 1).data(Qt.UserRole)
+                            
+                            # Check if we have a telemetry window
+                            if curNet.getKey() in self.telemetryWindows:
+                                telemetryWindow = self.telemetryWindows[curNet.getKey()]
+                                telemetryWindow.updateNetworkData(curNet)            
 
-                        # 3 scenarios: 
-                        # 20 MHz, 1 channel
-                        # 40 MHz, 2nd channel above/below or non-contiguous for 5 GHz
-                        # 80/160 MHz, Specified differently.  It's allocated as a contiguous block
-                        if curNet.channel < 15:
-                            # 2.4 GHz
-                            for i in range(0, 15):
-                                graphPoint = False
-                                
-                                if (curNet.bandwidth == 20):
-                                    if i >= (curNet.channel - 1) and i <=(curNet.channel +1):
-                                        graphPoint = True
-                                elif (curNet.bandwidth== 40):
-                                    if curNet.secondaryChannelLocation == 'above':
-                                        if i >= (curNet.channel - 1) and i <=(curNet.channel +5):
+                            # 3 scenarios: 
+                            # 20 MHz, 1 channel
+                            # 40 MHz, 2nd channel above/below or non-contiguous for 5 GHz
+                            # 80/160 MHz, Specified differently.  It's allocated as a contiguous block
+                            if curNet.channel < 15:
+                                # 2.4 GHz
+                                for i in range(0, 15):
+                                    graphPoint = False
+                                    
+                                    if (curNet.bandwidth == 20):
+                                        if i >= (curNet.channel - 1) and i <=(curNet.channel +1):
                                             graphPoint = True
-                                    else:
-                                        if i >= (curNet.channel - 5) and i <=(curNet.channel +1):
-                                            graphPoint = True
-                                elif (curNet.bandwidth == 80):
-                                        if i >= (curNet.channel - 1) and i <=(curNet.channel +15):
-                                            graphPoint = True
-                                elif (curNet.bandwidth == 160):
-                                        if i >= (curNet.channel - 1) and i <=(curNet.channel +29):
-                                            graphPoint = True
-                                        
-                                if graphPoint:
-                                    if curNet.signal >= -100:
-                                        curSeries.replace(i, i, curNet.signal)
+                                    elif (curNet.bandwidth== 40):
+                                        if curNet.secondaryChannelLocation == 'above':
+                                            if i >= (curNet.channel - 1) and i <=(curNet.channel +5):
+                                                graphPoint = True
+                                        else:
+                                            if i >= (curNet.channel - 5) and i <=(curNet.channel +1):
+                                                graphPoint = True
+                                    elif (curNet.bandwidth == 80):
+                                            if i >= (curNet.channel - 1) and i <=(curNet.channel +15):
+                                                graphPoint = True
+                                    elif (curNet.bandwidth == 160):
+                                            if i >= (curNet.channel - 1) and i <=(curNet.channel +29):
+                                                graphPoint = True
+                                            
+                                    if graphPoint:
+                                        if curNet.signal >= -100:
+                                            curSeries.replace(i, i, curNet.signal)
+                                        else:
+                                            curSeries.replace(i, i, -100)
                                     else:
                                         curSeries.replace(i, i, -100)
-                                else:
-                                    curSeries.replace(i, i, -100)
-                        else:
-                            # 5 GHz
-                            for i in range(33, 170):
-                                graphPoint = False
-                                
-                                if (curNet.bandwidth == 20):
-                                    if i >= (curNet.channel - 1) and i <=(curNet.channel +1):
-                                        graphPoint = True
-                                elif (curNet.bandwidth== 40):
-                                    if curNet.secondaryChannelLocation == 'above':
-                                        if i >= (curNet.channel - 1) and i <=(curNet.channel +5):
+                            else:
+                                # 5 GHz
+                                for i in range(33, 171):
+                                    graphPoint = False
+                                    
+                                    if (curNet.bandwidth == 20):
+                                        if i >= (curNet.channel - 1) and i <=(curNet.channel +1):
                                             graphPoint = True
-                                    else:
-                                        if i >= (curNet.channel - 5) and i <=(curNet.channel +1):
-                                            graphPoint = True
-                                elif (curNet.bandwidth == 80):
-                                        if i >= (curNet.channel - 1) and i <=(curNet.channel +15):
-                                            graphPoint = True
-                                elif (curNet.bandwidth == 160):
-                                        if i >= (curNet.channel - 1) and i <=(curNet.channel +29):
-                                            graphPoint = True
-                                        
-                                if graphPoint:
-                                    if curNet.signal >= -100:
-                                        curSeries.replace(i-33, i, curNet.signal)
+                                    elif (curNet.bandwidth== 40):
+                                        if curNet.secondaryChannelLocation == 'above':
+                                            if i >= (curNet.channel - 1) and i <=(curNet.channel +5):
+                                                graphPoint = True
+                                        else:
+                                            if i >= (curNet.channel - 5) and i <=(curNet.channel +1):
+                                                graphPoint = True
+                                    elif (curNet.bandwidth == 80):
+                                            if i >= (curNet.channel - 1) and i <=(curNet.channel +15):
+                                                graphPoint = True
+                                    elif (curNet.bandwidth == 160):
+                                            if i >= (curNet.channel - 1) and i <=(curNet.channel +29):
+                                                graphPoint = True
+                                            
+                                    if graphPoint:
+                                        if curNet.signal >= -100:
+                                            curSeries.replace(i-33, i, curNet.signal)
+                                        else:
+                                            curSeries.replace(i-33, i, -100)
                                     else:
                                         curSeries.replace(i-33, i, -100)
-                                else:
-                                    curSeries.replace(i-33, i, -100)
-                                    
-                        break;
-                
+                                        
+                            break;
+                    
         # self.networkTable.insertRow(rowPosition)
         
         for curKey in wirelessNetworks.keys():
@@ -1111,7 +1170,7 @@ class mainWindow(QMainWindow):
                 newSeries.attachAxis(self.chart24.axisY())
             else:
                 # 5 GHz
-                for i in range(33, 170):
+                for i in range(33, 171):
                     graphPoint = False
                     
                     if (curNet.bandwidth == 20):
@@ -1196,7 +1255,8 @@ class mainWindow(QMainWindow):
             maxTime = datetime.datetime.now() - datetime.timedelta(minutes=3)
 
             rowPosition = numRows - 1  #  convert count to index
-            for i in range(rowPosition, 0, -1):
+            # range goes to last 
+            for i in range(rowPosition, -1, -1):
                 try:
                     curData = self.networkTable.item(i, 1).data(Qt.UserRole+1)
                     
@@ -1221,7 +1281,7 @@ class mainWindow(QMainWindow):
         if (numRows > 0) and (len(self.telemetryWindows.keys()) > 0):
             # Build key list just once to cut down # of loops
             netKeyList = []
-            for i in range(0, numRows-1):
+            for i in range(0, numRows):
                 curNet = self.networkTable.item(i, 1).data(Qt.UserRole+1)
                 netKeyList.append(curNet.getKey())
                 
