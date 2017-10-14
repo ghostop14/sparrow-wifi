@@ -145,7 +145,7 @@ class ScanThread(Thread):
                 retCode, errString, wirelessNetworks = WirelessEngine.scanForNetworks(self.interface)
                 if (retCode == 0):
                     # self.statusBar().showMessage('Scan complete.  Found ' + str(len(wirelessNetworks)) + ' networks')
-                    if len(wirelessNetworks) > 0:
+                    if wirelessNetworks and (len(wirelessNetworks) > 0) and (not self.signalStop):
                         self.mainWin.scanresults.emit(wirelessNetworks)
                 else:
                         if (retCode != WirelessNetwork.ERR_DEVICEBUSY):
@@ -164,7 +164,7 @@ class ScanThread(Thread):
                     retCode, errString, wirelessNetworks = WirelessEngine.scanForNetworks(self.interface, curFrequency)
                     if (retCode == 0):
                         # self.statusBar().showMessage('Scan complete.  Found ' + str(len(wirelessNetworks)) + ' networks')
-                        if len(wirelessNetworks) > 0:
+                        if wirelessNetworks and (len(wirelessNetworks) > 0) and (not self.signalStop):
                             self.mainWin.scanresults.emit(wirelessNetworks)
                     else:
                             if (retCode != WirelessNetwork.ERR_DEVICEBUSY):
@@ -200,7 +200,7 @@ class RemoteScanThread(Thread):
             retCode, errString, wirelessNetworks = requestRemoteNetworks(self.remoteAgentIP, self.remoteAgentPort, self.interface, self.channelList)
             if (retCode == 0):
                 # self.statusBar().showMessage('Scan complete.  Found ' + str(len(wirelessNetworks)) + ' networks')
-                if len(wirelessNetworks) > 0:
+                if wirelessNetworks and (len(wirelessNetworks) > 0) and (not self.signalStop):
                     self.mainWin.scanresults.emit(wirelessNetworks)
             else:
                     if (retCode != WirelessNetwork.ERR_DEVICEBUSY):
@@ -692,7 +692,7 @@ class mainWindow(QMainWindow):
         # self.ntRightClickMenu.exec_(pos)
  
     def onGPSTimer(self):
-        self.onGPSStatus()
+        self.onGPSStatus(False)
         self.gpsTimer.start(self.gpsTimerTimeout)
         
     def onGoogleMap(self):
@@ -805,22 +805,25 @@ class mainWindow(QMainWindow):
             if not retVal:
                 QMessageBox.question(self, 'Error',"Unable to generate map to " + mapSettings.outputfile, QMessageBox.Ok)
         
-    def onGPSStatus(self):
+    def onGPSStatus(self, updateStatusBar=True):
         if (not self.menuRemoteAgent.isChecked()):
             # Checking local GPS
             if GPSEngine.GPSDRunning():
                 if self.gpsEngine.gpsValid():
                     self.gpsSynchronized = True
                     self.btnGPSStatus.setStyleSheet("background-color: green; border: 1px;")
-                    self.statusBar().showMessage('Local gpsd service is running and satellites are synchronized.')
+                    if updateStatusBar:
+                        self.statusBar().showMessage('Local gpsd service is running and satellites are synchronized.')
                 else:
                     self.gpsSynchronized = False
                     self.btnGPSStatus.setStyleSheet("background-color: yellow; border: 1px;")
-                    self.statusBar().showMessage("Local gpsd service is running but it's not synchronized with the satellites yet.")
+                    if updateStatusBar:
+                        self.statusBar().showMessage("Local gpsd service is running but it's not synchronized with the satellites yet.")
                     
             else:
                 self.gpsSynchronized = False
-                self.statusBar().showMessage('No local gpsd running.')
+                if updateStatusBar:
+                    self.statusBar().showMessage('No local gpsd running.')
                 self.btnGPSStatus.setStyleSheet("background-color: red; border: 1px;")
         else:
             # Checking remote
