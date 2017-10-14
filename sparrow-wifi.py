@@ -556,7 +556,7 @@ class mainWindow(QMainWindow):
         
         newAxis = QValueAxis()
         newAxis.setMin(-100)
-        newAxis.setMax(-20)
+        newAxis.setMax(-10)
         newAxis.setTickCount(9)
         newAxis.setLabelFormat("%d")
         newAxis.setTitleText("dBm")
@@ -584,7 +584,7 @@ class mainWindow(QMainWindow):
         
         newAxis = QValueAxis()
         newAxis.setMin(-100)
-        newAxis.setMax(-20)
+        newAxis.setMax(-10)
         newAxis.setTickCount(9)
         newAxis.setLabelFormat("%d")
         newAxis.setTitleText("dBm")
