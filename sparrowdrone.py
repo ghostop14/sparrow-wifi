@@ -66,13 +66,19 @@ class SparrowDroneMavlink(object):
             
         return self.vehicle.armed
         
-    def takeoff(self, altitude=7):
+    def takeoff(self, mode="STABILIZE", altitude=7):
+        # Mode can be GUIDED or STABILIZE
         # altitude is in meters
         if not self.vehicle:
-            return
+            return False
             
-        self.vehicle.mode = VehicleMode("GUIDED")
-        self.vehicle.armed = True
+        self.vehicle.mode = VehicleMode(mode)
+        
+        if not self.vehicle.armed and self.vehicle.is_armable:
+            self.vehicle.armed = True
+        elif not self.vehicle.armed:
+            # Not armed and can't arm it.  Just exit
+            return False
         
         while not self.vehicle.armed:
             sleep(1)
@@ -81,6 +87,7 @@ class SparrowDroneMavlink(object):
         
         # self.vehicle.location.global_relative_frame.alt will tell you if it's there yet
         # Say while < 0.95 * altitude
+        return True
         
     def relativeAltitude(self):
         # This just returns altitude
@@ -197,15 +204,16 @@ class SparrowDroneMavlink(object):
 if __name__ == '__main__':
     drone = SparrowDroneMavlink()
     
-    # print('\nConnecting to solo at udp:10.1.1.10:14550...')
-    # drone.connectToSolo()
+    print('\nConnecting to solo at udp:10.1.1.10:14550...')
+    drone.connectToSolo()
     
-    print('\nConnecting to local simulator at tcp:127.0.0.1:14550...')
-    drone.connectToSimulator()
+    #print('\nConnecting to local simulator at tcp:127.0.0.1:14550...')
+    # drone.connectToSimulator()
     
     if drone.isConnected():
         print('Firmware Version: ' + str(drone.getFirmwareVersion() ))
         print('System Status: ' + drone.getSystemStatus())
+        print('Vehicle Mode: ' + str(drone.vehicle.mode.name))
         print('Gimbal Status: ' + str(drone.getGimbalStatus()))
         
         print('\nGPS:')

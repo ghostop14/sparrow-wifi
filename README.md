@@ -14,10 +14,14 @@ Sparrow-wifi provides a nice graphical interface with tables of discovered netwo
 - MAVLINK / DRONE SUPPORT!  The remote agent can be configured to pull GPS via the Mavlink protocol from a mavlink-enabled vehicle such as a drone or rover
 - The agent provides a basic HTTP service and provides JSON responses to requests from the UI, so requests for wireless interfaces, networks, and GPS status can even be used in other applications
 
-Sample screenshot:
+Sample screenshots:
 
 <p align="center">
   <img src="https://github.com/ghostop14/sparrow-wifi/blob/master/sparrow-screenshot.png" width="800"/>
+</p>
+
+<p align="center">
+  <img src="https://github.com/ghostop14/sparrow-wifi/blob/master/telemetry-screenshot.png" width="800"/>
 </p>
 
 NOTE: This project is under active development so check back regularly for updates, bugfixes, and new features.
