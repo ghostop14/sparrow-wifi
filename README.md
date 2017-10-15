@@ -21,7 +21,7 @@ Sample screenshots:
 </p>
 
 <p align="center">
-  <img src="https://github.com/ghostop14/sparrow-wifi/blob/master/telemetry-screenshot.png" width="800"/>
+  <img src="https://github.com/ghostop14/sparrow-wifi/blob/master/telemetry-screenshot.png" width="600"/>
 </p>
 
 NOTE: This project is under active development so check back regularly for updates, bugfixes, and new features.
@@ -49,7 +49,9 @@ Because it needs to use iw to scan, you will need to run sparrowwifiagent as roo
 sudo sparrowwifiagent.py
 
 An alternate port can also be specified with:
-sudo sparrowwifiagent.py --port=<myport>
+sudo sparrowwifiagent.py --port=&ltmyport&gt
+
+you can also enable mavlink GPS capabilities here on the command-line with the --mavlinkgps switch.  See --help for details.
 
 
 
