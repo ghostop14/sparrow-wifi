@@ -19,7 +19,7 @@
 # 
 
 from time import sleep
-from dronekit import connect, VehicleMode
+from dronekit import connect, VehicleMode, LocationGlobalRelative
 
 # Connect to the Vehicle using "connection string" (in this case an address on network)
 class SparrowDroneMavlink(object):
@@ -66,6 +66,18 @@ class SparrowDroneMavlink(object):
             
         return self.vehicle.armed
         
+    def arm(self):
+        if not self.vehicle.armed and self.vehicle.is_armable:
+            self.vehicle.armed = True
+            return True
+        elif not self.vehicle.armed:
+            # Not armed and can't arm it.  Just exit
+            return False
+
+    def returnToLaunch(self):
+        if self.vehicle:
+            self.vehicle.mode = VehicleMode("RTL")
+        
     def takeoff(self, mode="STABILIZE", altitude=7):
         # Mode can be GUIDED or STABILIZE
         # altitude is in meters
@@ -88,7 +100,23 @@ class SparrowDroneMavlink(object):
         # self.vehicle.location.global_relative_frame.alt will tell you if it's there yet
         # Say while < 0.95 * altitude
         return True
+
+    def gotoLocation(self, latitude, longitude, altitude, speed):
+        if not self.vehicle:
+            return False
         
+        self.vehicle.mode = VehicleMode("GUIDED")
+        self.vehicle.armed = True
+        
+        while not self.vehicle.armed:
+            sleep(1)
+            
+        self.vehicle.airspeed = speed
+        point1 = LocationGlobalRelative(latitude, longitude, altitude)
+        self.vehicle.simple_goto(point1)
+        
+        return True
+    
     def relativeAltitude(self):
         # This just returns altitude
         if not self.vehicle:
