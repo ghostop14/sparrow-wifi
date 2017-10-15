@@ -49,7 +49,7 @@ Because it needs to use iw to scan, you will need to run sparrowwifiagent as roo
 sudo sparrowwifiagent.py
 
 An alternate port can also be specified with:
-sudo sparrowwifiagent.py --port=&ltmyport&gt
+sudo sparrowwifiagent.py --port=&lt;myport&gt;
 
 you can also enable mavlink GPS capabilities here on the command-line with the --mavlinkgps switch.  See --help for details.
 
