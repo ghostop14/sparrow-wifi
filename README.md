@@ -11,6 +11,7 @@ Sparrow-wifi provides a nice graphical interface with tables of discovered netwo
 - Plot SSID GPS coordinates on Google maps
 - Sparrow-wifi has built-in GPS support via gpsd for network location tagging
 - Sparrow-wifi has a remotely deployable agent (sparrowwifiagent.py) that can be run on a separate system.  The GUI can then be connected to the remote agent for remote monitoring, including remote GPS.
+- MAVLINK / DRONE SUPPORT!  The remote agent can be configured to pull GPS via the Mavlink protocol from a mavlink-enabled vehicle such as a drone or rover
 - The agent provides a basic HTTP service and provides JSON responses to requests from the UI, so requests for wireless interfaces, networks, and GPS status can even be used in other applications
 
 Sample screenshot:
@@ -24,7 +25,9 @@ NOTE: This project is under active development so check back regularly for updat
 ## Installation
 sparrow-wifi uses python3, qt5, and qtchart behind the scenes.  On a standard debian variant you will may already have python3 and qt5 installed.  The only addition to run is qtchart.  Therefore you may need to run the following command for setup:
 
-pip3 install qscintilla PyQtChart gps3
+(if you don't already have pip3 installed, use 'apt-get install python3-pip')
+
+pip3 install qscintilla PyQtChart gps3 dronekit
 
 If you're going to use the gps capabilities, you'll also need to make sure gpsd is installed and configured:
 

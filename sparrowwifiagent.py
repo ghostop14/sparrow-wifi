@@ -22,18 +22,45 @@ import datetime
 import json
 import re
 import argparse
+from time import sleep
+from threading import Thread
 from http import server as HTTPServer
-from wirelessengine import WirelessEngine
-from sparrowgps import GPSEngine
 
+from wirelessengine import WirelessEngine
+from sparrowgps import GPSEngine, GPSStatus
+from sparrowdrone import SparrowDroneMavlink
+
+# ------   Global setup ------------
 gpsEngine = GPSEngine()
 curTime = datetime.datetime.now()
-if GPSEngine.GPSDRunning():
-    gpsEngine.start()
-    print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] Local gpsd Found.  Providing GPS coordinates when synchronized.")
-else:
-    print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] No local gpsd running.  No GPS data will be provided.")
 
+useMavlink = False
+vehicle = None
+mavlinkGPSThread = None
+
+# ------------------  Local network scan thread  ------------------------------
+class MavlinkGPSThread(Thread):
+    def __init__(self, vehicle):
+        super(MavlinkGPSThread, self).__init__()
+        self.signalStop = False
+        self.scanDelay = 0.5  # seconds
+        self.threadRunning = False
+        self.vehicle = vehicle
+        self.synchronized = False
+        self.latitude = 0.0
+        self.longitude = 0.0
+        self.altitude = 0.0
+        
+    def run(self):
+        self.threadRunning = True
+        
+        while (not self.signalStop):
+            self.synchronized, self.latitude, self.longitude, self.altitude = self.vehicle.getGlobalGPS()
+            sleep(self.scanDelay)
+                    
+        self.threadRunning = False
+
+# ---------------  HTTP Request Handler --------------------
 # Sample handler: https://wiki.python.org/moin/BaseHttpServer
 class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
     def do_HEAD(s):
@@ -43,6 +70,8 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
 
     def do_GET(s):
         global gpsEngine
+        global useMavlink
+        global mavlinkGPSThread
         
         if (s.path != '/wireless/interfaces') and (s.path != '/gps/status') and ('/wireless/networks/' not in s.path):
             s.send_response(404)
@@ -69,17 +98,29 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
             s.wfile.write(jsonstr.encode("UTF-8"))
         elif s.path == '/gps/status':
             jsondict={}
-            jsondict['gpsinstalled'] = str(GPSEngine.GPSDInstalled())
-            jsondict['gpsrunning'] = str(GPSEngine.GPSDRunning())
-            jsondict['gpssynch'] = str(gpsEngine.gpsValid())
-            if gpsEngine.gpsValid():
+            
+            if not useMavlink:
+                jsondict['gpsinstalled'] = str(GPSEngine.GPSDInstalled())
+                jsondict['gpsrunning'] = str(GPSEngine.GPSDRunning())
+                jsondict['gpssynch'] = str(gpsEngine.gpsValid())
+                if gpsEngine.gpsValid():
+                    gpsPos = {}
+                    gpsPos['latitude'] = gpsEngine.lastCoord.latitude
+                    gpsPos['longitude'] = gpsEngine.lastCoord.longitude
+                    gpsPos['altitude'] = gpsEngine.lastCoord.altitude
+                    gpsPos['speed'] = gpsEngine.lastCoord.speed
+                    jsondict['gpspos'] = gpsPos
+            else:
+                jsondict['gpsinstalled'] = 'True'
+                jsondict['gpsrunning'] = 'True'
+                jsondict['gpssynch'] = str(mavlinkGPSThread.synchronized)
                 gpsPos = {}
-                gpsPos['latitude'] = gpsEngine.lastCoord.latitude
-                gpsPos['longitude'] = gpsEngine.lastCoord.longitude
-                gpsPos['altitude'] = gpsEngine.lastCoord.altitude
-                gpsPos['speed'] = gpsEngine.lastCoord.speed
+                gpsPos['latitude'] = mavlinkGPSThread.latitude
+                gpsPos['longitude'] = mavlinkGPSThread.longitude
+                gpsPos['altitude'] = mavlinkGPSThread.altitude
+                gpsPos['speed'] = mavlinkGPSThread.vehicle.getAirSpeed()
                 jsondict['gpspos'] = gpsPos
-
+                
             jsonstr = json.dumps(jsondict)
             s.wfile.write(jsonstr.encode("UTF-8"))
         elif '/wireless/networks/' in s.path:
@@ -113,8 +154,18 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                             # Need to iterate through the channels and aggregate the results
                     except:
                         pass
-                
-            if gpsEngine.gpsValid():
+
+            if useMavlink:
+                gpsCoord = GPSStatus()
+                gpsCoord.gpsInstalled = True
+                gpsCoord.gpsRunning = True
+                gpsCoord.gpsSynchronized = mavlinkGPSThread.synchronized
+                gpsCoord.latitude = mavlinkGPSThread.latitude
+                gpsCoord.longitude = mavlinkGPSThread.longitude
+                gpsCoord.altitude = mavlinkGPSThread.altitude
+                gpsCoord.speed = mavlinkGPSThread.vehicle.getAirSpeed()
+                retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, gpsCoord, huntChannelList)
+            elif gpsEngine.gpsValid():
                 retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, gpsEngine.lastCoord, huntChannelList)
             else:
                 retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, None, huntChannelList)
@@ -143,12 +194,62 @@ class SparrowWiFiAgent(object):
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description='Sparrow-wifi agent')
     argparser.add_argument('--port', help='Port for HTTP server to listen on', default=8020, required=False)
+    argparser.add_argument('--mavlinkgps', help="Use Mavlink (drone) for GPS.  Options are: '3dr' for a Solo, 'sitl' for local simulator, or full connection string ('udp/tcp:<ip>:<port>' such as: 'udp:10.1.1.10:14550')", default='', required=False)
     args = argparser.parse_args()
 
     if os.geteuid() != 0:
         print("ERROR: You need to have root privileges to run this script.  Please try again, this time using 'sudo'. Exiting.\n")
         exit(2)
-    
-    server = SparrowWiFiAgent()
+
+    # Set up parameters
     port = args.port
+    mavlinksetting = args.mavlinkgps
+    
+    if len(mavlinksetting) > 0:
+        vehicle = SparrowDroneMavlink()
+        
+        print('Connecting to ' + mavlinksetting)
+        
+        if mavlinksetting == '3dr':
+            retVal = vehicle.connectToSolo()
+        elif (mavlinksetting == 'sitl'):
+            retVal = vehicle.connectToSimulator()
+        else:
+            retVal = vehicle.connect(mavlinksetting)
+
+        if retVal:
+            print('Mavlink connected.')
+            print('Current GPS Info:')
+            synchronized, latitude, longitude, altitude = vehicle.getGlobalGPS()
+            print('Synchronized: ' + str(synchronized))
+            print('Latitude: ' + str(latitude))
+            print('Longitude: ' + str(longitude))
+            print('Altitude (m): ' + str(altitude))
+            print('Heading: ' + str(vehicle.getHeading()))
+            
+            useMavlink = True
+            mavlinkGPSThread = MavlinkGPSThread(vehicle)
+            mavlinkGPSThread.start()
+        else:
+            print("ERROR: Unable to connect to " + mavlinksetting)
+            exit(1)
+    else:
+        # No mavlink specified.  Check the local GPS.
+        if GPSEngine.GPSDRunning():
+            gpsEngine.start()
+            print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] Local gpsd Found.  Providing GPS coordinates when synchronized.")
+        else:
+            print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] No local gpsd running.  No GPS data will be provided.")
+
+    # Run HTTP Server
+    server = SparrowWiFiAgent()
     server.run(port)
+    
+    if mavlinkGPSThread:
+        print('Waiting for mavlink GPS thread to terminate...')
+        while (mavlinkGPSThread.threadRunning):
+            sleep(0.2)
+
+    if useMavlink and vehicle:
+        vehicle.close()
+        

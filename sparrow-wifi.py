@@ -80,9 +80,9 @@ def requestRemoteGPS(remoteIP, remotePort):
             
             gpsStatus.gpsInstalled = stringtobool(gpsjson['gpsinstalled'])
             gpsStatus.gpsRunning = stringtobool(gpsjson['gpsrunning'])
-            gpsStatus.gpsSynchronized = stringtobool(gpsjson['gpssynch'])
+            gpsStatus.isValid = stringtobool(gpsjson['gpssynch'])
             
-            if gpsStatus.gpsSynchronized:
+            if gpsStatus.isValid:
                 # These won't be there if it's not synchronized
                 gpsStatus.latitude = float(gpsjson['latitude'])
                 gpsStatus.longitude = float(gpsjson['longitude'])
