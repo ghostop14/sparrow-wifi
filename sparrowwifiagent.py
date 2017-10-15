@@ -159,7 +159,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 gpsCoord = GPSStatus()
                 gpsCoord.gpsInstalled = True
                 gpsCoord.gpsRunning = True
-                gpsCoord.gpsSynchronized = mavlinkGPSThread.synchronized
+                gpsCoord.isValid = mavlinkGPSThread.synchronized
                 gpsCoord.latitude = mavlinkGPSThread.latitude
                 gpsCoord.longitude = mavlinkGPSThread.longitude
                 gpsCoord.altitude = mavlinkGPSThread.altitude
