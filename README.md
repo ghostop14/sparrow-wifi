@@ -31,7 +31,7 @@ sparrow-wifi uses python3, qt5, and qtchart behind the scenes.  On a standard de
 
 (if you don't already have pip3 installed, use 'apt-get install python3-pip')
 
-pip3 install qscintilla PyQtChart gps3 dronekit
+pip3 install QScintilla PyQtChart gps3 dronekit
 
 If you're going to use the gps capabilities, you'll also need to make sure gpsd is installed and configured:
 
@@ -52,6 +52,17 @@ An alternate port can also be specified with:
 sudo sparrowwifiagent.py --port=&lt;myport&gt;
 
 you can also enable mavlink GPS capabilities here on the command-line with the --mavlinkgps switch.  See --help for details.
+
+## Raspberry Pi Notes
+
+You can run the remote agent on a Raspberry pi, however the installation requirements are a bit different.  First, you'll need to install python3-dateutil:
+
+sudo apt-get install python3-dateutil
+
+Then for the pip installation, you won't be able to run the GUI since there doesn't appear to be a PyQtChart suitable for the Pi.  So for the agent, just install the gps and dronekit modules:
+
+sudo pip3 install gps3 dronekit
+
 
 
 
