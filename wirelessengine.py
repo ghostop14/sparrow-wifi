@@ -110,10 +110,59 @@ channelToFreq['188'] = '4940'
 channelToFreq['189'] = '4945'
 channelToFreq['192'] = '4960'
 channelToFreq['196'] = '4980'
+   
+# ------------------  WirelessNetwork class ------------------------------------
+class WirelessClient(object):
+    def __init__(self):
+        self.macAddr = ""
+        self.apMacAddr = ""
+        self.signal = -1000 # dBm
+        now=datetime.datetime.now()
+        self.firstSeen = now
+        self.lastSeen = now
 
-      
-# ------------------  Classes ------------------------------------
+        self.gps = SparrowGPS()
+        self.strongestsignal = self.signal
+        self.strongestgps = SparrowGPS()
 
+        self.probedSSIDs = []
+        # Used for tracking in network table
+        self.foundInList = False
+        
+    def __str__(self):
+        retVal = ""
+        
+        retVal += "MAC Address: " + self.macAddr + "\n"
+        retVal += "Associated Access Point Mac Address: " + self.apMacAddr + "\n"
+        retVal += "Signal: " + str(self.signal) + " dBm\n"
+        retVal += "Strongest Signal: " + str(self.strongestsignal) + " dBm\n"
+        retVal += "First Seen: " + str(self.firstSeen) + "\n"
+        retVal += "Last Seen: " + str(self.lastSeen) + "\n"
+        retVal += "Probed SSIDs:"
+        
+        if (len(self.probedSSIDs) > 0):
+            for curSSID in self.probedSSIDs:
+                retVal += " " + curSSID
+                
+            retVal += "\n"
+        else:
+            retVal += " No probes observed\n"
+        retVal += "Last GPS:\n"
+        retVal += str(self.gps)
+        retVal += "Strongest GPS:\n"
+        retVal += str(self.strongestgps)
+            
+        return retVal
+        
+    def getKey(self):
+        return self.macAddr
+        
+    def associated(self):
+        if len(self.apMacAddr) == 0 or (self.apMacAddr == "(not associated)"):
+            return False
+            
+        return True
+        
 class WirelessNetwork(object):
     ERR_NETDOWN = 156
     ERR_OPNOTSUPPORTED = 161
@@ -355,6 +404,30 @@ class WirelessEngine(object):
             # debug
             if (printResults):
                 print("Error: No wireless interfaces found.")
+
+        return retVal
+
+    def getMonitoringModeInterfaces(printResults=False):
+        # Note: for standard scans with iw, this isn't required.  Just root access.
+        # This is only required for some of the more advanced pen testing capabilities
+        result = subprocess.run(['iwconfig'], stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+        wirelessResult = result.stdout.decode('ASCII')
+        p = re.compile('^(.*?) IEEE.*?Mode:Monitor', re.MULTILINE)
+        tmpInterfaces = p.findall(wirelessResult)
+        
+        retVal = []
+        
+        if (len(tmpInterfaces) > 0):
+            for curInterface in tmpInterfaces:
+                tmpStr=curInterface.replace(' ','')
+                retVal.append(tmpStr)
+                # debug
+                if (printResults):
+                    print(tmpStr)
+        else:
+            # debug
+            if (printResults):
+                print("Error: No monitoring mode wireless interfaces found.")
 
         return retVal
 

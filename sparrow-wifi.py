@@ -49,6 +49,15 @@ from sparrowtablewidgets import IntTableWidgetItem, DateTableWidgetItem
 from sparrowmap import MapMarker, MapEngine
 from sparrowdialogs import MapSettingsDialog, TelemetryMapSettingsDialog
 
+# There are some "plugins" that are available for addons.  Let's see if they're present
+hasFalcon = False
+
+try:
+    from manuf import manuf
+    hasOUILookup = True
+except:
+    hasOUILookup = False
+    
 # ------------------  Global functions ------------------------------
 def stringtobool(instr):
     if (instr == 'True' or instr == 'true'):
@@ -240,6 +249,8 @@ class mainWindow(QMainWindow):
     scanresults = QtCore.pyqtSignal(dict)
     errmsg = QtCore.pyqtSignal(int, str)
     gpsSynchronizedsignal = QtCore.pyqtSignal()
+    advScanClosed = QtCore.pyqtSignal()
+    advScanUpdateSSIDs = QtCore.pyqtSignal(dict)
     
     # For help with qt5 GUI's this is a great tutorial:
     # http://zetcode.com/gui/pyqt5/
@@ -247,7 +258,19 @@ class mainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        if hasOUILookup:
+            try:
+                self.ouiLookupEngine = manuf.MacParser(update=True)
+            except:
+                try:
+                    self.ouiLookupEngine = manuf.MacParser(update=False)
+                except:
+                    self.ouiLookupEngine = None
+        else:
+            self.ouiLookupEngine = None
+            
         self.telemetryWindows = {}
+        self.advancedScan = None
         
         self.scanMode="Normal"
         self.huntChannelList = []
@@ -256,6 +279,10 @@ class mainWindow(QMainWindow):
         self.gpsEngine = GPSEngineNotifyWin(self)
         self.gpsSynchronized = False
         self.gpsSynchronizedsignal.connect(self.onGPSSyncChanged)
+        
+        # Advanced Scan
+        self.advScanClosed.connect(self.onAdvancedScanClosed)
+        self.advScanUpdateSSIDs.connect(self.onAdvScanUpdateSSIDs)
         
         # Local network scan
         self.scanRunning = False
@@ -296,6 +323,18 @@ class mainWindow(QMainWindow):
         else:
             self.runningAsRoot = True
     
+    def ouiLookup(self, macAddr):
+        clientVendor = ""
+        
+        if hasOUILookup:
+            try:
+                if self.ouiLookupEngine:
+                    clientVendor = self.ouiLookupEngine.get_manuf(macAddr)
+            except:
+                pass
+            
+        return clientVendor
+        
     def initUI(self):
         # self.setGeometry(10, 10, 800, 600)
         self.resize(self.mainWidth, self.mainHeight)
@@ -317,8 +356,8 @@ class mainWindow(QMainWindow):
         self.gpsTimer.timeout.connect(self.onGPSTimer)
         self.gpsTimer.setSingleShot(True)
         
-        self.gpsTimerTimeout = 10000
-        self.gpsTimer.start(self.gpsTimerTimeout)   # Check every 10 seconds
+        self.gpsTimerTimeout = 5000
+        self.gpsTimer.start(self.gpsTimerTimeout)   # Check every 5 seconds
 
     def resizeEvent(self, event):
         # self.resized.emit()
@@ -401,13 +440,13 @@ class mainWindow(QMainWindow):
         
         # Network Table
         self.networkTable = QTableWidget(self)
-        self.networkTable.setColumnCount(11)
+        self.networkTable.setColumnCount(12)
         # self.networkTable.setGeometry(10, 100, self.mainWidth-60, self.mainHeight/2-105)
         self.networkTable.setShowGrid(True)
-        self.networkTable.setHorizontalHeaderLabels(['macAddr', 'SSID', 'Security', 'Privacy', 'Channel', 'Frequency', 'Signal Strength', 'Bandwidth', 'Last Seen', 'First Seen', 'GPS'])
+        self.networkTable.setHorizontalHeaderLabels(['macAddr', 'vendor','SSID', 'Security', 'Privacy', 'Channel', 'Frequency', 'Signal Strength', 'Bandwidth', 'Last Seen', 'First Seen', 'GPS'])
         self.networkTable.resizeColumnsToContents()
         self.networkTable.setRowCount(0)
-        self.networkTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.networkTable.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
 
         self.networkTable.horizontalHeader().sectionClicked.connect(self.onTableHeadingClicked)
         self.networkTable.cellClicked.connect(self.onTableClicked)
@@ -470,6 +509,13 @@ class mainWindow(QMainWindow):
         newAct.triggered.connect(self.exportData)
         fileMenu.addAction(newAct)
         
+        # exitAct = QAction(QIcon('exit.png'), '&Exit', self)        
+        exitAct = QAction('&Exit', self)        
+        exitAct.setShortcut('Ctrl+X')
+        exitAct.setStatusTip('Exit application')
+        exitAct.triggered.connect(self.close)
+        fileMenu.addAction(exitAct)
+
         # Agent Menu Items
         helpMenu = menubar.addMenu('&Agent')
         self.menuRemoteAgent = QAction('Remote Agent', self)        
@@ -515,6 +561,14 @@ class mainWindow(QMainWindow):
         newAct.triggered.connect(self.onShowTelemetry)
         ViewMenu.addAction(newAct)
         
+        if hasFalcon:
+            # Falcon Menu Items
+            ViewMenu = menubar.addMenu('&Falcon')
+            newAct = QAction('Advanced Scan', self)        
+            newAct.setStatusTip("Run a scan to find hidden SSID's and client stations")
+            newAct.triggered.connect(self.onAdvancedScan)
+            ViewMenu.addAction(newAct)
+        
         # Help Menu Items
         helpMenu = menubar.addMenu('&Help')
         newAct = QAction('About', self)        
@@ -528,13 +582,6 @@ class mainWindow(QMainWindow):
         #newMenu.addAction(actNewpostgres)
         # fileMenu.addMenu(newMenu)
         
-        # exitAct = QAction(QIcon('exit.png'), '&Exit', self)        
-        exitAct = QAction('&Exit', self)        
-        exitAct.setShortcut('Ctrl+X')
-        exitAct.setStatusTip('Exit application')
-        exitAct.triggered.connect(self.close)
-        fileMenu.addAction(exitAct)
-
     def createCharts(self):
         self.chart24 = QChart()
         titleFont = QFont()
@@ -594,6 +641,40 @@ class mainWindow(QMainWindow):
         self.Plot5.setBackgroundBrush(chartBorder)
         self.Plot5.setRenderHint(QPainter.Antialiasing)
     
+    def onAdvancedScanClosed(self):
+        self.advancedScan = None
+     
+    def onAdvScanUpdateSSIDs(self, wirelessNetworks):
+        rowPosition = self.networkTable.rowCount()
+        
+        if rowPosition > 0:
+            # Range goes to last # - 1
+            for curRow in range(0, rowPosition):
+                try:
+                    curData = self.networkTable.item(curRow, 2).data(Qt.UserRole+1)
+                except:
+                    curData = None
+                    
+                if (curData):
+                    # We already have the network.  just update it
+                    for curKey in wirelessNetworks.keys():
+                        curNet = wirelessNetworks[curKey]
+                        if (curData.macAddr == curNet.macAddr) and (curData.channel == curNet.channel):
+                            # See if we had an unknown SSID
+                            if curData.ssid.startswith('<Unknown') and (not curNet.startswith('<Unknown')):
+                                curData.ssid = curNet.ssid
+                                self.networkTable.item(curRow, 2).setText(curData.ssid)
+        
+    def onAdvancedScan(self):
+        if not hasFalcon:
+            return
+                    
+        if not self.advancedScan:
+            self.advancedScan = AdvancedScanDialog(self, None)  # Need to set parent to None to allow it to not always be on top
+            
+        self.advancedScan.show()
+        self.advancedScan.activateWindow()
+        
     def onScanModeChanged(self):
         self.scanMode = str(self.scanModeCombo.currentText())
         
@@ -668,7 +749,7 @@ class mainWindow(QMainWindow):
         if curRow == -1:
             return
         
-        curNet = self.networkTable.item(curRow, 1).data(Qt.UserRole+1)
+        curNet = self.networkTable.item(curRow, 2).data(Qt.UserRole+1)
         
         if curNet == None:
             return
@@ -715,7 +796,7 @@ class mainWindow(QMainWindow):
         # Range goes to last # - 1
         for curRow in range(0, rowPosition):
             try:
-                curData = self.networkTable.item(curRow, 1).data(Qt.UserRole+1)
+                curData = self.networkTable.item(curRow, 2).data(Qt.UserRole+1)
             except:
                 curData = None
             
@@ -762,11 +843,15 @@ class mainWindow(QMainWindow):
             return
             
         markers = []
+        raw_list = []
         
-        with open(mapSettings.inputfile, 'r') as f:
-            reader = csv.reader(f)
-            raw_list = list(reader)
-            
+        try:
+            with open(mapSettings.inputfile, 'r') as f:
+                reader = csv.reader(f)
+                raw_list = list(reader)
+        except:
+            pass
+                
             # remove blank lines
             while [] in raw_list:
                 raw_list.remove([])
@@ -862,7 +947,6 @@ class mainWindow(QMainWindow):
             order = header.sortIndicatorOrder()
         header.setSortIndicator( logical_index, order )
         self.networkTable.sortItems(logical_index, order )
-
         
     def onTableClicked(self, row, col):
         if (self.lastSeries is not None):
@@ -874,7 +958,7 @@ class mainWindow(QMainWindow):
                 self.lastSeries.setVisible(False)
                 self.lastSeries.setVisible(True)
             
-        selectedSeries = self.networkTable.item(row, 1).data(Qt.UserRole)
+        selectedSeries = self.networkTable.item(row, 2).data(Qt.UserRole)
         
         if (selectedSeries):
             pen = selectedSeries.pen()
@@ -1045,7 +1129,7 @@ class mainWindow(QMainWindow):
         if self.scanRunning:
             # Running local.  If we have a good GPS, update the networks
             # NOTE: We don't have to worry about remote scans.  They'll fill the GPS results in the data that gets passed to us.
-            if (self.gpsSynchronized and (self.gpsEngine.lastCoord is not None)):
+            if self.gpsSynchronized and (self.gpsEngine.lastCoord is not None) and (self.gpsEngine.lastCoord.isValid):
                 for curKey in wirelessNetworks.keys():
                     curNet = wirelessNetworks[curKey]
                     curNet.gps = self.gpsEngine.lastCoord
@@ -1053,6 +1137,7 @@ class mainWindow(QMainWindow):
         
         if self.menuRemoteAgent.isChecked() or ((not self.menuRemoteAgent.isChecked()) and self.scanRunning):
             # If is to prevent a messaging issue on last iteration
+            # Scan results will come over from the remote agent with the GPS fields already populated.
             self.populateTable(wirelessNetworks)
         
     def onErrMsg(self, errCode, errMsg):
@@ -1070,6 +1155,13 @@ class mainWindow(QMainWindow):
                 self.scanRunning = False
                 self.btnScan.setChecked(False)
                 
+                # Undo button
+                self.btnScan.setStyleSheet("background-color: rgba(2,128,192,255); border: none;")
+                self.btnScan.setText('&Scan')
+                self.menuRemoteAgent.setEnabled(True)
+                self.scanModeCombo.setEnabled(True)
+                self.huntChannels.setEnabled(True)
+                
                 
     def populateTable(self, wirelessNetworks):
         rowPosition = self.networkTable.rowCount()
@@ -1078,7 +1170,7 @@ class mainWindow(QMainWindow):
             # Range goes to last # - 1
             for curRow in range(0, rowPosition):
                 try:
-                    curData = self.networkTable.item(curRow, 1).data(Qt.UserRole+1)
+                    curData = self.networkTable.item(curRow, 2).data(Qt.UserRole+1)
                 except:
                     curData = None
                     
@@ -1088,13 +1180,16 @@ class mainWindow(QMainWindow):
                         curNet = wirelessNetworks[curKey]
                         if curData.getKey() == curNet.getKey():
                             # Match.  Item was already in the table.  Let's update it
-                            self.networkTable.item(curRow, 2).setText(curNet.security)
-                            self.networkTable.item(curRow, 3).setText(curNet.privacy)
-                            self.networkTable.item(curRow, 4).setText(str(curNet.getChannelString()))
-                            self.networkTable.item(curRow, 5).setText(str(curNet.frequency))
-                            self.networkTable.item(curRow, 6).setText(str(curNet.signal))
-                            self.networkTable.item(curRow, 7).setText(str(curNet.bandwidth))
-                            self.networkTable.item(curRow, 8).setText(curNet.lastSeen.strftime("%m/%d/%Y %H:%M:%S"))
+                            clientVendor = self.ouiLookup(curNet.macAddr)
+                            self.networkTable.item(curRow, 1).setText(clientVendor)
+                            
+                            self.networkTable.item(curRow, 3).setText(curNet.security)
+                            self.networkTable.item(curRow, 4).setText(curNet.privacy)
+                            self.networkTable.item(curRow, 5).setText(str(curNet.getChannelString()))
+                            self.networkTable.item(curRow, 6).setText(str(curNet.frequency))
+                            self.networkTable.item(curRow, 7).setText(str(curNet.signal))
+                            self.networkTable.item(curRow, 8).setText(str(curNet.bandwidth))
+                            self.networkTable.item(curRow, 9).setText(curNet.lastSeen.strftime("%m/%d/%Y %H:%M:%S"))
                             
                             # Carry forward firstSeen
                             curNet.firstSeen = curData.firstSeen # This is one field to carry forward
@@ -1108,16 +1203,16 @@ class mainWindow(QMainWindow):
                                 curNet.strongestgps.speed = curData.gps.speed
                                 curNet.strongestgps.isValid = curData.gps.isValid
                             
-                            self.networkTable.item(curRow, 9).setText(curNet.firstSeen.strftime("%m/%d/%Y %H:%M:%S"))
+                            self.networkTable.item(curRow, 10).setText(curNet.firstSeen.strftime("%m/%d/%Y %H:%M:%S"))
                             if curNet.gps.isValid:
-                                self.networkTable.item(curRow, 10).setText('Yes')
+                                self.networkTable.item(curRow, 11).setText('Yes')
                             else:
-                                self.networkTable.item(curRow, 10).setText('No')
+                                self.networkTable.item(curRow, 11).setText('No')
                             curNet.foundInList = True
-                            self.networkTable.item(curRow, 1).setData(Qt.UserRole+1, curNet)
+                            self.networkTable.item(curRow, 2).setData(Qt.UserRole+1, curNet)
                             
                             # Update series
-                            curSeries = self.networkTable.item(curRow, 1).data(Qt.UserRole)
+                            curSeries = self.networkTable.item(curRow, 2).data(Qt.UserRole)
                             
                             # Check if we have a telemetry window
                             if curNet.getKey() in self.telemetryWindows:
@@ -1310,19 +1405,21 @@ class mainWindow(QMainWindow):
             newSSID.setData(Qt.UserRole+1, wirelessNetworks[curKey])
             newSSID.setData(Qt.UserRole+2, None)
             
-            self.networkTable.setItem(rowPosition, 1, newSSID)
-            self.networkTable.setItem(rowPosition, 2, QTableWidgetItem(wirelessNetworks[curKey].security))
-            self.networkTable.setItem(rowPosition, 3, QTableWidgetItem(wirelessNetworks[curKey].privacy))
-            self.networkTable.setItem(rowPosition, 4, IntTableWidgetItem(str(wirelessNetworks[curKey].getChannelString())))
-            self.networkTable.setItem(rowPosition, 5, IntTableWidgetItem(str(wirelessNetworks[curKey].frequency)))
-            self.networkTable.setItem(rowPosition, 6,  IntTableWidgetItem(str(wirelessNetworks[curKey].signal)))
-            self.networkTable.setItem(rowPosition, 7, IntTableWidgetItem(str(wirelessNetworks[curKey].bandwidth)))
-            self.networkTable.setItem(rowPosition, 8, DateTableWidgetItem(wirelessNetworks[curKey].lastSeen.strftime("%m/%d/%Y %H:%M:%S")))
-            self.networkTable.setItem(rowPosition, 9, DateTableWidgetItem(wirelessNetworks[curKey].firstSeen.strftime("%m/%d/%Y %H:%M:%S")))
+            clientVendor = self.ouiLookup(curNet.macAddr)
+            self.networkTable.setItem(rowPosition, 1, QTableWidgetItem(clientVendor))
+            self.networkTable.setItem(rowPosition, 2, newSSID)
+            self.networkTable.setItem(rowPosition, 3, QTableWidgetItem(wirelessNetworks[curKey].security))
+            self.networkTable.setItem(rowPosition, 4, QTableWidgetItem(wirelessNetworks[curKey].privacy))
+            self.networkTable.setItem(rowPosition, 5, IntTableWidgetItem(str(wirelessNetworks[curKey].getChannelString())))
+            self.networkTable.setItem(rowPosition, 6, IntTableWidgetItem(str(wirelessNetworks[curKey].frequency)))
+            self.networkTable.setItem(rowPosition, 7,  IntTableWidgetItem(str(wirelessNetworks[curKey].signal)))
+            self.networkTable.setItem(rowPosition, 8, IntTableWidgetItem(str(wirelessNetworks[curKey].bandwidth)))
+            self.networkTable.setItem(rowPosition, 9, DateTableWidgetItem(wirelessNetworks[curKey].lastSeen.strftime("%m/%d/%Y %H:%M:%S")))
+            self.networkTable.setItem(rowPosition, 10, DateTableWidgetItem(wirelessNetworks[curKey].firstSeen.strftime("%m/%d/%Y %H:%M:%S")))
             if wirelessNetworks[curKey].gps.isValid:
-                self.networkTable.setItem(rowPosition, 10, QTableWidgetItem('Yes'))
+                self.networkTable.setItem(rowPosition, 11, QTableWidgetItem('Yes'))
             else:
-                self.networkTable.setItem(rowPosition, 10, QTableWidgetItem('No'))
+                self.networkTable.setItem(rowPosition, 11, QTableWidgetItem('No'))
 
         # Clean up any empty rows because of the way QTableWidget is handling row inserts
         numRows = self.networkTable.rowCount()
@@ -1338,12 +1435,12 @@ class mainWindow(QMainWindow):
             # range goes to last 
             for i in range(rowPosition, -1, -1):
                 try:
-                    curData = self.networkTable.item(i, 1).data(Qt.UserRole+1)
+                    curData = self.networkTable.item(i, 2).data(Qt.UserRole+1)
                     
                     # Age out
                     if self.cbAgeOut.isChecked():
                         if curData.lastSeen < maxTime:
-                            curSeries = self.networkTable.item(i, 1).data(Qt.UserRole)
+                            curSeries = self.networkTable.item(i, 2).data(Qt.UserRole)
                             if curData.channel < 20:
                                 self.chart24.removeSeries(curSeries)
                             else:
@@ -1362,7 +1459,7 @@ class mainWindow(QMainWindow):
             # Build key list just once to cut down # of loops
             netKeyList = []
             for i in range(0, numRows):
-                curNet = self.networkTable.item(i, 1).data(Qt.UserRole+1)
+                curNet = self.networkTable.item(i, 2).data(Qt.UserRole+1)
                 netKeyList.append(curNet.getKey())
                 
             try:
@@ -1435,15 +1532,16 @@ class mainWindow(QMainWindow):
                         
                 # Ignore header row
                 for i in range (1, len(raw_list)):
-                    if (len(raw_list[i]) >= 21):
+                    if (len(raw_list[i]) >= 22):
                         newNet = WirelessNetwork()
                         newNet.macAddr=raw_list[i][0]
-                        newNet.ssid = raw_list[i][1]
-                        newNet.security = raw_list[i][2]
-                        newNet.privacy = raw_list[i][3]
+                        # 1 will be vendor
+                        newNet.ssid = raw_list[i][2]
+                        newNet.security = raw_list[i][3]
+                        newNet.privacy = raw_list[i][4]
                         
                         # Channel could be primary+secondary
-                        channelstr = raw_list[i][4]
+                        channelstr = raw_list[i][5]
                         
                         if '+' in channelstr:
                             newNet.channel = int(channelstr.split('+')[0])
@@ -1454,26 +1552,26 @@ class mainWindow(QMainWindow):
                             else:
                                 newNet.secondaryChannelLocation = 'below'
                         else:
-                            newNet.channel = int(raw_list[i][4])
+                            newNet.channel = int(raw_list[i][5])
                             newNet.secondaryChannel = 0
                             newNet.secondaryChannelLocation = 'none'
                         
-                        newNet.frequency = int(raw_list[i][5])
-                        newNet.signal = int(raw_list[i][6])
-                        newNet.strongestsignal = int(raw_list[i][7])
-                        newNet.bandwidth = int(raw_list[i][8])
-                        newNet.lastSeen = parser.parse(raw_list[i][9])
-                        newNet.firstSeen = parser.parse(raw_list[i][10])
-                        newNet.gps.isValid = stringtobool(raw_list[i][11])
-                        newNet.gps.latitude = float(raw_list[i][12])
-                        newNet.gps.longitude = float(raw_list[i][13])
-                        newNet.gps.altitude = float(raw_list[i][14])
-                        newNet.gps.speed = float(raw_list[i][15])
-                        newNet.strongestgps.isValid = stringtobool(raw_list[i][16])
-                        newNet.strongestgps.latitude = float(raw_list[i][17])
-                        newNet.strongestgps.longitude = float(raw_list[i][18])
-                        newNet.strongestgps.altitude = float(raw_list[i][19])
-                        newNet.strongestgps.speed = float(raw_list[i][20])
+                        newNet.frequency = int(raw_list[i][6])
+                        newNet.signal = int(raw_list[i][7])
+                        newNet.strongestsignal = int(raw_list[i][8])
+                        newNet.bandwidth = int(raw_list[i][9])
+                        newNet.lastSeen = parser.parse(raw_list[i][10])
+                        newNet.firstSeen = parser.parse(raw_list[i][11])
+                        newNet.gps.isValid = stringtobool(raw_list[i][12])
+                        newNet.gps.latitude = float(raw_list[i][13])
+                        newNet.gps.longitude = float(raw_list[i][14])
+                        newNet.gps.altitude = float(raw_list[i][15])
+                        newNet.gps.speed = float(raw_list[i][16])
+                        newNet.strongestgps.isValid = stringtobool(raw_list[i][17])
+                        newNet.strongestgps.latitude = float(raw_list[i][18])
+                        newNet.strongestgps.longitude = float(raw_list[i][19])
+                        newNet.strongestgps.altitude = float(raw_list[i][20])
+                        newNet.strongestgps.speed = float(raw_list[i][21])
                         
                         wirelessNetworks[newNet.getKey()] = newNet
                     
@@ -1493,7 +1591,7 @@ class mainWindow(QMainWindow):
             QMessageBox.question(self, 'Error',"Unable to write to " + fileName, QMessageBox.Ok)
             return
             
-        outputFile.write('macAddr,SSID,Security,Privacy,Channel,Frequency,Signal Strength,Strongest Signal Strength, Bandwidth,Last Seen,First Seen,GPS Valid,Latitude,Longitude,Altitude,Speed,Strongest GPS Valid,Strongest Latitude,Strongest Longitude,Strongest Altitude,Strongest Speed\n')
+        outputFile.write('macAddr,vendor,SSID,Security,Privacy,Channel,Frequency,Signal Strength,Strongest Signal Strength, Bandwidth,Last Seen,First Seen,GPS Valid,Latitude,Longitude,Altitude,Speed,Strongest GPS Valid,Strongest Latitude,Strongest Longitude,Strongest Altitude,Strongest Speed\n')
 
         numItems = self.networkTable.rowCount()
         
@@ -1502,10 +1600,10 @@ class mainWindow(QMainWindow):
             return
            
         for i in range(0, numItems):
-            curData = self.networkTable.item(i, 1).data(Qt.UserRole+1)
+            curData = self.networkTable.item(i, 2).data(Qt.UserRole+1)
 
-            outputFile.write(self.networkTable.item(i, 0).text() + ',' + self.networkTable.item(i, 1).text() + ',' + self.networkTable.item(i, 2).text() + ',' + self.networkTable.item(i, 3).text())
-            outputFile.write(',' + self.networkTable.item(i, 4).text()+ ',' + self.networkTable.item(i, 5).text()+ ',' + self.networkTable.item(i, 6).text()+ ',' + str(curData.strongestsignal) + ',' + self.networkTable.item(i, 7).text() + ',' +
+            outputFile.write(self.networkTable.item(i, 0).text() + ',' + self.networkTable.item(i, 1).text() + ',' + self.networkTable.item(i, 2).text() + ',' + self.networkTable.item(i, 3).text() + ',' + self.networkTable.item(i, 4).text())
+            outputFile.write(',' + self.networkTable.item(i, 5).text()+ ',' + self.networkTable.item(i, 6).text()+ ',' + self.networkTable.item(i, 7).text()+ ',' + str(curData.strongestsignal) + ',' + self.networkTable.item(i, 8).text() + ',' +
                                     curData.lastSeen.strftime("%m/%d/%Y %H:%M:%S") + ',' + curData.firstSeen.strftime("%m/%d/%Y %H:%M:%S") + ',' + 
                                     str(curData.gps.isValid) + ',' + str(curData.gps.latitude) + ',' + str(curData.gps.longitude) + ',' + str(curData.gps.altitude) + ',' + str(curData.gps.speed) + ',' + 
                                     str(curData.strongestgps.isValid) + ',' + str(curData.strongestgps.latitude) + ',' + str(curData.strongestgps.longitude) + ',' + str(curData.strongestgps.altitude) + ',' + str(curData.strongestgps.speed) + '\n')
@@ -1640,7 +1738,12 @@ class mainWindow(QMainWindow):
 # -------  Main Routine -------------------------
 
 if __name__ == '__main__':
-    
+    if  os.path.exists('./plugins'):
+        sys.path.insert(0, './plugins')
+        if  os.path.isfile('./plugins/falconwifi.py'):
+            from falconwifidialogs import AdvancedScanDialog
+            hasFalcon = True
+            
     app = QApplication(sys.argv)
     mainWin = mainWindow()
     sys.exit(app.exec_())
