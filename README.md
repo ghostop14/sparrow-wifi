@@ -52,13 +52,17 @@ An alternate port can also be specified with:
 sudo sparrowwifiagent.py --port=&lt;myport&gt;
 
 To use mavlink to pull GPS from a drone use the --mavlinkgps parameter:
+
   --mavlinkgps MAVLINKGPS
+
                         Use Mavlink (drone) for GPS. Options are: '3dr' for a
+
                         Solo, 'sitl' for local simulator, or full connection
+
                         string ('udp/tcp:&lt;ip&gt;:&lt;myport&gt;' such as:
+
                         'udp:10.1.1.10:14550')
 
-you can also enable mavlink GPS capabilities here on the command-line with the --mavlinkgps switch.  See --help for details.
 
 ## Raspberry Pi Notes
 
