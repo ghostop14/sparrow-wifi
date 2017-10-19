@@ -28,7 +28,7 @@ import datetime
 from dateutil import parser
 import requests
 from time import sleep
-from threading import Thread
+from threading import Thread, Lock
 
 from PyQt5.QtWidgets import QApplication, QMainWindow,  QDesktopWidget
 from PyQt5.QtWidgets import QMessageBox, QFileDialog, QInputDialog, QLineEdit
@@ -291,6 +291,7 @@ class mainWindow(QMainWindow):
         self.nextColor = 0
         self.lastSeries = None
 
+        self.updateLock = Lock()
         self.scanThread = None
         self.scanDelay = 0.5
         self.scanresults.connect(self.scanResults)
@@ -600,7 +601,7 @@ class mainWindow(QMainWindow):
         # Axis examples: https://doc.qt.io/qt-5/qtcharts-multiaxis-example.html
         newAxis = QValueAxis()
         newAxis.setMin(0)
-        newAxis.setMax(15)
+        newAxis.setMax(16)
         newAxis.setTickCount(16)
         newAxis.setLabelFormat("%d")
         newAxis.setTitleText("Channel")
@@ -749,6 +750,8 @@ class mainWindow(QMainWindow):
             subprocess.Popen(args)
         
     def onShowTelemetry(self):
+        self.updateLock.acquire()
+        
         curRow = self.networkTable.currentRow()
         
         if curRow == -1:
@@ -769,6 +772,9 @@ class mainWindow(QMainWindow):
         # Can also key off of self.telemetryWindow.isVisible()
         telemetryWindow.show()
         telemetryWindow.activateWindow()
+        
+        # Can do telemetry window updates after release
+        self.updateLock.release()
         
         # User could have selected a different network.
         telemetryWindow.updateNetworkData(curNet)            
@@ -1120,12 +1126,14 @@ class mainWindow(QMainWindow):
             self.menuRemoteAgent.setEnabled(False)
             self.scanModeCombo.setEnabled(False)
             self.huntChannels.setEnabled(False)
+            self.combo.setEnabled(False)
         else:
             self.btnScan.setStyleSheet("background-color: rgba(2,128,192,255); border: none;")
             self.btnScan.setText('&Scan')
             self.menuRemoteAgent.setEnabled(True)
             self.scanModeCombo.setEnabled(True)
             self.huntChannels.setEnabled(True)
+            self.combo.setEnabled(True)
             
         # Need to reset the shortcut after changing the text
         self.btnScan.setShortcut('Ctrl+S')
@@ -1166,14 +1174,98 @@ class mainWindow(QMainWindow):
                 self.menuRemoteAgent.setEnabled(True)
                 self.scanModeCombo.setEnabled(True)
                 self.huntChannels.setEnabled(True)
-                
-                
-    def populateTable(self, wirelessNetworks):
-        rowPosition = self.networkTable.rowCount()
+
+    def updateNet(self, curSeries, curNet, channelPlotStart, channelPlotEnd):
+        for i in range(channelPlotStart, channelPlotEnd):
+            graphPoint = False
+            
+            if (curNet.bandwidth == 20):
+                if i >= (curNet.channel - 1) and i <=(curNet.channel +1):
+                    graphPoint = True
+            elif (curNet.bandwidth== 40):
+                if curNet.secondaryChannelLocation == 'above':
+                    if i >= (curNet.channel - 1) and i <=(curNet.channel +5):
+                        graphPoint = True
+                else:
+                    if i >= (curNet.channel - 5) and i <=(curNet.channel +1):
+                        graphPoint = True
+            elif (curNet.bandwidth == 80):
+                    if i >= (curNet.channel - 1) and i <=(curNet.channel +15):
+                        graphPoint = True
+            elif (curNet.bandwidth == 160):
+                    if i >= (curNet.channel - 1) and i <=(curNet.channel +29):
+                        graphPoint = True
+                    
+            if graphPoint:
+                if curNet.signal >= -100:
+                    curSeries.replace(i-channelPlotStart, i, curNet.signal)
+                else:
+                    curSeries.replace(i-channelPlotStart, i, -100)
+            else:
+                curSeries.replace(i-channelPlotStart, i, -100)
         
-        if rowPosition > 0:
+    def update5Net(self, curSeries, curNet):
+        self.updateNet(curSeries, curNet, 30, 171)
+        
+    def update24Net(self, curSeries, curNet):
+        # Loop to channel 14 + 2 for high end, + 1 for range function = 17
+        self.updateNet(curSeries, curNet, 0, 17)
+        
+    def addNet(self, newSeries, curNet, channelPlotStart, channelPlotEnd, adding5GHz):
+        for i in range(channelPlotStart, channelPlotEnd):
+            graphPoint = False
+            
+            if (curNet.bandwidth == 20):
+                if i >= (curNet.channel - 1) and i <=(curNet.channel +1):
+                    graphPoint = True
+            elif (curNet.bandwidth== 40):
+                if curNet.secondaryChannelLocation == 'above':
+                    if i >= (curNet.channel - 1) and i <=(curNet.channel +5):
+                        graphPoint = True
+                else:
+                    if i >= (curNet.channel - 5) and i <=(curNet.channel +1):
+                        graphPoint = True
+            elif (curNet.bandwidth == 80):
+                    if i >= (curNet.channel - 1) and i <=(curNet.channel +15):
+                        graphPoint = True
+            elif (curNet.bandwidth == 160):
+                    if i >= (curNet.channel - 1) and i <=(curNet.channel +29):
+                        graphPoint = True
+                    
+            if graphPoint:
+                if curNet.signal >= -100:
+                    newSeries.append( i, curNet.signal)
+                else:
+                    newSeries.append(i, -100)
+            else:
+                    newSeries.append(i, -100)
+                
+        newSeries.setName(curNet.getKey())
+        
+        if adding5GHz:
+            self.chart5.addSeries(newSeries)
+            newSeries.attachAxis(self.chart5.axisX())
+            newSeries.attachAxis(self.chart5.axisY())
+        else:
+            self.chart24.addSeries(newSeries)
+            newSeries.attachAxis(self.chart24.axisX())
+            newSeries.attachAxis(self.chart24.axisY())
+            
+    def add5Net(self, newSeries, curNet):
+        self.addNet(newSeries, curNet, 30, 171, True)
+        
+    def add24Net(self, newSeries, curNet):
+        self.addNet(newSeries, curNet, 0, 17, False)
+        
+    def populateUpdateExisting(self, wirelessNetworks):
+        numRows = self.networkTable.rowCount()
+        
+        if numRows > 0:
+            # Loop through each network in the network table, and compare it against the new networks.
+            # If we find one, then we already know the network.  Just update it.
+            
             # Range goes to last # - 1
-            for curRow in range(0, rowPosition):
+            for curRow in range(0, numRows):
                 try:
                     curData = self.networkTable.item(curRow, 2).data(Qt.UserRole+1)
                 except:
@@ -1213,8 +1305,9 @@ class mainWindow(QMainWindow):
                                 self.networkTable.item(curRow, 11).setText('Yes')
                             else:
                                 self.networkTable.item(curRow, 11).setText('No')
+                                
                             curNet.foundInList = True
-                            self.networkTable.item(curRow, 2).setData(Qt.UserRole+1, curNet)
+                            # self.networkTable.item(curRow, 2).setData(Qt.UserRole+1, curNet)
                             
                             # Update series
                             curSeries = self.networkTable.item(curRow, 2).data(Qt.UserRole)
@@ -1228,163 +1321,63 @@ class mainWindow(QMainWindow):
                             # 20 MHz, 1 channel
                             # 40 MHz, 2nd channel above/below or non-contiguous for 5 GHz
                             # 80/160 MHz, Specified differently.  It's allocated as a contiguous block
-                            if curNet.channel < 15:
+                            if curNet.channel < 15:  # Max 2.4 GHz CENTER channel is 14
                                 # 2.4 GHz
-                                for i in range(0, 15):
-                                    graphPoint = False
-                                    
-                                    if (curNet.bandwidth == 20):
-                                        if i >= (curNet.channel - 1) and i <=(curNet.channel +1):
-                                            graphPoint = True
-                                    elif (curNet.bandwidth== 40):
-                                        if curNet.secondaryChannelLocation == 'above':
-                                            if i >= (curNet.channel - 1) and i <=(curNet.channel +5):
-                                                graphPoint = True
-                                        else:
-                                            if i >= (curNet.channel - 5) and i <=(curNet.channel +1):
-                                                graphPoint = True
-                                    elif (curNet.bandwidth == 80):
-                                            if i >= (curNet.channel - 1) and i <=(curNet.channel +15):
-                                                graphPoint = True
-                                    elif (curNet.bandwidth == 160):
-                                            if i >= (curNet.channel - 1) and i <=(curNet.channel +29):
-                                                graphPoint = True
-                                            
-                                    if graphPoint:
-                                        if curNet.signal >= -100:
-                                            curSeries.replace(i, i, curNet.signal)
-                                        else:
-                                            curSeries.replace(i, i, -100)
-                                    else:
-                                        curSeries.replace(i, i, -100)
+                                # range function goes to max-1
+                                self.update24Net(curSeries, curNet)
                             else:
                                 # 5 GHz
-                                for i in range(33, 171):
-                                    graphPoint = False
-                                    
-                                    if (curNet.bandwidth == 20):
-                                        if i >= (curNet.channel - 1) and i <=(curNet.channel +1):
-                                            graphPoint = True
-                                    elif (curNet.bandwidth== 40):
-                                        if curNet.secondaryChannelLocation == 'above':
-                                            if i >= (curNet.channel - 1) and i <=(curNet.channel +5):
-                                                graphPoint = True
-                                        else:
-                                            if i >= (curNet.channel - 5) and i <=(curNet.channel +1):
-                                                graphPoint = True
-                                    elif (curNet.bandwidth == 80):
-                                            if i >= (curNet.channel - 1) and i <=(curNet.channel +15):
-                                                graphPoint = True
-                                    elif (curNet.bandwidth == 160):
-                                            if i >= (curNet.channel - 1) and i <=(curNet.channel +29):
-                                                graphPoint = True
-                                            
-                                    if graphPoint:
-                                        if curNet.signal >= -100:
-                                            curSeries.replace(i-33, i, curNet.signal)
-                                        else:
-                                            curSeries.replace(i-33, i, -100)
-                                    else:
-                                        curSeries.replace(i-33, i, -100)
+                                self.update5Net(curSeries, curNet)
                                         
-                            break;
-                    
-        # self.networkTable.insertRow(rowPosition)
+                            break  # We found one, so don't bother looping through more
+
+    def getNextColor(self):
+        nextColor = colors[self.nextColor]
+        self.nextColor += 1
+        
+        if (self.nextColor >= len(colors)):
+            self.nextColor = 0
+            
+        return nextColor
+
+    def createNewSeries(self, nextColor):
+        newSeries = QLineSeries()
+        pen = QPen(nextColor)
+        pen.setWidth(2)
+        newSeries.setPen(pen)
+        
+        return newSeries
+
+    def populateTable(self, wirelessNetworks):
+        self.updateLock.acquire()
+        
+        # Update existing if we have it (this will mark the networ's foundInList flag if we did
+        self.populateUpdateExisting(wirelessNetworks)
         
         for curKey in wirelessNetworks.keys():
             # Don't add duplicate
-            if (wirelessNetworks[curKey].foundInList):
-                continue
-                
-            nextColor = colors[self.nextColor]
-            self.nextColor += 1
-            
-            if (self.nextColor >= len(colors)):
-                self.nextColor = 0
-                
-            newSeries = QLineSeries()
-            pen = QPen(nextColor)
-            pen.setWidth(2)
-            newSeries.setPen(pen)
-            
             curNet = wirelessNetworks[curKey]
+            if (curNet.foundInList):
+                continue
+
+            # ----------- Update the plots -------------------
+            nextColor = self.getNextColor()
+            newSeries = self.createNewSeries(nextColor)
+            
             # 3 scenarios: 
             # 20 MHz, 1 channel
             # 40 MHz, 2nd channel above/below or non-contiguous for 5 GHz
             # 80/160 MHz, Specified differently.  It's allocated as a contiguous block
             if curNet.channel < 15:
                 # 2.4 GHz
-                for i in range(0, 15):
-                    # 2.4 GHz channels overlap by 2 in each direction
-                    graphPoint = False
-                    
-                    if (curNet.bandwidth == 20):
-                        if i >= (curNet.channel - 1) and i <=(curNet.channel +1):
-                            graphPoint = True
-                    elif (curNet.bandwidth== 40):
-                        if curNet.secondaryChannelLocation == 'above':
-                            if i >= (curNet.channel - 1) and i <=(curNet.channel +5):
-                                graphPoint = True
-                        else:
-                            if i >= (curNet.channel - 5) and i <=(curNet.channel +1):
-                                graphPoint = True
-                    elif (curNet.bandwidth == 80):
-                            if i >= (curNet.channel - 1) and i <=(curNet.channel +15):
-                                graphPoint = True
-                    elif (curNet.bandwidth == 160):
-                            if i >= (curNet.channel - 1) and i <=(curNet.channel +29):
-                                graphPoint = True
-                            
-                    if graphPoint:
-                        if curNet.signal >= -100:
-                            newSeries.append( i, curNet.signal)
-                        else:
-                            newSeries.append(i, -100)
-                    else:
-                            newSeries.append(i, -100)
-                        
-                newSeries.setName(curNet.getKey())
-                
-                self.chart24.addSeries(newSeries)
-                newSeries.attachAxis(self.chart24.axisX())
-                newSeries.attachAxis(self.chart24.axisY())
+                self.add24Net(newSeries, curNet)
             else:
                 # 5 GHz
-                for i in range(33, 171):
-                    graphPoint = False
-                    
-                    if (curNet.bandwidth == 20):
-                        if i >= (curNet.channel - 1) and i <=(curNet.channel +1):
-                            graphPoint = True
-                    elif (curNet.bandwidth== 40):
-                        if curNet.secondaryChannelLocation == 'above':
-                            if i >= (curNet.channel - 1) and i <=(curNet.channel +5):
-                                graphPoint = True
-                        else:
-                            if i >= (curNet.channel - 5) and i <=(curNet.channel +1):
-                                graphPoint = True
-                    elif (curNet.bandwidth == 80):
-                            if i >= (curNet.channel - 1) and i <=(curNet.channel +15):
-                                graphPoint = True
-                    elif (curNet.bandwidth == 160):
-                            if i >= (curNet.channel - 1) and i <=(curNet.channel +29):
-                                graphPoint = True
-                            
-                    if graphPoint:
-                        if curNet.signal >= -100:
-                            newSeries.append( i, curNet.signal)
-                        else:
-                            newSeries.append(i, -100)
-                    else:
-                            newSeries.append(i, -100)
-                        
-                newSeries.setName(curNet.getKey())
+                self.add5Net(newSeries, curNet)
                 
-                self.chart5.addSeries(newSeries)
-                newSeries.attachAxis(self.chart5.axisX())
-                newSeries.attachAxis(self.chart5.axisY())
-                
+            # ----------- Update the Table -------------------
             # Do the table second so we can attach the series to it.
+            
             rowPosition = self.networkTable.rowCount()
             rowPosition -= 1
             addedFirstRow = False
@@ -1394,11 +1387,12 @@ class mainWindow(QMainWindow):
                 
             self.networkTable.insertRow(rowPosition)
             
+            # Just make sure we don't get an extra blank row
             if (addedFirstRow):
                 self.networkTable.setRowCount(1)
 
-            self.networkTable.setItem(rowPosition, 0, QTableWidgetItem(wirelessNetworks[curKey].macAddr))
-            tmpssid = wirelessNetworks[curKey].ssid
+            self.networkTable.setItem(rowPosition, 0, QTableWidgetItem(curNet.macAddr))
+            tmpssid = curNet.ssid
             if (len(tmpssid) == 0):
                 tmpssid = '<Unknown>'
             newSSID = QTableWidgetItem(tmpssid)
@@ -1407,57 +1401,37 @@ class mainWindow(QMainWindow):
             # You can bind more than one data.  See this: 
             # https://stackoverflow.com/questions/2579579/qt-how-to-associate-data-with-qtablewidgetitem
             newSSID.setData(Qt.UserRole, newSeries)
-            newSSID.setData(Qt.UserRole+1, wirelessNetworks[curKey])
+            newSSID.setData(Qt.UserRole+1, curNet)
             newSSID.setData(Qt.UserRole+2, None)
             
             clientVendor = self.ouiLookup(curNet.macAddr)
             self.networkTable.setItem(rowPosition, 1, QTableWidgetItem(clientVendor))
             self.networkTable.setItem(rowPosition, 2, newSSID)
-            self.networkTable.setItem(rowPosition, 3, QTableWidgetItem(wirelessNetworks[curKey].security))
-            self.networkTable.setItem(rowPosition, 4, QTableWidgetItem(wirelessNetworks[curKey].privacy))
-            self.networkTable.setItem(rowPosition, 5, IntTableWidgetItem(str(wirelessNetworks[curKey].getChannelString())))
-            self.networkTable.setItem(rowPosition, 6, IntTableWidgetItem(str(wirelessNetworks[curKey].frequency)))
-            self.networkTable.setItem(rowPosition, 7,  IntTableWidgetItem(str(wirelessNetworks[curKey].signal)))
-            self.networkTable.setItem(rowPosition, 8, IntTableWidgetItem(str(wirelessNetworks[curKey].bandwidth)))
-            self.networkTable.setItem(rowPosition, 9, DateTableWidgetItem(wirelessNetworks[curKey].lastSeen.strftime("%m/%d/%Y %H:%M:%S")))
-            self.networkTable.setItem(rowPosition, 10, DateTableWidgetItem(wirelessNetworks[curKey].firstSeen.strftime("%m/%d/%Y %H:%M:%S")))
-            if wirelessNetworks[curKey].gps.isValid:
+            self.networkTable.setItem(rowPosition, 3, QTableWidgetItem(curNet.security))
+            self.networkTable.setItem(rowPosition, 4, QTableWidgetItem(curNet.privacy))
+            self.networkTable.setItem(rowPosition, 5, IntTableWidgetItem(str(curNet.getChannelString())))
+            self.networkTable.setItem(rowPosition, 6, IntTableWidgetItem(str(curNet.frequency)))
+            self.networkTable.setItem(rowPosition, 7,  IntTableWidgetItem(str(curNet.signal)))
+            self.networkTable.setItem(rowPosition, 8, IntTableWidgetItem(str(curNet.bandwidth)))
+            self.networkTable.setItem(rowPosition, 9, DateTableWidgetItem(curNet.lastSeen.strftime("%m/%d/%Y %H:%M:%S")))
+            self.networkTable.setItem(rowPosition, 10, DateTableWidgetItem(curNet.firstSeen.strftime("%m/%d/%Y %H:%M:%S")))
+            if curNet.gps.isValid:
                 self.networkTable.setItem(rowPosition, 11, QTableWidgetItem('Yes'))
             else:
                 self.networkTable.setItem(rowPosition, 11, QTableWidgetItem('No'))
 
-        # Clean up any empty rows because of the way QTableWidget is handling row inserts
-        numRows = self.networkTable.rowCount()
-
-        # Last rounds of checks and cleanups
+        self.ageOut()
+        self.checkTelemetryWindows()
         
-        # Check for dangling QTableWidget rows and if we've checked the timeoutcheckbox, remove items.
-        if numRows > 0:
-            # Handle if timeout checkbox is checked
-            maxTime = datetime.datetime.now() - datetime.timedelta(minutes=3)
+        # Last formatting tweaks on network table
+        self.networkTable.resizeColumnsToContents()
+        self.networkTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        
+        self.updateLock.release()
 
-            rowPosition = numRows - 1  #  convert count to index
-            # range goes to last 
-            for i in range(rowPosition, -1, -1):
-                try:
-                    curData = self.networkTable.item(i, 2).data(Qt.UserRole+1)
-                    
-                    # Age out
-                    if self.cbAgeOut.isChecked():
-                        if curData.lastSeen < maxTime:
-                            curSeries = self.networkTable.item(i, 2).data(Qt.UserRole)
-                            if curData.channel < 20:
-                                self.chart24.removeSeries(curSeries)
-                            else:
-                                self.chart5.removeSeries(curSeries)
-                                
-                            self.networkTable.removeRow(i)
-                        
-                except:
-                    curData = None
-                    self.networkTable.removeRow(i)
-
+    def checkTelemetryWindows(self):
         # See if we have any telemetry windows that are no longer in the network table and not visible
+        # Update numRows in case we removed any above
         numRows = self.networkTable.rowCount()
         
         if (numRows > 0) and (len(self.telemetryWindows.keys()) > 0):
@@ -1477,14 +1451,40 @@ class mainWindow(QMainWindow):
                     # (Meaning the window was closed but we still have an active Window object)
                     # Let's inform the window to close and remove it from the list
                     if curKey not in netKeyList:
-                        if not self.telemetryWindows[curKey].isVisible():
-                            self.telemetryWindows[curKey].close()
-                            del self.telemetryWindows[curKey]
+                        curWin = self.telemetryWindows[curKey]
+                        if not curWin.isVisible():
+                            curWin.close()
+                            del curWin
             except:
                 pass
-        # Last formatting tweaks on network table
-        self.networkTable.resizeColumnsToContents()
-        self.networkTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        
+    def ageOut(self):
+        numRows = self.networkTable.rowCount()
+
+        if self.cbAgeOut.isChecked() and numRows > 0:
+            # Handle if timeout checkbox is checked
+            maxTime = datetime.datetime.now() - datetime.timedelta(minutes=3)
+
+            rowPosition = numRows - 1  #  convert count to index
+            # range goes to last 
+            for i in range(rowPosition, -1, -1):
+                try:
+                    curData = self.networkTable.item(i, 2).data(Qt.UserRole+1)
+                    
+                    # Age out
+                    if curData.lastSeen < maxTime:
+                        curSeries = self.networkTable.item(i, 2).data(Qt.UserRole)
+                        if curData.channel < 20:
+                            self.chart24.removeSeries(curSeries)
+                        else:
+                            self.chart5.removeSeries(curSeries)
+                            
+                        self.networkTable.removeRow(i)
+                        
+                except:
+                    curData = None
+                    self.networkTable.removeRow(i)
+
         
     def onInterface(self):
         pass
