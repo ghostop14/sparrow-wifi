@@ -116,6 +116,8 @@ class WirelessClient(object):
     def __init__(self):
         self.macAddr = ""
         self.apMacAddr = ""
+        self.ssid = ""
+        self.channel = 0
         self.signal = -1000 # dBm
         now=datetime.datetime.now()
         self.firstSeen = now
@@ -134,6 +136,8 @@ class WirelessClient(object):
         
         retVal += "MAC Address: " + self.macAddr + "\n"
         retVal += "Associated Access Point Mac Address: " + self.apMacAddr + "\n"
+        retVal += "SSID: " + self.ssid + "\n"
+        retVal += "Channel: " + str(self.channel) + "\n"
         retVal += "Signal: " + str(self.signal) + " dBm\n"
         retVal += "Strongest Signal: " + str(self.strongestsignal) + " dBm\n"
         retVal += "First Seen: " + str(self.firstSeen) + "\n"
@@ -147,6 +151,7 @@ class WirelessClient(object):
             retVal += "\n"
         else:
             retVal += " No probes observed\n"
+            
         retVal += "Last GPS:\n"
         retVal += str(self.gps)
         retVal += "Strongest GPS:\n"
@@ -533,7 +538,14 @@ class WirelessEngine(object):
         curNetwork = None
         now=datetime.datetime.now()
         
-        for curLine in iwOutput.splitlines():
+        # This now supports direct from STDOUT via scanForNetworks,
+        # and input from a file as f.readlines() which returns a list
+        if type(iwOutput) == str:
+            inputLines = iwOutput.splitlines()
+        else:
+            inputLines = iwOutput
+            
+        for curLine in inputLines:
             p = re.compile('^BSS (.*?)\(')
             try:
                 fieldValue = p.search(curLine).group(1)

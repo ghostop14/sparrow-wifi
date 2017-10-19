@@ -498,7 +498,12 @@ class mainWindow(QMainWindow):
         fileMenu.addAction(newAct)
 
         # import
-        newAct = QAction('&Import from CSV', self)        
+        newAct = QAction('&Import from saved IW output', self)        
+        newAct.setStatusTip("Run 'iw dev <wireless interface> scan > <somefile>' and import the data directly with this option")
+        newAct.triggered.connect(self.importIWData)
+        fileMenu.addAction(newAct)
+        
+        newAct = QAction('&Import from saved CSV', self)        
         newAct.setStatusTip('Import from saved CSV')
         newAct.triggered.connect(self.importData)
         fileMenu.addAction(newAct)
@@ -1490,10 +1495,10 @@ class mainWindow(QMainWindow):
         self.chart5.removeAllSeries()
         
         
-    def openFileDialog(self):    
+    def openFileDialog(self, fileSpec="CSV Files (*.csv);;All Files (*)"):    
         options = QFileDialog.Options()
         options |= QFileDialog.DontUseNativeDialog
-        fileName, _ = QFileDialog.getOpenFileName(self,"QFileDialog.getOpenFileName()", "","CSV Files (*.csv);;All Files (*)", options=options)
+        fileName, _ = QFileDialog.getOpenFileName(self,"QFileDialog.getOpenFileName()", "",fileSpec, options=options)
         if fileName:
             return fileName
         else:
@@ -1502,12 +1507,36 @@ class mainWindow(QMainWindow):
     def saveFileDialog(self):    
         options = QFileDialog.Options()
         options |= QFileDialog.DontUseNativeDialog
-        fileName, _ = QFileDialog.getSaveFileName(self,"QFileDialog.getSaveFileName()","","CSV Files (*.csv);;All Files (*)", options=options)
+        fileName, _ = QFileDialog.getSaveFileName(self,"QFileDialog.getSaveFileName()","",fileSpec, options=options)
         if fileName:
             return fileName
         else:
             return None
 
+    def importIWData(self):
+        fileName = self.openFileDialog("iw scan output Files (*.iw);;All Files (*)")
+
+        if not fileName:
+            return
+            
+        wirelessNetworks = {}
+        
+        try:
+            f = open(fileName, "r")
+        except:
+            QMessageBox.question(self, 'Error',"Unable to open file " + fileName, QMessageBox.Ok)
+            return
+        
+        # this will be a list
+        fileLines = f.readlines()
+        f.close()
+        
+        if len(fileLines) > 0:
+            wirelessNetworks = WirelessEngine.parseIWoutput(fileLines)
+        
+        if len(wirelessNetworks) > 0:
+            self.populateTable(wirelessNetworks)
+                
     def importData(self):
         fileName = self.openFileDialog()
 
