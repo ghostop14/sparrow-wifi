@@ -58,6 +58,35 @@ try:
 except:
     hasOUILookup = False
     
+# ------------------ oui db function -----------------------
+def getOUIDB():
+    ouidb = None
+    
+    if hasOUILookup:
+        if  os.path.isfile('manuf'):
+            # We have the file but let's not update it every time we run the app.
+            # every 90 days should be plenty
+            last_modified_date = datetime.datetime.fromtimestamp(os.path.getmtime('manuf'))
+            now = datetime.datetime.now()
+            age = now - last_modified_date
+            
+            if age.days > 90:
+                updateflag = True
+            else:
+                updateflag = False
+        else:
+            # We don't have the file, let's get it
+            updateflag = True
+            
+        try:
+            ouidb = manuf.MacParser(update=updateflag)
+        except:
+            ouidb = None
+    else:
+        ouidb = None
+        
+    return ouidb
+    
 # ------------------  Global functions ------------------------------
 def stringtobool(instr):
     if (instr == 'True' or instr == 'true'):
@@ -258,16 +287,7 @@ class mainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        if hasOUILookup:
-            try:
-                self.ouiLookupEngine = manuf.MacParser(update=True)
-            except:
-                try:
-                    self.ouiLookupEngine = manuf.MacParser(update=False)
-                except:
-                    self.ouiLookupEngine = None
-        else:
-            self.ouiLookupEngine = None
+        self.ouiLookupEngine = getOUIDB()
             
         self.telemetryWindows = {}
         self.advancedScan = None
@@ -457,6 +477,11 @@ class mainWindow(QMainWindow):
         newAct = QAction('Telemetry', self)        
         newAct.setStatusTip('View network telemetry data')
         newAct.triggered.connect(self.onShowTelemetry)
+        self.ntRightClickMenu.addAction(newAct)
+        
+        newAct = QAction('Delete', self)        
+        newAct.setStatusTip('Remove network from the list')
+        newAct.triggered.connect(self.onDeleteNet)
         self.ntRightClickMenu.addAction(newAct)
         
         # Attached it to the table
@@ -748,18 +773,42 @@ class mainWindow(QMainWindow):
                     
             args = ['xgps', remoteIP + ":" + str(remotePort)]
             subprocess.Popen(args)
+
+    def onDeleteNet(self):
+        self.updateLock.acquire()
         
+        curRow = self.networkTable.currentRow()
+        
+        if curRow == -1:
+            self.updateLock.release()
+            return
+        
+        curNet = self.networkTable.item(curRow, 2).data(Qt.UserRole+1)
+        curSeries = self.networkTable.item(curRow, 2).data(Qt.UserRole)
+
+        if curNet and curSeries:
+            if (curNet.channel < 15):
+                self.chart24.removeSeries(curSeries)
+            else:
+                self.chart5.removeSeries(curSeries)
+            
+        self.networkTable.removeRow(curRow)
+        
+        self.updateLock.release()
+            
     def onShowTelemetry(self):
         self.updateLock.acquire()
         
         curRow = self.networkTable.currentRow()
         
         if curRow == -1:
+            self.updateLock.release()
             return
         
         curNet = self.networkTable.item(curRow, 2).data(Qt.UserRole+1)
         
         if curNet == None:
+            self.updateLock.release()
             return
        
         if curNet.getKey() not in self.telemetryWindows:
@@ -780,6 +829,11 @@ class mainWindow(QMainWindow):
         telemetryWindow.updateNetworkData(curNet)            
         
     def showNTContextMenu(self, pos):
+        curRow = self.networkTable.currentRow()
+        
+        if curRow == -1:
+            return
+            
         self.ntRightClickMenu.exec_(self.networkTable.mapToGlobal(pos))
         # self.ntRightClickMenu.exec_(pos)
  
@@ -1174,6 +1228,7 @@ class mainWindow(QMainWindow):
                 self.menuRemoteAgent.setEnabled(True)
                 self.scanModeCombo.setEnabled(True)
                 self.huntChannels.setEnabled(True)
+                self.combo.setEnabled(True)
 
     def updateNet(self, curSeries, curNet, channelPlotStart, channelPlotEnd):
         for i in range(channelPlotStart, channelPlotEnd):
@@ -1762,7 +1817,6 @@ class mainWindow(QMainWindow):
             event.ignore()
         else:
             event.accept()
-
 
 # -------  Main Routine -------------------------
 
