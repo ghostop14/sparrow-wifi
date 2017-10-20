@@ -813,7 +813,7 @@ class mainWindow(QMainWindow):
             self.updateLock.release()
             return
        
-        if curNet.getKey() not in self.telemetryWindows:
+        if curNet.getKey() not in self.telemetryWindows.keys():
             telemetryWindow = TelemetryDialog()
             telemetryWindow.show()
             self.telemetryWindows[curNet.getKey()] = telemetryWindow
