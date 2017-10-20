@@ -108,11 +108,13 @@ class TelemetryDialog(QDialog):
     resized = QtCore.pyqtSignal()
     visibility = QtCore.pyqtSignal(bool)
 
-    def __init__(self, parent = None):
+    def __init__(self, winTitle = "Network Telemetry", parent = None):
         super(TelemetryDialog, self).__init__(parent)
         
         self.visibility.connect(self.onVisibilityChanged)
 
+        self.winTitle = winTitle
+        
         # Used to detect network change
         self.lastNetKey = ""
         self.lastSeen = None
@@ -137,7 +139,9 @@ class TelemetryDialog(QDialog):
         #self.mainHeight = desktopSize.height() * 3 / 4
 
         self.setGeometry(self.geometry().x(), self.geometry().y(), desktopSize.width() /2,desktopSize.height() /2)
-        self.setWindowTitle("Network Telemetry")
+        
+        
+        self.setWindowTitle(winTitle)
 
         self.radar = RadarWidget(self)
         self.radar.setGeometry(self.geometry().width()/2, 10, self.geometry().width()/2-20, self.geometry().width()/2-20)
@@ -350,7 +354,12 @@ class TelemetryDialog(QDialog):
             
         # Signal is -NN dBm.  Need to make it positive for the plot
         self.radar.updateData(curNet.signal*-1)
-        self.setWindowTitle("Network Telemetry - " + curNet.ssid)
+        
+        if self.winTitle == "Client Telemetry":
+            self.setWindowTitle(self.winTitle + " - [" + curNet.macAddr + "] " + curNet.ssid)
+        else:
+            self.setWindowTitle(self.winTitle + " - " + curNet.ssid)
+            
         self.radar.draw()
         
         #  Network changed.  Clear our table and time data

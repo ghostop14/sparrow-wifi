@@ -276,6 +276,7 @@ class mainWindow(QMainWindow):
     # Notify signals
     resized = QtCore.pyqtSignal()
     scanresults = QtCore.pyqtSignal(dict)
+    scanresultsfromadvanced = QtCore.pyqtSignal(dict)
     errmsg = QtCore.pyqtSignal(int, str)
     gpsSynchronizedsignal = QtCore.pyqtSignal()
     advScanClosed = QtCore.pyqtSignal()
@@ -315,6 +316,7 @@ class mainWindow(QMainWindow):
         self.scanThread = None
         self.scanDelay = 0.5
         self.scanresults.connect(self.scanResults)
+        self.scanresultsfromadvanced.connect(self.scanResultsFromAdvanced)
         self.errmsg.connect(self.onErrMsg)
         
         self.remoteAgentIP = ''
@@ -1192,6 +1194,9 @@ class mainWindow(QMainWindow):
         # Need to reset the shortcut after changing the text
         self.btnScan.setShortcut('Ctrl+S')
         
+    def scanResultsFromAdvanced(self, wirelessNetworks):
+            self.populateTable(wirelessNetworks, True)
+        
     def scanResults(self, wirelessNetworks):
         if self.scanRunning:
             # Running local.  If we have a good GPS, update the networks
@@ -1312,7 +1317,7 @@ class mainWindow(QMainWindow):
     def add24Net(self, newSeries, curNet):
         self.addNet(newSeries, curNet, 0, 17, False)
         
-    def populateUpdateExisting(self, wirelessNetworks):
+    def populateUpdateExisting(self, wirelessNetworks, FromAdvanced=False):
         numRows = self.networkTable.rowCount()
         
         if numRows > 0:
@@ -1340,6 +1345,14 @@ class mainWindow(QMainWindow):
                             self.networkTable.item(curRow, 5).setText(str(curNet.getChannelString()))
                             self.networkTable.item(curRow, 6).setText(str(curNet.frequency))
                             self.networkTable.item(curRow, 7).setText(str(curNet.signal))
+                            
+                            if FromAdvanced:
+                                # There are some fields that are not passed forward, so if we already have them we don't want to overwrite them
+                                curNet.bandwidth = curData.bandwidth
+                                curNet.secondaryChannel = curData.secondaryChannel
+                                curNet.thirdChannel = curData.thirdChannel
+                                curNet.secondaryChannelLocation = curData.secondaryChannelLocation
+                                
                             self.networkTable.item(curRow, 8).setText(str(curNet.bandwidth))
                             self.networkTable.item(curRow, 9).setText(curNet.lastSeen.strftime("%m/%d/%Y %H:%M:%S"))
                             
@@ -1368,7 +1381,7 @@ class mainWindow(QMainWindow):
                             curSeries = self.networkTable.item(curRow, 2).data(Qt.UserRole)
                             
                             # Check if we have a telemetry window
-                            if curNet.getKey() in self.telemetryWindows:
+                            if curNet.getKey() in self.telemetryWindows.keys():
                                 telemetryWindow = self.telemetryWindows[curNet.getKey()]
                                 telemetryWindow.updateNetworkData(curNet)            
 
@@ -1403,11 +1416,11 @@ class mainWindow(QMainWindow):
         
         return newSeries
 
-    def populateTable(self, wirelessNetworks):
+    def populateTable(self, wirelessNetworks, FromAdvanced=False):
         self.updateLock.acquire()
         
         # Update existing if we have it (this will mark the networ's foundInList flag if we did
-        self.populateUpdateExisting(wirelessNetworks)
+        self.populateUpdateExisting(wirelessNetworks, FromAdvanced)
         
         for curKey in wirelessNetworks.keys():
             # Don't add duplicate
@@ -1812,10 +1825,19 @@ class mainWindow(QMainWindow):
             # event.accept()
         #else:
             # event.ignore()       
+            
         if self.scanRunning:
             QMessageBox.question(self, 'Error',"Please stop the running scan first.", QMessageBox.Ok)
             event.ignore()
         else:
+            for curKey in self.telemetryWindows.keys():
+                curWindow = self.telemetryWindows[curKey]
+                try:
+                    curWindow.close()
+                    self.telemetryWindows[curKey] = None
+                except:
+                    pass
+                    
             event.accept()
 
 # -------  Main Routine -------------------------
