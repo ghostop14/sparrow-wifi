@@ -10,7 +10,7 @@ Sparrow-wifi provides a nice graphical interface with tables of discovered netwo
 - Ability to export results to CSV and import them back in to revisualize a scan
 - Plot SSID GPS coordinates on Google maps
 - Sparrow-wifi has built-in GPS support via gpsd for network location tagging
-- Sparrow-wifi has a remotely deployable agent (sparrowwifiagent.py) that can be run on a separate system.  The GUI can then be connected to the remote agent for remote monitoring, including remote GPS.  Agent supports a --sendannounce startup parameter to allow for auto-discovery via broadcast packets.
+- Sparrow-wifi has a remotely deployable agent (sparrowwifiagent.py) that can be run on a separate system.  The GUI can then be connected to the remote agent for remote monitoring, including remote GPS.  Agent supports a --sendannounce startup parameter to allow for auto-discovery via broadcast packets.  It also supports a headless record local on start mode (see --help)
 - MAVLINK / DRONE SUPPORT!  The remote agent can be configured to pull GPS via the Mavlink protocol from a mavlink-enabled vehicle such as a drone or rover
 - The agent provides a basic HTTP service and provides JSON responses to requests from the UI, so requests for wireless interfaces, networks, and GPS status can even be used in other applications
 

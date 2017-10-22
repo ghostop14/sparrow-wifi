@@ -122,10 +122,10 @@ def requestRemoteGPS(remoteIP, remotePort):
             
             if gpsStatus.isValid:
                 # These won't be there if it's not synchronized
-                gpsStatus.latitude = float(gpsjson['latitude'])
-                gpsStatus.longitude = float(gpsjson['longitude'])
-                gpsStatus.altitude = float(gpsjson['altitude'])
-                gpsStatus.speed = float(gpsjson['speed'])
+                gpsStatus.latitude = float(gpsjson['gpspos']['latitude'])
+                gpsStatus.longitude = float(gpsjson['gpspos']['longitude'])
+                gpsStatus.altitude = float(gpsjson['gpspos']['altitude'])
+                gpsStatus.speed = float(gpsjson['gpspos']['speed'])
                 
             return 0, "", gpsStatus
         except:
@@ -327,6 +327,7 @@ class mainWindow(QMainWindow):
         self.remoteScanThread = None
         self.remoteScanDelay = 0.5
         self.lastRemoteState = False
+        self.remoteAgentUp = False
         
         desktopSize = QApplication.desktop().screenGeometry()
         #self.mainWidth=1024
@@ -354,7 +355,7 @@ class mainWindow(QMainWindow):
                 if self.ouiLookupEngine:
                     clientVendor = self.ouiLookupEngine.get_manuf(macAddr)
             except:
-                pass
+                clientVendor = ""
             
         return clientVendor
         
@@ -958,7 +959,7 @@ class mainWindow(QMainWindow):
                 QMessageBox.question(self, 'Error',"Unable to generate map to " + mapSettings.outputfile, QMessageBox.Ok)
         
     def onGPSStatus(self, updateStatusBar=True):
-        if (not self.menuRemoteAgent.isChecked()):
+        if (not self.remoteAgentUp):
             # Checking local GPS
             if GPSEngine.GPSDRunning():
                 if self.gpsEngine.gpsValid():
@@ -982,7 +983,7 @@ class mainWindow(QMainWindow):
             errCode, errMsg, gpsStatus = requestRemoteGPS(self.remoteAgentIP, self.remoteAgentPort)
             
             if errCode == 0:
-                if (gpsStatus.gpsSynchronized):
+                if (gpsStatus.isValid):
                     self.gpsSynchronized = True
                     self.btnGPSStatus.setStyleSheet("background-color: green; border: 1px;")
                     self.statusBar().showMessage("Remote GPS is running and synchronized.")
@@ -1360,7 +1361,7 @@ class mainWindow(QMainWindow):
                             curNet.firstSeen = curData.firstSeen # This is one field to carry forward
                             
                             # Check strongest signal
-                            if curData.signal > curNet.signal:
+                            if curData.strongestsignal > curNet.signal:
                                 curNet.strongestsignal = curData.signal
                                 curNet.strongestgps.latitude = curData.gps.latitude
                                 curNet.strongestgps.longitude = curData.gps.longitude
@@ -1623,7 +1624,7 @@ class mainWindow(QMainWindow):
                 
             if len(raw_list) > 1:
                 # Check header row looks okay
-                if raw_list[0][0] != 'macAddr' or (len(raw_list[0]) < 21):
+                if raw_list[0][0] != 'macAddr' or (len(raw_list[0]) < 22):
                     QMessageBox.question(self, 'Error',"File format doesn't look like an exported scan.", QMessageBox.Ok)
                     return
                         
@@ -1688,7 +1689,7 @@ class mainWindow(QMainWindow):
             QMessageBox.question(self, 'Error',"Unable to write to " + fileName, QMessageBox.Ok)
             return
             
-        outputFile.write('macAddr,vendor,SSID,Security,Privacy,Channel,Frequency,Signal Strength,Strongest Signal Strength, Bandwidth,Last Seen,First Seen,GPS Valid,Latitude,Longitude,Altitude,Speed,Strongest GPS Valid,Strongest Latitude,Strongest Longitude,Strongest Altitude,Strongest Speed\n')
+        outputFile.write('macAddr,vendor,SSID,Security,Privacy,Channel,Frequency,Signal Strength,Strongest Signal Strength,Bandwidth,Last Seen,First Seen,GPS Valid,Latitude,Longitude,Altitude,Speed,Strongest GPS Valid,Strongest Latitude,Strongest Longitude,Strongest Altitude,Strongest Speed\n')
 
         numItems = self.networkTable.rowCount()
         
@@ -1699,8 +1700,8 @@ class mainWindow(QMainWindow):
         for i in range(0, numItems):
             curData = self.networkTable.item(i, 2).data(Qt.UserRole+1)
 
-            outputFile.write(self.networkTable.item(i, 0).text() + ',' + self.networkTable.item(i, 1).text() + ',' + self.networkTable.item(i, 2).text() + ',' + self.networkTable.item(i, 3).text() + ',' + self.networkTable.item(i, 4).text())
-            outputFile.write(',' + self.networkTable.item(i, 5).text()+ ',' + self.networkTable.item(i, 6).text()+ ',' + self.networkTable.item(i, 7).text()+ ',' + str(curData.strongestsignal) + ',' + self.networkTable.item(i, 8).text() + ',' +
+            outputFile.write(curData.macAddr  + ',' + self.networkTable.item(i, 1).text() + ',' + curData.ssid + ',' + curData.security + ',' + curData.privacy)
+            outputFile.write(',' + str(curData.channel) + ',' + str(curData.frequency) + ',' + str(curData.signal) + ',' + str(curData.strongestsignal) + ',' + str(curData.bandwidth) + ',' +
                                     curData.lastSeen.strftime("%m/%d/%Y %H:%M:%S") + ',' + curData.firstSeen.strftime("%m/%d/%Y %H:%M:%S") + ',' + 
                                     str(curData.gps.isValid) + ',' + str(curData.gps.latitude) + ',' + str(curData.gps.longitude) + ',' + str(curData.gps.altitude) + ',' + str(curData.gps.speed) + ',' + 
                                     str(curData.strongestgps.isValid) + ',' + str(curData.strongestgps.latitude) + ',' + str(curData.strongestgps.longitude) + ',' + str(curData.strongestgps.altitude) + ',' + str(curData.strongestgps.speed) + '\n')
@@ -1737,7 +1738,7 @@ class mainWindow(QMainWindow):
         if (self.menuRemoteAgent.isChecked() == self.lastRemoteState):
             # There's an extra bounce in this for some reason.
             return
-            
+        
         if self.menuRemoteAgent.isChecked():
             # We're transitioning to a remote agent
             text, okPressed = QInputDialog.getText(self, "Remote Agent","Please provide the <IP>:<port> of the remote agent\nor specify 'auto' to launch agent listener\n(auto requires agent to be on the same subnet and started with the --sendannounce flag):", QLineEdit.Normal, "127.0.0.1:8020")
@@ -1765,8 +1766,11 @@ class mainWindow(QMainWindow):
                         specIsGood = False
                     
                 if not specIsGood:
+                    self.remoteAgentUp = False
                     return
                     
+                self.remoteAgentUp = True
+                
                 # If we're here we're good.
                 reply = QMessageBox.question(self, 'Question',"Would you like updates to happen automatically?", QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
 
@@ -1799,6 +1803,8 @@ class mainWindow(QMainWindow):
             else:
                 # Stay local.
                 self.menuRemoteAgent.setChecked(False)
+                self.remoteAgentUp = False
+
         else:
             # We're transitioning local
             self.lblInterface.setText("Local Interface")
