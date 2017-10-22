@@ -344,6 +344,18 @@ class WirelessEngine(object):
     def __init__(self):
         super().__init__()
 
+    def getMacAddress(interface):
+        macaddr = ""
+        
+        try:
+            f = open('/sys/class/net/'+interface+'/address', 'r')
+            macaddr = f.readline().strip()
+            f.close()
+        except:
+            pass
+            
+        return macaddr
+        
     def getFrequencyForChannel(channelNumber):
         channelStr = str(channelNumber)
         if channelStr in channelToFreq:
@@ -735,6 +747,7 @@ class WirelessEngine(object):
         return retVal
         
 if __name__ == '__main__':
+    # WirelessEngine.getMacAddress('wlan0mon')
     if os.geteuid() != 0:
         print("ERROR: You need to have root privileges to run this script.  Please try again, this time using 'sudo'. Exiting.\n")
         exit(2)

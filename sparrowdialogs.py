@@ -19,9 +19,13 @@
 # 
 
 from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QApplication, QLabel, QComboBox, QLineEdit, QPushButton
-from PyQt5.QtWidgets  import QFileDialog, QSpinBox, QDesktopWidget, QMessageBox
+from PyQt5.QtWidgets  import QFileDialog, QSpinBox, QDesktopWidget, QMessageBox, QTableWidget, QHeaderView,QTableWidgetItem
+from sparrowtablewidgets import IntTableWidgetItem
 from PyQt5.QtCore import Qt
+from PyQt5 import QtCore
 
+from socket import *
+from threading import Thread
 from sparrowmap import MapEngine
 
 # Example dialog:
@@ -446,11 +450,202 @@ class TelemetryMapSettingsDialog(MapSettingsDialog):
         mapSettings = dialog.getMapSettings()
         return (mapSettings, result == QDialog.Accepted)
 
+# ------------------  UDP Listen thread  ------------------------------
+class AgentListenerThread(Thread):
+    def __init__(self, parentWin, port):
+        super(AgentListenerThread, self).__init__()
+        self.signalStop = False
+        self.threadRunning = False
+        
+        self.port = port
+        self.parentWin = parentWin
+        
+        self.sock = socket(AF_INET, SOCK_DGRAM)
+        self.server_address = ('0.0.0.0', self.port)
+        
+        # This can throw an exception if it can't bind
+        self.sock.bind(self.server_address)
+        
+    def sendAnnounce(self):
+        try:
+            self.broadcastSocket.sendto(bytes('sparrowwifiagent', "utf-8"),self.broadcastAddr)
+        except:
+            pass
+        
+    def run(self):
+        
+        if not self.sock:
+            self.threadRunning = False
+            return
+            
+        self.threadRunning = True
+        
+        self.sock.settimeout(6) # receive timeout
+        
+        while (not self.signalStop):
+            try:
+                data, address = self.sock.recvfrom(1024)
+                self.parentWin.agentAnnounce.emit(address[0], self.port)
+            except timeout:
+                pass
+                    
+        self.threadRunning = False
+        
+        if (self.sock):
+            self.sock.close()
+        
+# ------------------  Agent Listener  ------------------------------
+class AgentListenerDIalog(QDialog):
+    agentAnnounce = QtCore.pyqtSignal(str, int)
+
+    def __init__(self, parent = None):
+        super(AgentListenerDIalog, self).__init__(parent)
+
+        self.broadcastSocket = socket(AF_INET, SOCK_DGRAM)
+        self.broadcastSocket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+        self.broadcastSocket.setsockopt(SOL_SOCKET, SO_BROADCAST, 1)        
+        
+        self.agentAnnounce.connect(self.onAgentAnnounce)
+
+        # Map Type droplist
+        self.lblAgentPort = QLabel("Agent Port", self)
+        self.lblAgentPort.setGeometry(10, 10, 100, 30)
+
+        self.spinPort = QSpinBox(self)
+        self.spinPort.setRange(1, 65535)
+        self.spinPort.setValue(8020)
+        self.spinPort.setGeometry(100, 10, 100, 28)
+        self.spinPort.valueChanged.connect(self.spinChanged)
+        
+        # self.broadcastAddr=('255.255.255.255', int(self.spinPort.value()))
+        self.agentListenerThread = AgentListenerThread(self,  int(self.spinPort.value()))
+        self.agentListenerThread.start()
+        
+        self.agentTable = QTableWidget(self)
+        self.agentTable.setColumnCount(2)
+        self.agentTable.setShowGrid(True)
+        self.agentTable.setHorizontalHeaderLabels(['IP Address', 'Port'])
+        self.agentTable.setGeometry(10, 30, 100, 30)
+        self.agentTable.resizeColumnsToContents()
+        self.agentTable.setRowCount(0)
+        self.agentTable.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.agentTable.horizontalHeader().sectionClicked.connect(self.onTableHeadingClicked)
+        
+        # OK and Cancel buttons
+        self.buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel,
+            Qt.Horizontal, self)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        self.buttons.move(170, 280)
+        
+        self.setGeometry(self.geometry().x(), self.geometry().y(), 500,320)
+        self.setWindowTitle("Remote Agent Detection")
+        self.center()
+
+    def center(self):
+        # Get our geometry
+        qr = self.frameGeometry()
+        # Find the desktop center point
+        cp = QDesktopWidget().availableGeometry().center()
+        # Move our center point to the desktop center point
+        qr.moveCenter(cp)
+        # Move the top-left point of the application window to the top-left point of the qr rectangle, 
+        # basically centering the window
+        self.move(qr.topLeft())
+        
+    def spinChanged(self):
+        self.agentListenerThread.signalStop = True
+        
+        while (self.agentListenerThread.threadRunning):
+            sleep(1)
+            
+        self.agentListenerThread = None
+        
+        self.agentListenerThread = AgentListenerThread(self,  int(self.spinPort.value()))
+        self.agentListenerThread.start()
+        
+    def closeEvent(self, event):
+        self.agentListenerThread.signalStop = True
+        
+        while (self.agentListenerThread.threadRunning):
+            sleep(1)
+                    
+        event.accept()
+            
+    def resizeEvent(self, event):
+        # self.resized.emit()
+        # self.statusBar().showMessage('Window resized.')
+        # return super(mainWin, self).resizeEvent(event)
+        size = self.geometry()
+        self.agentTable.setGeometry(10, 50, size.width()-20, size.height()-100)
+        self.buttons.move(size.width()/2-80, size.height() - 40)
+
+    def onTableHeadingClicked(self, logical_index):
+        header = self.agentTable.horizontalHeader()
+        order = Qt.DescendingOrder
+        # order = Qt.DescendingOrder
+        if not header.isSortIndicatorShown():
+            header.setSortIndicatorShown( True )
+        elif header.sortIndicatorSection()==logical_index:
+            # apparently, the sort order on the header is already switched
+            # when the section was clicked, so there is no need to reverse it
+            order = header.sortIndicatorOrder()
+        header.setSortIndicator( logical_index, order )
+        self.agentTable.sortItems(logical_index, order )
+        
+    def agentInTable(self, ipAddr, port):
+        rowPosition = self.agentTable.rowCount()
+        if rowPosition <= 0:
+            return False
+            
+        for curRow in range(0, rowPosition):
+            if (self.agentTable.item(curRow, 0).text() == ipAddr) and (self.agentTable.item(curRow, 1).text() == str(port)):
+                return True
+                
+        return False
+        
+    def onAgentAnnounce(self, ipAddr, port):
+        if not self.agentInTable(ipAddr, port):
+            rowPosition = self.agentTable.rowCount()
+            rowPosition -= 1
+            addedFirstRow = False
+            if rowPosition < 0:
+                addedFirstRow = True
+                rowPosition = 0
+                
+            self.agentTable.insertRow(rowPosition)
+            
+            # Just make sure we don't get an extra blank row
+            if (addedFirstRow):
+                self.agentTable.setRowCount(1)
+
+            self.agentTable.setItem(rowPosition, 0, QTableWidgetItem(ipAddr))
+            self.agentTable.setItem(rowPosition, 1, IntTableWidgetItem(str(port)))
+            self.agentTable.resizeColumnsToContents()
+            self.agentTable.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        
+    def getAgentInfo(self):
+        curRow = self.agentTable.currentRow()
+        if curRow < 0:
+            return '', 0
+            
+        return self.agentTable.item(curRow, 0).text(), int(self.agentTable.item(curRow, 1).text())
+        
+    # static method to create the dialog and return (date, time, accepted)
+    @staticmethod
+    def getAgent(parent = None):
+        dialog = AgentListenerDIalog(parent)
+        result = dialog.exec_()
+        # date = dialog.dateTime()
+        agentIP, port = dialog.getAgentInfo()
+        return (agentIP, port, result == QDialog.Accepted)
 # -------  Main Routine For Debugging-------------------------
 
 if __name__ == '__main__':
     app = QApplication([])
     #dbSettings, ok = DBSettingsDialog.getSettings()
     #mapSettings, ok = MapSettingsDialog.getSettings()
-    mapSettings, ok = TelemetryMapSettingsDialog.getSettings()
+    # mapSettings, ok = TelemetryMapSettingsDialog.getSettings()
+    agentIP, port, accepted = AgentListenerDIalog.getAgent()
     app.exec_()

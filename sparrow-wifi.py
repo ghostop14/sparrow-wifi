@@ -47,7 +47,7 @@ from sparrowgps import GPSEngine, GPSStatus
 from telemetry import TelemetryDialog
 from sparrowtablewidgets import IntTableWidgetItem, DateTableWidgetItem
 from sparrowmap import MapMarker, MapEngine
-from sparrowdialogs import MapSettingsDialog, TelemetryMapSettingsDialog
+from sparrowdialogs import MapSettingsDialog, TelemetryMapSettingsDialog, AgentListenerDIalog
 
 # There are some "plugins" that are available for addons.  Let's see if they're present
 hasFalcon = False
@@ -1740,7 +1740,7 @@ class mainWindow(QMainWindow):
             
         if self.menuRemoteAgent.isChecked():
             # We're transitioning to a remote agent
-            text, okPressed = QInputDialog.getText(self, "Remote Agent","Please provide IP:port:", QLineEdit.Normal, "127.0.0.1:8020")
+            text, okPressed = QInputDialog.getText(self, "Remote Agent","Please provide the <IP>:<port> of the remote agent\nor specify 'auto' to launch agent listener\n(auto requires agent to be on the same subnet and started with the --sendannounce flag):", QLineEdit.Normal, "127.0.0.1:8020")
             if okPressed and text != '':
                 # Validate the input
                 p = re.compile('^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]{1,5})')
@@ -1755,9 +1755,14 @@ class mainWindow(QMainWindow):
                         self.menuRemoteAgent.setChecked(False)
                         specIsGood = False
                 except:
-                    QMessageBox.question(self, 'Error',"Please enter it in the format <IP>:<port>", QMessageBox.Ok)
-                    self.menuRemoteAgent.setChecked(False)
-                    specIsGood = False
+                    if text.upper() == 'AUTO':
+                        self.remoteAgentIP, self.remoteAgentPort, accepted = AgentListenerDIalog.getAgent()
+                        
+                        specIsGood = accepted
+                    else:
+                        QMessageBox.question(self, 'Error',"Please enter it in the format <IP>:<port>", QMessageBox.Ok)
+                        self.menuRemoteAgent.setChecked(False)
+                        specIsGood = False
                     
                 if not specIsGood:
                     return

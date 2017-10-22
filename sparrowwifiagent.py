@@ -22,6 +22,8 @@ import datetime
 import json
 import re
 import argparse
+
+from socket import *
 from time import sleep
 from threading import Thread
 from http import server as HTTPServer
@@ -37,6 +39,36 @@ curTime = datetime.datetime.now()
 useMavlink = False
 vehicle = None
 mavlinkGPSThread = None
+
+# ------------------  Announce thread  ------------------------------
+class AnnounceThread(Thread):
+    def __init__(self, port):
+        super(AnnounceThread, self).__init__()
+        self.signalStop = False
+        self.sendDelay = 4.0  # seconds
+        self.threadRunning = False
+        
+        self.broadcastSocket = socket(AF_INET, SOCK_DGRAM)
+        self.broadcastSocket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+        self.broadcastSocket.setsockopt(SOL_SOCKET, SO_BROADCAST, 1)        
+        
+        self.broadcastPort = port
+        self.broadcastAddr=('255.255.255.255', self.broadcastPort)
+
+    def sendAnnounce(self):
+        try:
+            self.broadcastSocket.sendto(bytes('sparrowwifiagent', "utf-8"),self.broadcastAddr)
+        except:
+            pass
+        
+    def run(self):
+        self.threadRunning = True
+        
+        while (not self.signalStop):
+            self.sendAnnounce()
+            sleep(self.sendDelay)
+                    
+        self.threadRunning = False
 
 # ------------------  Local network scan thread  ------------------------------
 class MavlinkGPSThread(Thread):
@@ -195,6 +227,7 @@ if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description='Sparrow-wifi agent')
     argparser.add_argument('--port', help='Port for HTTP server to listen on', default=8020, required=False)
     argparser.add_argument('--mavlinkgps', help="Use Mavlink (drone) for GPS.  Options are: '3dr' for a Solo, 'sitl' for local simulator, or full connection string ('udp/tcp:<ip>:<port>' such as: 'udp:10.1.1.10:14550')", default='', required=False)
+    argparser.add_argument('--sendannounce', help="Send a UDP broadcast packet on the specified port to announce presence", action='store_true', default=False, required=False)
     args = argparser.parse_args()
 
     if os.geteuid() != 0:
@@ -241,11 +274,20 @@ if __name__ == '__main__':
         else:
             print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] No local gpsd running.  No GPS data will be provided.")
 
+    # Start announce if needed
+    announceThread = None
+    
+    if args.sendannounce:
+        print('Sending agent announcements on port ' + str(port) + '.')
+        announceThread = AnnounceThread(port)
+        announceThread.start()
+        
     # Run HTTP Server
     server = SparrowWiFiAgent()
     server.run(port)
     
     if mavlinkGPSThread:
+        mavlinkGPSThread.signalStop = True
         print('Waiting for mavlink GPS thread to terminate...')
         while (mavlinkGPSThread.threadRunning):
             sleep(0.2)
@@ -253,3 +295,9 @@ if __name__ == '__main__':
     if useMavlink and vehicle:
         vehicle.close()
         
+    if announceThread:
+        announceThread.signalStop = True
+        
+        print('Waiting for announce thread to terminate...')
+        while (announceThread.threadRunning):
+            sleep(0.2)
