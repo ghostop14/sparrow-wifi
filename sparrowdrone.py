@@ -33,7 +33,7 @@ class SparrowDroneMavlink(object):
         else:
             return False
             
-    def connectToSolo(self, wait_ready=True):
+    def connectToSolo(self, wait_ready=False):
         # return self.connect('udpin:0.0.0.0:14550', wait_ready)
         return self.connect('udp:0.0.0.0:14550', wait_ready)
     

@@ -89,6 +89,14 @@ class AutoAgentScanThread(Thread):
         self.threadRunning = False
         self.discoveredNetworks = {}
 
+        try:
+            self.hostname = os.uname()[1]
+        except:
+            self.hostname = 'unknown'
+            
+        if len(self.hostname) == 0:
+            self.hostname = 'unknown'
+
         self.ouiLookupEngine = getOUIDB()
         
         if interface not in lockList.keys():
@@ -99,7 +107,7 @@ class AutoAgentScanThread(Thread):
             
         now = datetime.datetime.now()
         
-        self.filename = './recordings/' + str(now.year) + "_" + str(now.month) + "_" + str(now.day) + "_" + str(now.hour) + "_" + str(now.minute) + "_" + str(now.second) + ".csv"
+        self.filename = './recordings/' + self.hostname + '_' + str(now.year) + "_" + str(now.month) + "_" + str(now.day) + "_" + str(now.hour) + "_" + str(now.minute) + "_" + str(now.second) + ".csv"
 
         print('Capturing on ' + interface + ' and writing to ' + self.filename)
                 
@@ -124,10 +132,27 @@ class AutoAgentScanThread(Thread):
                 curLock.release()
                 
             if (retCode == 0):
+                if useMavlink:
+                    gpsCoord = GPSStatus()
+                    gpsCoord.gpsInstalled = True
+                    gpsCoord.gpsRunning = True
+                    gpsCoord.isValid = mavlinkGPSThread.synchronized
+                    gpsCoord.latitude = mavlinkGPSThread.latitude
+                    gpsCoord.longitude = mavlinkGPSThread.longitude
+                    gpsCoord.altitude = mavlinkGPSThread.altitude
+                    gpsCoord.speed = mavlinkGPSThread.vehicle.getAirSpeed()
+                elif gpsEngine.gpsValid():
+                    gpsCoord = gpsEngine.lastCoord
+                else:
+                    gpsCoord = GPSStatus()
+                    
                 # self.statusBar().showMessage('Scan complete.  Found ' + str(len(wirelessNetworks)) + ' networks')
                 if wirelessNetworks and (len(wirelessNetworks) > 0) and (not self.signalStop):
                     for netKey in wirelessNetworks.keys():
                         curNet = wirelessNetworks[netKey]
+                        curNet.gps = gpsCoord
+                        curNet.strongestgps = gpsCoord
+                        
                         curKey = curNet.getKey()
                         if curKey not in self.discoveredNetworks.keys():
                             self.discoveredNetworks[curKey] = curNet
@@ -188,7 +213,7 @@ class AutoAgentScanThread(Thread):
             if curData.secondaryChannel > 0:
                 channelstr = channelstr + '+' + str(curData.secondaryChannel)
                 
-            self.outputFile.write(curData.macAddr  + ',' + vendor + ',' + curData.ssid + ',' + curData.security + ',' + curData.privacy)
+            self.outputFile.write(curData.macAddr  + ',' + vendor + ',"' + curData.ssid + '",' + curData.security + ',' + curData.privacy)
             self.outputFile.write(',' + channelstr + ',' + str(curData.frequency) + ',' + str(curData.signal) + ',' + str(curData.strongestsignal) + ',' + str(curData.bandwidth) + ',' +
                                     curData.lastSeen.strftime("%m/%d/%Y %H:%M:%S") + ',' + curData.firstSeen.strftime("%m/%d/%Y %H:%M:%S") + ',' + 
                                     str(curData.gps.isValid) + ',' + str(curData.gps.latitude) + ',' + str(curData.gps.longitude) + ',' + str(curData.gps.altitude) + ',' + str(curData.gps.speed) + ',' + 
@@ -420,30 +445,46 @@ if __name__ == '__main__':
         vehicle = SparrowDroneMavlink()
         
         print('Connecting to ' + mavlinksetting)
-        
-        if mavlinksetting == '3dr':
-            retVal = vehicle.connectToSolo()
-        elif (mavlinksetting == 'sitl'):
-            retVal = vehicle.connectToSimulator()
-        else:
-            retVal = vehicle.connect(mavlinksetting)
 
-        if retVal:
-            print('Mavlink connected.')
-            print('Current GPS Info:')
-            synchronized, latitude, longitude, altitude = vehicle.getGlobalGPS()
-            print('Synchronized: ' + str(synchronized))
-            print('Latitude: ' + str(latitude))
-            print('Longitude: ' + str(longitude))
-            print('Altitude (m): ' + str(altitude))
-            print('Heading: ' + str(vehicle.getHeading()))
-            
-            useMavlink = True
-            mavlinkGPSThread = MavlinkGPSThread(vehicle)
-            mavlinkGPSThread.start()
-        else:
-            print("ERROR: Unable to connect to " + mavlinksetting)
-            exit(1)
+        connected = False
+        synchronized = False
+
+        # If we're in drone gps mode, wait for the drone to be up and gps synchronized before starting.
+        while (not connected) or (not synchronized):
+            if not connected:
+                if mavlinksetting == '3dr':
+                    retVal = vehicle.connectToSolo()
+                elif (mavlinksetting == 'sitl'):
+                    retVal = vehicle.connectToSimulator()
+                else:
+                    retVal = vehicle.connect(mavlinksetting)
+                    
+                connected = retVal
+
+            if connected:
+                print('Mavlink connected.')
+                print('Current GPS Info:')
+                
+                # get synchronized flag and position
+                synchronized, latitude, longitude, altitude = vehicle.getGlobalGPS()
+                
+                print('Synchronized: ' + str(synchronized))
+                print('Latitude: ' + str(latitude))
+                print('Longitude: ' + str(longitude))
+                print('Altitude (m): ' + str(altitude))
+                print('Heading: ' + str(vehicle.getHeading()))
+                
+                if synchronized:
+                    useMavlink = True
+                    mavlinkGPSThread = MavlinkGPSThread(vehicle)
+                    mavlinkGPSThread.start()
+                    print('Mavlink GPS synchronized.  Continuing.')
+                else:
+                    print('Mavlink GPS not synchronized yet.  Waiting...')
+                    sleep(2)
+            else:
+                print("ERROR: Unable to connect to " + mavlinksetting + '.  Retrying...')
+                sleep(2)
     else:
         # No mavlink specified.  Check the local GPS.
         if GPSEngine.GPSDRunning():

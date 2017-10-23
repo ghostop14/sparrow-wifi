@@ -66,15 +66,24 @@ To use mavlink to pull GPS from a drone use the --mavlinkgps parameter:
 
 ## Raspberry Pi Notes
 
-You can run the remote agent on a Raspberry pi, however the installation requirements are a bit different.  First, you'll need to install python3-dateutil:
+You can run the remote agent on a Raspberry pi, however the installation requirements are a bit different.  For the pip installation, you won't be able to run the GUI since there doesn't appear to be a PyQtChart suitable for the Pi.  So for the agent, just install the python-dateutil, gps, dronekit, and manuf modules:
 
-sudo apt-get install python3-dateutil
+You will also need to upgrade to Python 3.5.1 or higher with a process similar to this:
 
-Then for the pip installation, you won't be able to run the GUI since there doesn't appear to be a PyQtChart suitable for the Pi.  So for the agent, just install the gps, dronekit, and manuf modules:
+cd /tmp
+wget https://www.python.org/ftp/python/3.5.1/Python-3.5.1.tgz
+tar -zxvf Python-3.5.1.tgz
+cd Python-3.5.1
+./configure && make && sudo make install
 
-sudo pip3 install gps3 dronekit manuf
+Once that is done, install the necessary modules into the 3.5 build:
+sudo pip3.5 install gps3 dronekit manuf python-dateutil
 
+Then you can run the agent directly with commands like this:
 
+/usr/local/bin/python3.5 ./sparrowwifiagent.py
+
+/usr/local/bin/python3.5 ./sparrowwifiagent.py --mavlinkgps=3dr --recordinterface=wlan1
 
 
 

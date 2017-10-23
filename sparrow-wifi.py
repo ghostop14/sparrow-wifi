@@ -565,7 +565,7 @@ class mainWindow(QMainWindow):
         newAct.triggered.connect(self.onGoogleMap)
         gpsMenu.addAction(newAct)
         
-        newAct = QAction('Create SSID Map', self)        
+        newAct = QAction('Create SSID Map from Telemetry', self)        
         newAct.setStatusTip('Plot coordinates for a single SSID saved from telemetry window on a Google map')
         newAct.triggered.connect(self.onGoogleMapTelemetry)
         gpsMenu.addAction(newAct)
@@ -1634,7 +1634,7 @@ class mainWindow(QMainWindow):
                         newNet = WirelessNetwork()
                         newNet.macAddr=raw_list[i][0]
                         # 1 will be vendor
-                        newNet.ssid = raw_list[i][2]
+                        newNet.ssid = raw_list[i][2].replace('"', '')
                         newNet.security = raw_list[i][3]
                         newNet.privacy = raw_list[i][4]
                         
@@ -1700,7 +1700,7 @@ class mainWindow(QMainWindow):
         for i in range(0, numItems):
             curData = self.networkTable.item(i, 2).data(Qt.UserRole+1)
 
-            outputFile.write(curData.macAddr  + ',' + self.networkTable.item(i, 1).text() + ',' + curData.ssid + ',' + curData.security + ',' + curData.privacy)
+            outputFile.write(curData.macAddr  + ',' + self.networkTable.item(i, 1).text() + ',"' + curData.ssid + '",' + curData.security + ',' + curData.privacy)
             outputFile.write(',' + str(curData.channel) + ',' + str(curData.frequency) + ',' + str(curData.signal) + ',' + str(curData.strongestsignal) + ',' + str(curData.bandwidth) + ',' +
                                     curData.lastSeen.strftime("%m/%d/%Y %H:%M:%S") + ',' + curData.firstSeen.strftime("%m/%d/%Y %H:%M:%S") + ',' + 
                                     str(curData.gps.isValid) + ',' + str(curData.gps.latitude) + ',' + str(curData.gps.longitude) + ',' + str(curData.gps.altitude) + ',' + str(curData.gps.speed) + ',' + 
