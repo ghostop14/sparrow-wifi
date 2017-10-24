@@ -24,13 +24,15 @@ import webbrowser
 # ------------------  Map Markers  ------------------------------
 class MapMarker(object):
     def __init__(self):
+        self.gpsValid = False
         self.latitude = 0.0
         self.longitude = 0.0
         self.label = ""
         self.barCount = 4
         
     def __str__(self):
-        retVal = 'latitude: ' + str(self.latitude) + '\n'
+        retVal = 'GPS Valid: ' + str(self.gpsValid) + '\n'
+        retVal += 'latitude: ' + str(self.latitude) + '\n'
         retVal += 'longitude: ' + str(self.longitude) + '\n'
         retVal += 'Label: ' + self.label + '\n'
         retVal += 'Bar Count: ' + str(self.barCount) + '\n'
@@ -145,13 +147,17 @@ class MapEngine(object):
         
         # create markers
         for curMarker in markers:
+            if not curMarker.gpsValid or (curMarker.latitude == 0.0 and curMarker.longitude == 0.0):
+                # Skip invalid GPS
+                continue
+                
             htmlString +='		var latlng = new google.maps.LatLng(' + str(curMarker.latitude) + ', ' + str(curMarker.longitude) + ');\n'
             # htmlString +="		var img = new google.maps.MarkerImage('/usr/local/lib/python3.5/dist-packages/gmplot/markers/32CD32.png');\n"
             htmlString +='		var marker = new google.maps.Marker({\n'
             htmlString +='		title: "' + curMarker.label + '",\n'
             if (len(curMarker.label) > 0):
                 htmlString +='		label: {\n'
-                htmlString +="		        text: '" + curMarker.label + "',\n"
+                htmlString +='		        text: "' + curMarker.label + '",\n'
                 htmlString +="		        color: '" + labelColor+ "',\n"
                 htmlString +='		},\n'
             # htmlString +='		icon: img,\n'
@@ -169,7 +175,11 @@ class MapEngine(object):
         if connectMarkers:
             htmlString +='		var PolylineCoordinates = [\n'
             for curMarker in markers:
+                if not curMarker.gpsValid or (curMarker.latitude == 0.0 and curMarker.longitude == 0.0):
+                    # Skip invalid GPS
+                    continue
                 htmlString +='		new google.maps.LatLng(' + str(curMarker.latitude) + ', ' + str(curMarker.longitude) + '),\n'
+                
             htmlString +='		];\n'
 
             htmlString +='		var Path = new google.maps.Polyline({\n'

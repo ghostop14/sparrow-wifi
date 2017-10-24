@@ -32,7 +32,7 @@ from threading import Thread, Lock
 
 from PyQt5.QtWidgets import QApplication, QMainWindow,  QDesktopWidget
 from PyQt5.QtWidgets import QMessageBox, QFileDialog, QInputDialog, QLineEdit
-from PyQt5.QtWidgets import QAction, QComboBox, QLabel, QPushButton, QCheckBox, QTableWidget,QTableWidgetItem, QHeaderView, QMenu
+from PyQt5.QtWidgets import QMenu, QAction, QComboBox, QLabel, QPushButton, QCheckBox, QTableWidget,QTableWidgetItem, QHeaderView
 #from PyQt5.QtWidgets import QTabWidget, QWidget, QVBoxLayout
 from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
 from PyQt5.QtGui import QPen, QFont, QBrush, QColor, QPainter
@@ -482,12 +482,21 @@ class mainWindow(QMainWindow):
         newAct.triggered.connect(self.onShowTelemetry)
         self.ntRightClickMenu.addAction(newAct)
         
+        self.ntRightClickMenu.addSeparator()
+        
+        newAct = QAction('Copy', self)        
+        newAct.setStatusTip('Copy data to clipboard')
+        newAct.triggered.connect(self.onCopyNet)
+        self.ntRightClickMenu.addAction(newAct)
+        
+        self.ntRightClickMenu.addSeparator()
+        
         newAct = QAction('Delete', self)        
         newAct.setStatusTip('Remove network from the list')
         newAct.triggered.connect(self.onDeleteNet)
         self.ntRightClickMenu.addAction(newAct)
         
-        # Attached it to the table
+        # Attach it to the table
         self.networkTable.setContextMenuPolicy(Qt.CustomContextMenu)
         self.networkTable.customContextMenuRequested.connect(self.showNTContextMenu)
         
@@ -777,6 +786,30 @@ class mainWindow(QMainWindow):
             args = ['xgps', remoteIP + ":" + str(remotePort)]
             subprocess.Popen(args)
 
+    def onCopyNet(self):
+        self.updateLock.acquire()
+        
+        curRow = self.networkTable.currentRow()
+        curCol = self.networkTable.currentColumn()
+        
+        if curRow == -1 or curCol == -1:
+            self.updateLock.release()
+            return
+        
+        if curCol != 11:
+            curText = self.networkTable.item(curRow, curCol).text()
+        else:
+            curNet = self.networkTable.item(curRow, 2).data(Qt.UserRole+1)
+            curText = 'Last Recorded GPS Coordinates:\n' + str(curNet.gps)
+            curText += 'Strongest Signal Coordinates:\n'
+            curText += 'Strongest Signal: ' + str(curNet.strongestsignal) + '\n'
+            curText += str(curNet.strongestgps)
+            
+        clipboard = QApplication.clipboard()
+        clipboard.setText(curText)
+        
+        self.updateLock.release()
+        
     def onDeleteNet(self):
         self.updateLock.acquire()
         
@@ -838,7 +871,6 @@ class mainWindow(QMainWindow):
             return
             
         self.ntRightClickMenu.exec_(self.networkTable.mapToGlobal(pos))
-        # self.ntRightClickMenu.exec_(pos)
  
     def onGPSTimer(self):
         self.onGPSStatus(False)
@@ -876,16 +908,28 @@ class mainWindow(QMainWindow):
                 newMarker.label = newMarker.label[:mapSettings.maxLabelLength]
                 
                 if mapSettings.plotstrongest:
-                    if gpsValid == curData.strongestgps.isValid:
+                    if curData.strongestgps.isValid:
                         gpsValid = True
-                    newMarker.latitude = curData.strongestgps.latitude
-                    newMarker.longitude = curData.strongestgps.longitude
+                        newMarker.gpsValid = True
+                        newMarker.latitude = curData.strongestgps.latitude
+                        newMarker.longitude = curData.strongestgps.longitude
+                    else:
+                        newMarker.gpsValid = False
+                        newMarker.latitude = 0.0
+                        newMarker.longitude = 0.0
+                        
                     newMarker.barCount = WirelessEngine.getSignalQualityFromDB0To5(curData.strongestsignal)
                 else:
-                    if gpsValid == curData.gps.isValid:
+                    if curData.gps.isValid:
                         gpsValid = True
-                    newMarker.latitude = curData.gps.latitude
-                    newMarker.longitude = curData.gps.longitude
+                        newMarker.gpsValid = True
+                        newMarker.latitude = curData.gps.latitude
+                        newMarker.longitude = curData.gps.longitude
+                    else:
+                        newMarker.gpsValid = False
+                        newMarker.latitude = 0.0
+                        newMarker.longitude = 0.0
+                        
                     newMarker.barCount = WirelessEngine.getSignalQualityFromDB0To5(curData.signal)
                     
                 markers.append(newMarker)

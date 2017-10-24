@@ -31,6 +31,7 @@ from http import server as HTTPServer
 from wirelessengine import WirelessEngine
 from sparrowgps import GPSEngine, GPSStatus
 from sparrowdrone import SparrowDroneMavlink
+from sparrowrpi import SparrowRPi
 
 try:
     from manuf import manuf
@@ -48,6 +49,17 @@ mavlinkGPSThread = None
 
 lockList = {}
 
+allowedIPs = []
+useRPILeds = False
+
+# ------   Global functions ------------
+def TwoDigits(instr):
+    # Fill in a leading zero for single-digit numbers
+    while len(instr) < 2:
+        instr = '0' + instr
+        
+    return instr
+    
 # ------   OUI lookup functions ------------
 def getOUIDB():
     ouidb = None
@@ -107,7 +119,8 @@ class AutoAgentScanThread(Thread):
             
         now = datetime.datetime.now()
         
-        self.filename = './recordings/' + self.hostname + '_' + str(now.year) + "_" + str(now.month) + "_" + str(now.day) + "_" + str(now.hour) + "_" + str(now.minute) + "_" + str(now.second) + ".csv"
+        self.filename = './recordings/' + self.hostname + '_' + str(now.year) + "-" + TwoDigits(str(now.month)) + "-" + TwoDigits(str(now.day))
+        self.filename += "_" + TwoDigits(str(now.hour)) + "_" + TwoDigits(str(now.minute)) + "_" + TwoDigits(str(now.second)) + ".csv"
 
         print('Capturing on ' + interface + ' and writing to ' + self.filename)
                 
@@ -116,12 +129,12 @@ class AutoAgentScanThread(Thread):
         
         self.threadRunning = True
         
-        curIterator = 0
-        
         if self.interface not in lockList.keys():
             lockList[self.interface] = Lock()
         
         curLock = lockList[self.interface]
+        
+        lastState = -1
         
         while (not self.signalStop):
             # Scan all / normal mode
@@ -143,8 +156,14 @@ class AutoAgentScanThread(Thread):
                     gpsCoord.speed = mavlinkGPSThread.vehicle.getAirSpeed()
                 elif gpsEngine.gpsValid():
                     gpsCoord = gpsEngine.lastCoord
+                    if useRPILeds  and (lastState !=SparrowRPi.LIGHT_STATE_ON):
+                        SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)
+                        lastState = SparrowRPi.LIGHT_STATE_ON
                 else:
                     gpsCoord = GPSStatus()
+                    if useRPILeds and (lastState !=SparrowRPi.LIGHT_STATE_HEARTBEAT) :
+                        SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_HEARTBEAT)
+                        lastState = SparrowRPi.LIGHT_STATE_HEARTBEAT
                     
                 # self.statusBar().showMessage('Scan complete.  Found ' + str(len(wirelessNetworks)) + ' networks')
                 if wirelessNetworks and (len(wirelessNetworks) > 0) and (not self.signalStop):
@@ -266,9 +285,22 @@ class MavlinkGPSThread(Thread):
         
     def run(self):
         self.threadRunning = True
+        lastState = -1
         
         while (not self.signalStop):
             self.synchronized, self.latitude, self.longitude, self.altitude = self.vehicle.getGlobalGPS()
+            
+            if self.synchronized:
+                # Solid on synchronized
+                if useRPILeds and (lastState != SparrowRPi.LIGHT_STATE_ON):
+                    SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)
+                    lastState = SparrowRPi.LIGHT_STATE_ON
+            else:
+                # heartbeat on unsynchronized
+                if useRPILeds and (lastState != SparrowRPi.LIGHT_STATE_HEARTBEAT):
+                    SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_HEARTBEAT)
+                    lastState = SparrowRPi.LIGHT_STATE_HEARTBEAT
+
             sleep(self.scanDelay)
                     
         self.threadRunning = False
@@ -286,13 +318,37 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
         global useMavlink
         global mavlinkGPSThread
         global lockList
+        global allowedIPs
+
+        # For RPi LED's, using it during each get request wasn't completely working.  Short transactions like
+        # status and interface list were so quick the light would get "confused" and stay off.  So
+        # the LED is only used for long calls like scan
         
+        if len(s.client_address) == 0:
+            # This should have the connecting client IP.  If this isn't at least 1, something is wrong
+            return
+        
+        if len(allowedIPs) > 0:
+            if s.client_address[0] not in allowedIPs:
+                s.send_response(403)
+                s.send_header("Content-type", "text/html")
+                s.end_headers()
+                s.wfile.write("<html><body><p>Connections not authorized from your IP address</p>".encode("utf-8"))
+                s.wfile.write("</body></html>".encode("UTF-8"))
+                if useRPILeds:
+                # Green will heartbeat when servicing requests. Turn back solid here
+                    SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_ON)
+                return
+                
         if (s.path != '/wireless/interfaces') and (s.path != '/gps/status') and ('/wireless/networks/' not in s.path):
             s.send_response(404)
             s.send_header("Content-type", "text/html")
             s.end_headers()
             s.wfile.write("<html><body><p>Bad Request</p>".encode("utf-8"))
             s.wfile.write("</body></html>".encode("UTF-8"))
+            if useRPILeds:
+                # Green will heartbeat when servicing requests. Turn back solid here
+                SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_ON)
             return
             
         """Respond to a GET request."""
@@ -324,6 +380,11 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     gpsPos['altitude'] = gpsEngine.lastCoord.altitude
                     gpsPos['speed'] = gpsEngine.lastCoord.speed
                     jsondict['gpspos'] = gpsPos
+                    if useRPILeds:
+                        SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)
+                else:
+                    if useRPILeds:
+                        SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_HEARTBEAT)
             else:
                 jsondict['gpsinstalled'] = 'True'
                 jsondict['gpsrunning'] = 'True'
@@ -347,6 +408,9 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 fieldValue = ""
 
             if len(fieldValue) == 0:
+                if useRPILeds:
+                    # Green will heartbeat when servicing requests. Turn back solid here
+                    SparrowRPi.greenLED(LIGHT_STATE_ON)
                 return
             
             if '?' in inputstr:
@@ -378,6 +442,11 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     except:
                         pass
 
+            if useRPILeds:
+                # Green will heartbeat when servicing requests
+                SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_OFF)
+                sleep(0.1)
+                
             if curInterface not in lockList.keys():
                 lockList[curInterface] = Lock()
             
@@ -398,23 +467,37 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, gpsCoord, huntChannelList)
             elif gpsEngine.gpsValid():
                 retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, gpsEngine.lastCoord, huntChannelList)
+                if useRPILeds:
+                    SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)
             else:
                 retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, None, huntChannelList)
+                if useRPILeds:
+                    SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_HEARTBEAT)
                 
             if (curLock):
                 curLock.release()
                 
             s.wfile.write(jsonstr.encode("UTF-8"))
+            
+        if useRPILeds:
+            # Green will heartbeat when servicing requests. Turn back solid here
+            SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_ON)
 
 class SparrowWiFiAgent(object):
     # See https://docs.python.org/3/library/http.server.html
     # For HTTP Server info
     def run(self, port):
+        global useRPILeds
+        
         server_address = ('', port)
         httpd = HTTPServer.HTTPServer(server_address, SparrowWiFiAgentRequestHandler)
         
         curTime = datetime.datetime.now()
         print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] Starting Sparrow-wifi agent on port " + str(port))
+
+        if useRPILeds:
+            SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_ON)
+            
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
@@ -422,14 +505,19 @@ class SparrowWiFiAgent(object):
     
         httpd.server_close()
         
+        if useRPILeds:
+            SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_OFF)
+            
         curTime = datetime.datetime.now()
         print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] Sparrow-wifi agent stopped.")
         
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description='Sparrow-wifi agent')
     argparser.add_argument('--port', help='Port for HTTP server to listen on', default=8020, required=False)
+    argparser.add_argument('--allowedips', help="IP addresses allowed to connect to this agent.  Default is any.  This can be a comma-separated list for multiple IP addresses", default='', required=False)
     argparser.add_argument('--mavlinkgps', help="Use Mavlink (drone) for GPS.  Options are: '3dr' for a Solo, 'sitl' for local simulator, or full connection string ('udp/tcp:<ip>:<port>' such as: 'udp:10.1.1.10:14550')", default='', required=False)
     argparser.add_argument('--sendannounce', help="Send a UDP broadcast packet on the specified port to announce presence", action='store_true', default=False, required=False)
+    argparser.add_argument('--userpileds', help="Use RPi LEDs to signal state.  Red=GPS [off=None,blinking=Unsynchronized,solid=synchronized], Green=Agent Running [On=Running, blinking=servicing HTTP request]", action='store_true', default=False, required=False)
     argparser.add_argument('--recordinterface', help="Automatically start recording locally with the given wireless interface (headless mode) in a recordings directory", default='', required=False)
     args = argparser.parse_args()
 
@@ -438,7 +526,52 @@ if __name__ == '__main__':
         exit(2)
 
     # Set up parameters
+    useRPILeds = args.userpileds
+    
+    if useRPILeds:
+        # One extra check that the LED's are really present
+        useRPILeds = SparrowRPi.hasLights()
+        
+        if not useRPILeds:
+            # we changed state.  Print warning
+            print('WARNING: RPi LEDs were requested but were not found on this platform.')
+        
+    # Now check again:
+    if useRPILeds:
+        SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_OFF)
+        SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_OFF)
+        
     port = args.port
+    
+    allowedIPstr = args.allowedips
+    
+    if len(allowedIPstr) > 0:
+        ippattern = re.compile('([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})')
+        if ',' in allowedIPstr:
+            tmpList = allowedIPstr.split(',')
+            for curItem in tmpList:
+                ipStr = curItem.replace(' ', '')
+                try:
+                    ipValue = ippattern.search(ipStr).group(1)
+                except:
+                    ipValue = ""
+                    print('ERROR: Unknown IP pattern: ' + ipStr)
+                    exit(3)
+                
+                if len(ipValue) > 0:
+                    allowedIPs.append(ipValue)
+        else:
+            ipStr = allowedIPstr.replace(' ', '')
+            try:
+                ipValue = ippattern.search(ipStr).group(1)
+            except:
+                ipValue = ""
+                print('ERROR: Unknown IP pattern: ' + ipStr)
+                exit(3)
+                
+            if len(ipValue) > 0:
+                allowedIPs.append(ipValue)
+            
     mavlinksetting = args.mavlinkgps
     
     if len(mavlinksetting) > 0:
@@ -449,6 +582,9 @@ if __name__ == '__main__':
         connected = False
         synchronized = False
 
+        if useRPILeds:
+            SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_OFF)
+            
         # If we're in drone gps mode, wait for the drone to be up and gps synchronized before starting.
         while (not connected) or (not synchronized):
             if not connected:
@@ -462,6 +598,9 @@ if __name__ == '__main__':
                 connected = retVal
 
             if connected:
+                if useRPILeds:
+                    SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_HEARTBEAT)
+                    
                 print('Mavlink connected.')
                 print('Current GPS Info:')
                 
@@ -485,11 +624,22 @@ if __name__ == '__main__':
             else:
                 print("ERROR: Unable to connect to " + mavlinksetting + '.  Retrying...')
                 sleep(2)
+
+            if useRPILeds:
+                SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)
     else:
         # No mavlink specified.  Check the local GPS.
         if GPSEngine.GPSDRunning():
+            if useRPILeds:
+                SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_HEARTBEAT)
+                
             gpsEngine.start()
             print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] Local gpsd Found.  Providing GPS coordinates when synchronized.")
+            
+            if useRPILeds:
+                sleep(1)
+                if gpsEngine.gpsValid():
+                    SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)
         else:
             print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] No local gpsd running.  No GPS data will be provided.")
 
@@ -534,3 +684,7 @@ if __name__ == '__main__':
         print('Waiting for announce thread to terminate...')
         while (announceThread.threadRunning):
             sleep(0.2)
+
+    if useRPILeds:
+        SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_OFF)
+        SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)

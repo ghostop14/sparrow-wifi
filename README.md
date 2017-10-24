@@ -41,15 +41,17 @@ sudo apt-get install gpsd
 ## Running sparrow-wifi
 Because it needs to use iw to scan, you will need to run sparrow-wifi as root.  Simply run:
 
-sudo sparrow-wifi.py
+sudo ./sparrow-wifi.py
 
 ## Running sparrow-wifi remote agent
 Because it needs to use iw to scan, you will need to run sparrowwifiagent as root.  Simply run:
 
-sudo sparrowwifiagent.py
+sudo ./sparrowwifiagent.py
 
 An alternate port can also be specified with:
-sudo sparrowwifiagent.py --port=&lt;myport&gt;
+sudo ./sparrowwifiagent.py --port=&lt;myport&gt;
+
+There are a number of options including IP connection restrictions and record-local-on-start.  See ./sparrowwifiagent.py --help for a full list of options.
 
 To use mavlink to pull GPS from a drone use the --mavlinkgps parameter:
 

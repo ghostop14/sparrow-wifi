@@ -201,8 +201,8 @@ class MapSettingsDialog(QDialog):
         
         self.comboplot = QComboBox(self)
         self.comboplot.move(115, 84)
-        self.comboplot.addItem("Last Signal")
         self.comboplot.addItem("Strongest Signal")
+        self.comboplot.addItem("Last Signal")
 
         # File:
         self.lblFile = QLabel("Output File: ", self)

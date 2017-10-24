@@ -19,7 +19,7 @@
 # 
 
 from PyQt5.QtWidgets import QDialog, QApplication,QDesktopWidget
-from PyQt5.QtWidgets import QTableWidget, QHeaderView,QTableWidgetItem, QMessageBox, QFileDialog
+from PyQt5.QtWidgets import QTableWidget, QHeaderView,QTableWidgetItem, QMessageBox, QFileDialog, QMenu, QAction
 # from PyQt5.QtWidgets import QLabel, QComboBox, QLineEdit, QPushButton, QFileDialog
 #from PyQt5.QtCore import Qt
 from PyQt5 import QtWidgets
@@ -35,6 +35,8 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 from sparrowtablewidgets import IntTableWidgetItem, FloatTableWidgetItem, DateTableWidgetItem
+
+from threading import Lock
 
 # from wirelessengine import WirelessNetwork
 
@@ -115,6 +117,8 @@ class TelemetryDialog(QDialog):
 
         self.winTitle = winTitle
         
+        self.updateLock = Lock()
+        
         # Used to detect network change
         self.lastNetKey = ""
         self.lastSeen = None
@@ -156,6 +160,15 @@ class TelemetryDialog(QDialog):
         self.locationTable.setRowCount(0)
         self.locationTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         
+        self.ntRightClickMenu = QMenu(self)
+        newAct = QAction('Copy', self)        
+        newAct.setStatusTip('Copy data to clipboard')
+        newAct.triggered.connect(self.onCopy)
+        self.ntRightClickMenu.addAction(newAct)
+        
+        self.locationTable.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.locationTable.customContextMenuRequested.connect(self.showNTContextMenu)
+       
         self.btnExport = QPushButton("Export Table", self)
         self.btnExport.clicked[bool].connect(self.onExportClicked)
         self.btnExport.setStyleSheet("background-color: rgba(2,128,192,255);")
@@ -210,6 +223,31 @@ class TelemetryDialog(QDialog):
         # basically centering the window
         self.move(qr.topLeft())
 
+    def showNTContextMenu(self, pos):
+        curRow = self.locationTable.currentRow()
+        
+        if curRow == -1:
+            return
+            
+        self.ntRightClickMenu.exec_(self.locationTable.mapToGlobal(pos))
+        
+    def onCopy(self):
+        self.updateLock.acquire()
+        
+        curRow = self.locationTable.currentRow()
+        curCol = self.locationTable.currentColumn()
+        
+        if curRow == -1 or curCol == -1:
+            self.updateLock.release()
+            return
+        
+        curText = self.locationTable.item(curRow, curCol).text()
+            
+        clipboard = QApplication.clipboard()
+        clipboard.setText(curText)
+        
+        self.updateLock.release()
+        
     def onVisibilityChanged(self, visible):
         if not visible:
             self.paused = True
@@ -292,7 +330,7 @@ class TelemetryDialog(QDialog):
             return
            
         for i in range(0, numItems):
-            outputFile.write(self.locationTable.item(i, 0).text() + ',' + self.locationTable.item(i, 1).text() + ',' + self.locationTable.item(i, 2).text() + ',' + self.locationTable.item(i, 3).text())
+            outputFile.write(self.locationTable.item(i, 0).text() + ',"' + self.locationTable.item(i, 1).text() + '",' + self.locationTable.item(i, 2).text() + ',' + self.locationTable.item(i, 3).text())
             outputFile.write(',' + self.locationTable.item(i, 4).text()+ ',' + self.locationTable.item(i, 5).text()+ ',' + self.locationTable.item(i, 6).text()+ ',' + self.locationTable.item(i, 7).text() + '\n')
             
         outputFile.close()
@@ -365,6 +403,8 @@ class TelemetryDialog(QDialog):
         #  Network changed.  Clear our table and time data
         updateChartAndTable = False
         
+        self.updateLock.acquire()
+        
         if (curNet.getKey() != self.lastNetKey):
             self.lastNetKey = curNet.getKey()
             self.locationTable.setRowCount(0)
@@ -408,6 +448,7 @@ class TelemetryDialog(QDialog):
             if self.locationTable.rowCount() > self.maxRowPoints:
                 self.locationTable.setRowCount(self.maxRowPoints)
             
+        self.updateLock.release()
         
     def addTableData(self, curNet):
         if self.paused:
@@ -446,7 +487,7 @@ class TelemetryDialog(QDialog):
 
         # If we're in streaming mode, write the data out to disk as well
         if self.streamingFile:
-            self.streamingFile.write(self.locationTable.item(rowPosition, 0).text() + ',' + self.locationTable.item(rowPosition, 1).text() + ',' + self.locationTable.item(rowPosition, 2).text() + ',' + 
+            self.streamingFile.write(self.locationTable.item(rowPosition, 0).text() + ',"' + self.locationTable.item(rowPosition, 1).text() + '",' + self.locationTable.item(rowPosition, 2).text() + ',' + 
             self.locationTable.item(rowPosition, 3).text() + ',' + self.locationTable.item(rowPosition, 4).text()+ ',' + self.locationTable.item(rowPosition, 5).text()+ ',' + self.locationTable.item(rowPosition, 6).text()+ ',' + self.locationTable.item(rowPosition, 7).text() + '\n')
 
             if (self.currentLine > self.linesBeforeFlush):
