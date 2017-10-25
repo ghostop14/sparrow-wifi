@@ -78,6 +78,49 @@ class GPSThread(Thread):
         self.threadRunning = False
 
 
+class SparrowGPS(object):
+    def __init__(self):
+        super().__init__()
+        
+        self.latitude = 0.0
+        self.longitude = 0.0
+        self.altitude = 0.0
+        self.speed = 0.0
+        self.isValid = False
+        
+    def __str__(self):
+        retVal = ""
+        
+        retVal += "Is Valid: " +str(self.isValid) + "\n"
+        retVal += "Latitude: " +str(self.latitude) + "\n"
+        retVal += "Longitude: " +str(self.longitude) + "\n"
+        retVal += "Altitude: " +str(self.altitude) + "\n"
+        retVal += "Speed: " +str(self.speed) + "\n"
+
+        return retVal
+
+    def __eq__(self, obj):
+        # This is equivance....   ==
+        if not isinstance(obj, SparrowGPS):
+           return False
+          
+        if self.isValid != obj.isValid:
+            return False
+
+        if self.latitude != obj.latitude:
+            return False
+
+        if self.longitude != obj.longitude:
+            return False
+            
+        if self.speed != obj.speed:
+            return False
+            
+        return True
+
+    def __ne__(self, other):
+            return not self.__eq__(other)
+        
 class GPSStatus(object):
     def __init__(self):
         super().__init__()
@@ -88,7 +131,17 @@ class GPSStatus(object):
         self.longitude = 0.0
         self.altitude = 0.0
         self.speed = 0.0
-    
+        
+    def asSparrowGPSObject(self):
+        retVal = SparrowGPS()
+        retVal.isValid = self.isValid
+        retVal.latitude = self.latitude
+        retVal.latitude = self.longitude
+        retVal.latitude = self.altitude
+        retVal.latitude = self.speed
+
+        return retVal
+        
 class GPSEngine(object):
     def __init__(self):
         super().__init__()
@@ -164,23 +217,3 @@ class GPSEngine(object):
         except:
             return False
            
-class SparrowGPS(object):
-    def __init__(self):
-        super().__init__()
-        
-        self.latitude = 0.0
-        self.longitude = 0.0
-        self.altitude = 0.0
-        self.speed = 0.0
-        self.isValid = False
-        
-    def __str__(self):
-        retVal = ""
-        
-        retVal += "Is Valid: " +str(self.isValid) + "\n"
-        retVal += "Latitude: " +str(self.latitude) + "\n"
-        retVal += "Longitude: " +str(self.longitude) + "\n"
-        retVal += "Altitude: " +str(self.altitude) + "\n"
-        retVal += "Speed: " +str(self.speed) + "\n"
-
-        return retVal

@@ -22,6 +22,7 @@ import datetime
 import json
 import re
 import argparse
+import configparser
 
 from socket import *
 from time import sleep
@@ -53,6 +54,12 @@ allowedIPs = []
 useRPILeds = False
 
 # ------   Global functions ------------
+def stringtobool(instr):
+    if (instr == 'True' or instr == 'true'):
+        return True
+    else:
+        return False
+
 def TwoDigits(instr):
     # Fill in a leading zero for single-digit numbers
     while len(instr) < 2:
@@ -519,14 +526,86 @@ if __name__ == '__main__':
     argparser.add_argument('--sendannounce', help="Send a UDP broadcast packet on the specified port to announce presence", action='store_true', default=False, required=False)
     argparser.add_argument('--userpileds', help="Use RPi LEDs to signal state.  Red=GPS [off=None,blinking=Unsynchronized,solid=synchronized], Green=Agent Running [On=Running, blinking=servicing HTTP request]", action='store_true', default=False, required=False)
     argparser.add_argument('--recordinterface', help="Automatically start recording locally with the given wireless interface (headless mode) in a recordings directory", default='', required=False)
+    argparser.add_argument('--ignorecfg', help="Don't load any config files (useful for overriding and/or testing)", action='store_true', default=False, required=False)
+    argparser.add_argument('--cfgfile', help="Use the specified config file rather than the default sparrowwifiagent.cfg file", default='', required=False)
     args = argparser.parse_args()
 
     if os.geteuid() != 0:
         print("ERROR: You need to have root privileges to run this script.  Please try again, this time using 'sudo'. Exiting.\n")
         exit(2)
 
+    # See if we have a config file:
+    dirname, filename = os.path.split(os.path.abspath(__file__))
+    
+    settings = {}
+
+    if len(args.cfgfile) == 0:
+        cfgFile = dirname + '/sparrowwifiagent.cfg'
+    else:
+        cfgFile = args.cfgfile
+        # Since it's user-specified, let's see if it exists.
+        if not os.path.isfile(cfgFile):
+            print("ERROR: Unable to find the specified config file.")
+            exit(3)
+            
+    if os.path.isfile(cfgFile) and (not args.ignorecfg):
+        cfgParser = configparser.ConfigParser()
+        
+        try:
+            cfgParser.read(cfgFile)
+            
+            section="agent"
+            options = cfgParser.options(section)
+            for option in options:
+                try:
+                    if option == 'sendannounce' or option == 'userpileds' or option == 'cancelstart':
+                        settings[option] = stringtobool(cfgParser.get(section, option))
+                    else:
+                        settings[option] = cfgParser.get(section, option)
+                except:
+                    print("exception on %s!" % option)
+                    settings[option] = None
+        except:
+            print("ERROR: Unable to read config file: ", cfgFile)
+            exit(1)
+
     # Set up parameters
-    useRPILeds = args.userpileds
+    
+    if 'cancelstart' in settings.keys():
+        if settings['cancelstart']:
+            exit(0)
+
+    if 'port' not in settings.keys():
+        port = args.port
+    else:
+        port = int(settings['port'])
+    
+    if 'sendannounce' not in settings.keys():
+        sendannounce = args.sendannounce
+    else:
+        sendannounce = settings['sendannounce']
+    
+    if 'userpileds' not in settings.keys():
+        useRPILeds = args.userpileds
+    else:
+        useRPILeds = settings['userpileds']
+    
+    if 'allowedips' not in settings.keys():
+        allowedIPstr = args.allowedips
+    else:
+        allowedIPstr = settings['allowedips']
+    
+    if 'mavlinkgps' not in settings.keys():
+        mavlinksetting = args.mavlinkgps
+    else:
+        mavlinksetting = settings['mavlinkgps']
+
+    if 'mavlinkgps' not in settings.keys():
+        recordinterface = args.recordinterface
+    else:
+        recordinterface = settings['recordinterface']
+        
+    # Now start logic
     
     if useRPILeds:
         # One extra check that the LED's are really present
@@ -541,10 +620,6 @@ if __name__ == '__main__':
         SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_OFF)
         SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_OFF)
         
-    port = args.port
-    
-    allowedIPstr = args.allowedips
-    
     if len(allowedIPstr) > 0:
         ippattern = re.compile('([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})')
         if ',' in allowedIPstr:
@@ -572,8 +647,6 @@ if __name__ == '__main__':
             if len(ipValue) > 0:
                 allowedIPs.append(ipValue)
             
-    mavlinksetting = args.mavlinkgps
-    
     if len(mavlinksetting) > 0:
         vehicle = SparrowDroneMavlink()
         
@@ -646,15 +719,15 @@ if __name__ == '__main__':
     # Start announce if needed
     announceThread = None
     
-    if args.sendannounce:
+    if sendannounce:
         print('Sending agent announcements on port ' + str(port) + '.')
         announceThread = AnnounceThread(port)
         announceThread.start()
     else:
         announceThread = None
 
-    if len(args.recordinterface) > 0:
-        recordThread = AutoAgentScanThread(args.recordinterface)
+    if len(recordinterface) > 0:
+        recordThread = AutoAgentScanThread(recordinterface)
         recordThread.start()
     else:
         recordThread = None

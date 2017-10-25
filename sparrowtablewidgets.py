@@ -24,6 +24,12 @@ from dateutil import parser
 
 # ------------------  Table Sorting by Number Class  ------------------------------
 class IntTableWidgetItem(QTableWidgetItem):
+    def __init__(self, defaultStr):
+        super().__init__(defaultStr)
+
+            # See http://doc.qt.io/qt-5/qt.html for alignment
+        self.setTextAlignment( Qt.AlignRight + Qt.AlignVCenter )        
+
     def __lt__(self, other):
         if ( isinstance(other, QTableWidgetItem) ):
             try:
@@ -49,6 +55,11 @@ class IntTableWidgetItem(QTableWidgetItem):
         return super(IntTableWidgetItem, self).__lt__(other)
 
 class FloatTableWidgetItem(QTableWidgetItem):
+    def __init__(self, defaultStr):
+        super().__init__(defaultStr)
+        
+        self.setTextAlignment( Qt.AlignRight + Qt.AlignVCenter)        
+        
     def __lt__(self, other):
         if ( isinstance(other, QTableWidgetItem) ):
             try:
@@ -67,6 +78,11 @@ class FloatTableWidgetItem(QTableWidgetItem):
 
 # ------------------  Table Sorting by Timestamp Class  ------------------------------
 class DateTableWidgetItem(QTableWidgetItem):
+    def __init__(self, defaultStr):
+        super().__init__(defaultStr)
+        
+        self.setTextAlignment( Qt.AlignHCenter  + Qt.AlignVCenter)
+        
     def __lt__(self, other):
         if ( isinstance(other, QTableWidgetItem) ):
             try:

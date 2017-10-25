@@ -1,0 +1,21 @@
+[agent]
+# Note: settings in this file override any command-line or default settings.
+#
+# Use cancelstart to cause the agent to exit.  This can be useful if you want to put the agent in a script
+# that always gets called, but control whether or not it really runs here.
+# cancelstart=True
+# port=8020
+#
+# sendannounce=True
+#
+# recordinterface will automatically start recording on the specified interface at startup
+#recordinterface=wlan0
+#
+# Use Raspberry Pi LEDs for status updates
+# userpileds=True
+#
+# allowedips can be a comma-separated list.  Blank means any
+# allowedips=127.0.0.1
+#
+# mavlinkgps can be '3dr' for a Solo, 'sitl' for local simulator, or full connection string ('udp/tcp:<ip>:<port>' such as: 'udp:10.1.1.10:14550')
+# mavlinkgps=3dr

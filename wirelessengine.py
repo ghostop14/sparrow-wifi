@@ -253,6 +253,9 @@ class WirelessNetwork(object):
             
         return True
 
+    def __ne__(self, other):
+            return not self.__eq__(other)
+        
     def createFromJsonDict(jsondict):
         retVal = WirelessNetwork()
         retVal.fromJsondict(jsondict)

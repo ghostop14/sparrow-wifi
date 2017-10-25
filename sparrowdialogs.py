@@ -19,13 +19,15 @@
 # 
 
 from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QApplication, QLabel, QComboBox, QLineEdit, QPushButton
-from PyQt5.QtWidgets  import QFileDialog, QSpinBox, QDesktopWidget, QMessageBox, QTableWidget, QHeaderView,QTableWidgetItem
-from sparrowtablewidgets import IntTableWidgetItem
-from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets  import QFileDialog, QSpinBox, QDesktopWidget, QMessageBox, QTableWidget, QHeaderView,QTableWidgetItem,  QMenu, QAction
+from sparrowtablewidgets import DateTableWidgetItem, FloatTableWidgetItem
+from PyQt5.QtCore import Qt,QTimer
 from PyQt5 import QtCore
 
 from socket import *
+import datetime
 from threading import Thread
+from time import sleep
 from sparrowmap import MapEngine
 
 # Example dialog:
@@ -495,12 +497,14 @@ class AgentListenerThread(Thread):
             self.sock.close()
         
 # ------------------  Agent Listener  ------------------------------
-class AgentListenerDIalog(QDialog):
+class AgentListenerDialog(QDialog):
     agentAnnounce = QtCore.pyqtSignal(str, int)
 
-    def __init__(self, parent = None):
-        super(AgentListenerDIalog, self).__init__(parent)
+    def __init__(self, mainWin = None,  parent = None):
+        super(AgentListenerDialog, self).__init__(parent)
 
+        self.parentWin = mainWin
+        
         self.broadcastSocket = socket(AF_INET, SOCK_DGRAM)
         self.broadcastSocket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
         self.broadcastSocket.setsockopt(SOL_SOCKET, SO_BROADCAST, 1)        
@@ -564,13 +568,22 @@ class AgentListenerDIalog(QDialog):
         
         self.agentListenerThread = AgentListenerThread(self,  int(self.spinPort.value()))
         self.agentListenerThread.start()
+
+    def done(self, result):
+        super().done(result)
+        
+        if self.parentWin:
+            self.parentWin.agentListenerClosed.emit()
         
     def closeEvent(self, event):
         self.agentListenerThread.signalStop = True
         
         while (self.agentListenerThread.threadRunning):
             sleep(1)
-                    
+
+        if self.parentWin:
+            self.parentWin.agentListenerClosed.emit()
+            
         event.accept()
             
     def resizeEvent(self, event):
@@ -635,11 +648,172 @@ class AgentListenerDIalog(QDialog):
     # static method to create the dialog and return (date, time, accepted)
     @staticmethod
     def getAgent(parent = None):
-        dialog = AgentListenerDIalog(parent)
+        dialog = AgentListenerDialog(parent)
         result = dialog.exec_()
         # date = dialog.dateTime()
         agentIP, port = dialog.getAgentInfo()
         return (agentIP, port, result == QDialog.Accepted)
+
+
+# ------------------  GPS Coordinate  ------------------------------
+class GPSCoordDIalog(QDialog):
+    visibility = QtCore.pyqtSignal(bool)
+    
+    def __init__(self, mainWin, parent = None):
+        super(GPSCoordDIalog, self).__init__(parent)
+
+        self.visibility.connect(self.onVisibilityChanged)
+        
+        self.mainWin = mainWin
+        
+
+        # Set up GPS check timer
+        self.gpsTimer = QTimer()
+        self.gpsTimer.timeout.connect(self.onGPSTimer)
+        self.gpsTimer.setSingleShot(True)
+        self.gpsTimerTimeout = 2000
+        self.gpsTimer.start(self.gpsTimerTimeout)   # Check every 5 seconds
+        
+        self.lastGPS = None
+        self.firstUpdate = True
+        
+        # Map Type droplist
+        self.lblMsg = QLabel("Newest coordinates are at the top", self)
+        self.lblMsg.move(10, 20)
+
+        self.historyTable = QTableWidget(self)
+        self.historyTable.setColumnCount(6)
+        self.historyTable.setShowGrid(True)
+        self.historyTable.setHorizontalHeaderLabels(['Timestamp','Valid','Latitude', 'Longitude', 'Altitude', 'Speed'])
+        self.historyTable.setGeometry(10, 30, 100, 30)
+        self.historyTable.resizeColumnsToContents()
+        self.historyTable.setRowCount(0)
+        self.historyTable.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+       #  self.historyTable.horizontalHeader().sectionClicked.connect(self.onTableHeadingClicked)
+       
+        self.ntRightClickMenu = QMenu(self)
+        newAct = QAction('Copy', self)        
+        newAct.setStatusTip('Copy data to clipboard')
+        newAct.triggered.connect(self.onCopy)
+        self.ntRightClickMenu.addAction(newAct)
+ 
+        # Attach it to the table
+        self.historyTable.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.historyTable.customContextMenuRequested.connect(self.showNTContextMenu)
+        
+        self.setGeometry(self.geometry().x(), self.geometry().y(), 500,320)
+        self.setWindowTitle("GPS Coordinate Viewer")
+        self.center()
+
+        # initial update:
+        if self.mainWin:
+            curGPS = self.mainWin.getCurrentGPS()
+            self.updateTable(curGPS)
+
+    def center(self):
+        # Get our geometry
+        qr = self.frameGeometry()
+        # Find the desktop center point
+        cp = QDesktopWidget().availableGeometry().center()
+        # Move our center point to the desktop center point
+        qr.moveCenter(cp)
+        # Move the top-left point of the application window to the top-left point of the qr rectangle, 
+        # basically centering the window
+        self.move(qr.topLeft())
+        
+    def closeEvent(self, event):
+        self.gpsTimer.stop()
+        event.accept()
+            
+    def resizeEvent(self, event):
+        # self.resized.emit()
+        # self.statusBar().showMessage('Window resized.')
+        # return super(mainWin, self).resizeEvent(event)
+        size = self.geometry()
+        self.historyTable.setGeometry(10, 50, size.width()-20, size.height()-60)
+
+    def showNTContextMenu(self, pos):
+        curRow = self.historyTable.currentRow()
+        
+        if curRow == -1:
+            return
+            
+        self.ntRightClickMenu.exec_(self.historyTable.mapToGlobal(pos))
+ 
+    def onCopy(self):
+        curRow = self.historyTable.currentRow()
+        curCol = self.historyTable.currentColumn()
+        
+        if curRow == -1 or curCol == -1:
+            return
+        
+        curText = self.historyTable.item(curRow, curCol).text()
+            
+        clipboard = QApplication.clipboard()
+        clipboard.setText(curText)
+        
+    def updateTable(self, curGPS):        
+        if curGPS == self.lastGPS:
+            # Don't update if nothing's changed and we're not on our first iteration
+            return
+        
+        self.lastGPS = curGPS  # Set for the next pass
+        
+        rowCount = self.historyTable.rowCount()
+        rowCount -= 1
+        addedFirstRow = False
+        if rowCount < 0:
+            addedFirstRow = True
+            rowCount = 0
+            
+        # Insert new at the top
+        self.historyTable.insertRow(0)
+
+        # Just make sure we don't get an extra blank row
+        if (addedFirstRow):
+            self.historyTable.setRowCount(1)
+
+        rowPosition = 0 # Always at the first row
+        self.historyTable.setItem(rowPosition, 0, DateTableWidgetItem(datetime.datetime.now().strftime("%m/%d/%Y %H:%M:%S")))
+        if (curGPS.isValid):
+            self.historyTable.setItem(rowPosition,1, QTableWidgetItem('Yes'))
+        else:
+            self.historyTable.setItem(rowPosition,1, QTableWidgetItem('No'))
+            
+        self.historyTable.setItem(rowPosition, 2, FloatTableWidgetItem(str(curGPS.latitude)))
+        self.historyTable.setItem(rowPosition, 3, FloatTableWidgetItem(str(curGPS.longitude)))
+        self.historyTable.setItem(rowPosition, 4, FloatTableWidgetItem(str(curGPS.altitude)))
+        self.historyTable.setItem(rowPosition, 5, FloatTableWidgetItem(str(curGPS.speed)))
+
+        # limit to 20 entries
+        if (self.historyTable.rowCount() > 20):
+            self.historyTable.setRowCount(20)
+        
+    def onGPSTimer(self):
+        if not self.mainWin:
+            # We'll just take one shot coming in here for debug purposes.  Technically we don't need to come in here
+            # if there's no main win
+            return
+
+        curGPS = self.mainWin.getCurrentGPS()
+        
+        self.updateTable(curGPS)
+            
+        self.gpsTimer.start(self.gpsTimerTimeout)
+        
+    def hideEvent(self, event):
+        self.visibility.emit(False)
+        
+    def showEvent(self, event):
+        self.visibility.emit(True)
+        
+    def onVisibilityChanged(self, visible):
+        if not visible:
+            self.gpsTimer.stop()
+        else:
+            if not self.gpsTimer.isActive():
+                self.gpsTimer.start(self.gpsTimerTimeout)
+            
 # -------  Main Routine For Debugging-------------------------
 
 if __name__ == '__main__':
@@ -647,5 +821,8 @@ if __name__ == '__main__':
     #dbSettings, ok = DBSettingsDialog.getSettings()
     #mapSettings, ok = MapSettingsDialog.getSettings()
     # mapSettings, ok = TelemetryMapSettingsDialog.getSettings()
-    agentIP, port, accepted = AgentListenerDIalog.getAgent()
+    # agentIP, port, accepted = AgentListenerDialog.getAgent()
+    testWin = GPSCoordDIalog(mainWin=None)
+    testWin.exec()
+    
     app.exec_()

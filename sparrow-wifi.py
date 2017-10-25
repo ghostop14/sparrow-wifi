@@ -43,11 +43,11 @@ from PyQt5 import QtCore
 
 # from PyQt5.QtCore import QCoreApplication # programatic quit
 from wirelessengine import WirelessEngine, WirelessNetwork
-from sparrowgps import GPSEngine, GPSStatus
+from sparrowgps import GPSEngine, GPSStatus, SparrowGPS
 from telemetry import TelemetryDialog
 from sparrowtablewidgets import IntTableWidgetItem, DateTableWidgetItem
 from sparrowmap import MapMarker, MapEngine
-from sparrowdialogs import MapSettingsDialog, TelemetryMapSettingsDialog, AgentListenerDIalog
+from sparrowdialogs import MapSettingsDialog, TelemetryMapSettingsDialog, AgentListenerDialog, GPSCoordDIalog
 
 # There are some "plugins" that are available for addons.  Let's see if they're present
 hasFalcon = False
@@ -281,6 +281,7 @@ class mainWindow(QMainWindow):
     gpsSynchronizedsignal = QtCore.pyqtSignal()
     advScanClosed = QtCore.pyqtSignal()
     advScanUpdateSSIDs = QtCore.pyqtSignal(dict)
+    agentListenerClosed = QtCore.pyqtSignal()
     
     # For help with qt5 GUI's this is a great tutorial:
     # http://zetcode.com/gui/pyqt5/
@@ -290,6 +291,9 @@ class mainWindow(QMainWindow):
 
         self.ouiLookupEngine = getOUIDB()
             
+        self.agentListenerWindow = None
+        self.agentListenerClosed.connect(self.onAgentListenerClosed)
+        
         self.telemetryWindows = {}
         self.advancedScan = None
         
@@ -300,6 +304,8 @@ class mainWindow(QMainWindow):
         self.gpsEngine = GPSEngineNotifyWin(self)
         self.gpsSynchronized = False
         self.gpsSynchronizedsignal.connect(self.onGPSSyncChanged)
+        
+        self.gpsCoordWindow = None
         
         # Advanced Scan
         self.advScanClosed.connect(self.onAdvancedScanClosed)
@@ -567,6 +573,11 @@ class mainWindow(QMainWindow):
         self.menuRemoteAgent.changed.connect(self.onRemoteAgent)
         helpMenu.addAction(self.menuRemoteAgent)
         
+        self.menuRemoteAgentListener = QAction('Agent Listener', self)        
+        self.menuRemoteAgentListener.setStatusTip('Listen for remote agents')
+        self.menuRemoteAgentListener.triggered.connect(self.onRemoteAgentListener)
+        helpMenu.addAction(self.menuRemoteAgentListener)
+        
         # GPS Menu Items
         gpsMenu = menubar.addMenu('&Geo')
         newAct = QAction('Create Access Point Map', self)        
@@ -586,7 +597,13 @@ class mainWindow(QMainWindow):
         newAct.triggered.connect(self.onGPSStatus)
         gpsMenu.addAction(newAct)
         
+        newAct = QAction('GPS Coordinate Monitoring', self)        
+        newAct.setStatusTip('Show GPS Coordinates')
+        newAct.triggered.connect(self.onGPSCoordinates)
+        gpsMenu.addAction(newAct)
+        
         if (os.path.isfile('/usr/bin/xgps') or os.path.isfile('/usr/local/bin/xgps')):
+            gpsMenu.addSeparator()
             newAct = QAction('Launch XGPS - Local', self)        
             newAct.setStatusTip('Show GPS GUI against local gpsd')
             newAct.triggered.connect(self.onXGPSLocal)
@@ -1001,6 +1018,33 @@ class mainWindow(QMainWindow):
             
             if not retVal:
                 QMessageBox.question(self, 'Error',"Unable to generate map to " + mapSettings.outputfile, QMessageBox.Ok)
+        
+    def onGPSCoordinates(self):
+        if not self.gpsCoordWindow:
+            self.gpsCoordWindow = GPSCoordDIalog(mainWin=self)
+            
+        self.gpsCoordWindow.show()
+        self.gpsCoordWindow.activateWindow()
+
+    def getCurrentGPS(self):
+        # retVal will be a sparrowGPS object
+        
+        if (not self.remoteAgentUp):
+            # Local
+            retVal = self.gpsEngine.getLastCoord()
+        else:
+            # Remote
+            errCode, errMsg, gpsStatus = requestRemoteGPS(self.remoteAgentIP, self.remoteAgentPort)
+            
+            if errCode == 0:
+                retVal = gpsStatus.asSparrowGPSObject()
+            else:
+                retVal = None
+        
+        if retVal is None:
+            retVal = SparrowGPS()
+            
+        return retVal
         
     def onGPSStatus(self, updateStatusBar=True):
         if (not self.remoteAgentUp):
@@ -1617,7 +1661,7 @@ class mainWindow(QMainWindow):
         else:
             return None
  
-    def saveFileDialog(self):    
+    def saveFileDialog(self, fileSpec="CSV Files (*.csv);;All Files (*)"):    
         options = QFileDialog.Options()
         options |= QFileDialog.DontUseNativeDialog
         fileName, _ = QFileDialog.getSaveFileName(self,"QFileDialog.getSaveFileName()","",fileSpec, options=options)
@@ -1778,6 +1822,18 @@ class mainWindow(QMainWindow):
         else:
             return statusCode, None
 
+    def onRemoteAgentListener(self):
+        if not self.agentListenerWindow:
+            self.agentListenerWindow = AgentListenerDialog(mainWin=self)
+            
+        self.agentListenerWindow.show()
+        self.agentListenerWindow.activateWindow()
+        
+    def onAgentListenerClosed(self):
+        if self.agentListenerWindow:
+            self.agentListenerWindow.close()
+            self.agentListenerWindow = None
+            
     def onRemoteAgent(self):
         if (self.menuRemoteAgent.isChecked() == self.lastRemoteState):
             # There's an extra bounce in this for some reason.
@@ -1801,9 +1857,13 @@ class mainWindow(QMainWindow):
                         specIsGood = False
                 except:
                     if text.upper() == 'AUTO':
-                        self.remoteAgentIP, self.remoteAgentPort, accepted = AgentListenerDIalog.getAgent()
-                        
-                        specIsGood = accepted
+                        # Need to close the agent listener window.  Need it to get the info and it'll lock the listening port.
+                        if self.agentListenerWindow:
+                            QMessageBox.question(self, 'Error',"Please close the agent listener window first.", QMessageBox.Ok)
+                            specIsGood = False
+                        else:
+                            self.remoteAgentIP, self.remoteAgentPort, accepted = AgentListenerDialog.getAgent()
+                            specIsGood = accepted
                     else:
                         QMessageBox.question(self, 'Error',"Please enter it in the format <IP>:<port>", QMessageBox.Ok)
                         self.menuRemoteAgent.setChecked(False)
@@ -1880,10 +1940,11 @@ class mainWindow(QMainWindow):
             # event.accept()
         #else:
             # event.ignore()       
-            
+        
         if self.scanRunning:
             QMessageBox.question(self, 'Error',"Please stop the running scan first.", QMessageBox.Ok)
             event.ignore()
+            return
         else:
             for curKey in self.telemetryWindows.keys():
                 curWindow = self.telemetryWindows[curKey]
@@ -1893,14 +1954,29 @@ class mainWindow(QMainWindow):
                 except:
                     pass
                     
-            event.accept()
+        if self.agentListenerWindow:
+            self.agentListenerWindow.close()
+            self.agentListenerWindow = None
+            
+        if self.gpsCoordWindow:
+            self.gpsCoordWindow.close()
+            self.gpsCoordWindow = None
+            
+        event.accept()
 
 # -------  Main Routine -------------------------
 
 if __name__ == '__main__':
-    if  os.path.exists('./plugins'):
-        sys.path.insert(0, './plugins')
-        if  os.path.isfile('./plugins/falconwifi.py'):
+    # Code to add paths
+    dirname, filename = os.path.split(os.path.abspath(__file__))
+    
+    if dirname not in sys.path:
+        sys.path.insert(0, dirname)
+    pluginsdir = dirname+'/plugins'
+    if  os.path.exists(pluginsdir):
+        if pluginsdir not in sys.path:
+            sys.path.insert(0,pluginsdir)
+        if  os.path.isfile(pluginsdir + '/falconwifi.py'):
             from falconwifidialogs import AdvancedScanDialog
             hasFalcon = True
             
