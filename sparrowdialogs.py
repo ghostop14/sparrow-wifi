@@ -20,7 +20,7 @@
 
 from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QApplication, QLabel, QComboBox, QLineEdit, QPushButton
 from PyQt5.QtWidgets  import QFileDialog, QSpinBox, QDesktopWidget, QMessageBox, QTableWidget, QHeaderView,QTableWidgetItem,  QMenu, QAction
-from sparrowtablewidgets import DateTableWidgetItem, FloatTableWidgetItem
+from sparrowtablewidgets import DateTableWidgetItem, FloatTableWidgetItem, IntTableWidgetItem
 from PyQt5.QtCore import Qt,QTimer
 from PyQt5 import QtCore
 

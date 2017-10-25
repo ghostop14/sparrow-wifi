@@ -1435,7 +1435,7 @@ class mainWindow(QMainWindow):
                             self.networkTable.item(curRow, 6).setText(str(curNet.frequency))
                             self.networkTable.item(curRow, 7).setText(str(curNet.signal))
                             
-                            if FromAdvanced:
+                            if not FromAdvanced:
                                 # There are some fields that are not passed forward, so if we already have them we don't want to overwrite them
                                 curNet.bandwidth = curData.bandwidth
                                 curNet.secondaryChannel = curData.secondaryChannel
@@ -1449,7 +1449,8 @@ class mainWindow(QMainWindow):
                             curNet.firstSeen = curData.firstSeen # This is one field to carry forward
                             
                             # Check strongest signal
-                            if curData.strongestsignal > curNet.signal:
+                            # If we have a stronger signal, or we have an equal signal but we now have GPS
+                            if curData.strongestsignal > curNet.signal or (curData.strongestsignal == curNet.signal and curData.gps.isValid and (not curNet.strongestgps.isValid)):
                                 curNet.strongestsignal = curData.signal
                                 curNet.strongestgps.latitude = curData.gps.latitude
                                 curNet.strongestgps.longitude = curData.gps.longitude
