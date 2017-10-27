@@ -28,6 +28,7 @@ class MapMarker(object):
         self.latitude = 0.0
         self.longitude = 0.0
         self.label = ""
+        self.labels = []
         self.barCount = 4
         
     def __str__(self):
@@ -37,6 +38,36 @@ class MapMarker(object):
         retVal += 'Label: ' + self.label + '\n'
         retVal += 'Bar Count: ' + str(self.barCount) + '\n'
         return retVal
+        
+    def getKey(self):
+        return str(self.latitude) + ',' + str(self.longitude)
+        
+    def addLabel(self, newLabel):
+        self.labels.append(newLabel)
+        
+    def getLabel(self, maxSimultaneous=3):
+        if len(self.labels) == 0:
+            return self.label
+        else:
+            if len(self.labels) <= maxSimultaneous:
+                retVal = ""
+                for curLabel in self.labels:
+                    if len(retVal) == 0:
+                        retVal = curLabel
+                    else:
+                        retVal += "," + curLabel
+                return retVal
+            else:
+                # Too many
+                retVal = '['+str(len(self.labels))+' entries] ' + str(self.latitude) + ',' + str(self.longitude)
+                
+                return retVal
+        
+    def atCoordinates(self, latitude, longitude):
+        if self.latitude == latitude and self.longitude == longitude:
+            return True
+        else:
+            return False
         
 # ------------------  Google Map Generator  ------------------------------
 class MapEngine(object):
@@ -154,10 +185,10 @@ class MapEngine(object):
             htmlString +='		var latlng = new google.maps.LatLng(' + str(curMarker.latitude) + ', ' + str(curMarker.longitude) + ');\n'
             # htmlString +="		var img = new google.maps.MarkerImage('/usr/local/lib/python3.5/dist-packages/gmplot/markers/32CD32.png');\n"
             htmlString +='		var marker = new google.maps.Marker({\n'
-            htmlString +='		title: "' + curMarker.label + '",\n'
-            if (len(curMarker.label) > 0):
+            htmlString +='		title: "' + curMarker.getLabel() + '",\n'
+            if (len(curMarker.getLabel()) > 0):
                 htmlString +='		label: {\n'
-                htmlString +='		        text: "' + curMarker.label + '",\n'
+                htmlString +='		        text: "' + curMarker.getLabel() + '",\n'
                 htmlString +="		        color: '" + labelColor+ "',\n"
                 htmlString +='		},\n'
             # htmlString +='		icon: img,\n'

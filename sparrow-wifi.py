@@ -957,6 +957,7 @@ class mainWindow(QMainWindow):
             QMessageBox.question(self, 'Error',"Please provide an output file.", QMessageBox.Ok)
             return
             
+        markerDict = {}
         markers = []
         
         # Range goes to last # - 1
@@ -997,9 +998,23 @@ class mainWindow(QMainWindow):
                         newMarker.longitude = 0.0
                         
                     newMarker.barCount = WirelessEngine.getSignalQualityFromDB0To5(curData.signal)
-                    
-                markers.append(newMarker)
-                    
+                
+                markerKey = newMarker.getKey()
+                if markerKey in markerDict:
+                    curMarker = markerDict[markerKey]
+                    curMarker.addLabel(newMarker.label)
+                    if curMarker.barCount > newMarker.barCount:
+                        curMarker.barCount = newMarker.barCount
+                else:
+                    # Move label to list
+                    newMarker.addLabel(newMarker.label)
+                    newMarker.label = ''
+                    markerDict[markerKey] = newMarker
+
+        # Now send consolidated list
+        for curKey in markerDict.keys():
+            markers.append(markerDict[curKey])
+        
         if len(markers) > 0:
             retVal = MapEngine.createMap(mapSettings.outputfile,mapSettings.title,markers, connectMarkers=False, openWhenDone=True, mapType=mapSettings.mapType)
             
