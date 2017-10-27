@@ -329,7 +329,7 @@ class WirelessNetwork(object):
         return dictjson
         
     def toJson(self):
-        dictjson = self.tojsondict()
+        dictjson = self.toJsondict()
         return json.dumps(dictjson)
         
     def getChannelString(self):
@@ -491,7 +491,7 @@ class WirelessEngine(object):
         for curKey in wirelessNetworks.keys():
             curNet = wirelessNetworks[curKey]
             if gpsData is not None:
-                curNet.gps = gpsData
+                curNet.gps.copy(gpsData)
             netList.append(curNet.toJsondict())
             
         gpsdict = {}
@@ -499,7 +499,7 @@ class WirelessEngine(object):
         if (gpsData is None):
             gpsloc = SparrowGPS()
         else:
-            gpsloc = gpsData
+            gpsloc.copy(gpsData)
         
         gpsdict['latitude'] = gpsloc.latitude
         gpsdict['longitude'] = gpsloc.longitude

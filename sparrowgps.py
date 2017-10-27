@@ -120,6 +120,13 @@ class SparrowGPS(object):
 
     def __ne__(self, other):
             return not self.__eq__(other)
+            
+    def copy(self, other):
+        self.latitude = other.latitude
+        self.longitude = other.longitude
+        self.altitude = other.altitude
+        self.speed = other.speed
+        self.isValid = other.isValid
         
 class GPSStatus(object):
     def __init__(self):

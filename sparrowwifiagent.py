@@ -48,10 +48,17 @@ useMavlink = False
 vehicle = None
 mavlinkGPSThread = None
 
+# Lock list is a dictionary of thread locks for scanning interfaces
 lockList = {}
 
 allowedIPs = []
 useRPILeds = False
+
+# runningcfg is created in main
+runningcfg = None
+
+recordThread = None
+announceThread = None
 
 # ------   Global functions ------------
 def stringtobool(instr):
@@ -66,6 +73,116 @@ def TwoDigits(instr):
         instr = '0' + instr
         
     return instr
+
+def updateRunningConfig(newCfg):
+    global runningcfg
+    
+    if runningcfg.newCfg.ipAllowedList != newCfg.ipAllowedList:
+        buildAllowedIPs(newCfg.ipAllowedList)
+        
+    # port we ignore since we're already running
+    # useRPiLEDs will just update
+    
+    # Announce
+    if runningcfg.announce != newCfg.announce:
+        if not newCfg.announce:
+            stopAnnounceThread()
+        else:
+            # start will check if it's already running
+            startAnnounceThread()
+    
+    # mavlinkGPS
+    
+    # recordInterface
+    if runningcfg.recordInterface != newCfg.recordInterface:
+        if len(newCfg.recordInterface) == 0:
+            stopRecord(newCfg.recordInterface)
+        else:
+            # start will check if it's already running
+            startRecord()
+            
+    # Finally swap out the config
+    runningcfg = newCfg
+
+def startRecord(interface):    
+    global recordThread
+    
+    if recordThread:
+        return
+        
+    if len(interface) > 0:
+        recordThread = AutoAgentScanThread(interface)
+        recordThread.start()
+    else:
+        recordThread = None
+        
+def stopRecord():
+    global recordThread
+    
+    if recordThread:
+        recordThread.signalStop = True
+        print('Waiting for record thread to terminate...')
+        while (recordThread.threadRunning):
+            sleep(0.2)
+            
+def stopAnnounceThread():
+    global announceThread
+    
+    if announceThread:
+        announceThread.signalStop = True
+        
+        print('Waiting for announce thread to terminate...')
+        while (announceThread.threadRunning):
+            sleep(0.2)
+            
+        announceThread = None
+
+def startAnnounceThread():
+    global runningcfg
+    global announceThread
+    
+    # Start announce if needed
+    if announceThread:
+        # It's already running
+        return
+        
+    print('Sending agent announcements on port ' + str(runningcfg.port) + '.')
+    announceThread = AnnounceThread(runningcfg.port)
+    announceThread.start()
+
+def buildAllowedIPs(allowedIPstr):
+    global allowedIPs
+
+    allowedIPs = []
+    
+    if len(allowedIPstr) > 0:
+        ippattern = re.compile('([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})')
+        if ',' in allowedIPstr:
+            tmpList = allowedIPstr.split(',')
+            for curItem in tmpList:
+                ipStr = curItem.replace(' ', '')
+                try:
+                    ipValue = ippattern.search(ipStr).group(1)
+                except:
+                    ipValue = ""
+                    print('ERROR: Unknown IP pattern: ' + ipStr)
+                    exit(3)
+                
+                if len(ipValue) > 0:
+                    allowedIPs.append(ipValue)
+        else:
+            ipStr = allowedIPstr.replace(' ', '')
+            try:
+                ipValue = ippattern.search(ipStr).group(1)
+            except:
+                ipValue = ""
+                print('ERROR: Unknown IP pattern: ' + ipStr)
+                return False
+                
+            if len(ipValue) > 0:
+                allowedIPs.append(ipValue)
+        
+    return True
     
 # ------   OUI lookup functions ------------
 def getOUIDB():
@@ -95,6 +212,139 @@ def getOUIDB():
         ouidb = None
         
     return ouidb
+
+# ------------------  Config Settings  ------------------------------
+class AgentConfigSettings(object):
+    def __init__(self):
+        self.cancelStart = False
+        self.port = 8020
+        self.announce = False
+        self.useRPiLEDs = False
+        self.recordInterface=""
+        self.mavlinkGPS = ""
+        self.ipAllowedList = ""
+        
+    def __str__(self):
+        retVal = "Cancel Start: " + str(self.cancelStart) + "\n"
+        retVal += "Port: " + str(self.port) + "\n"
+        retVal += "Announce Agent: " + str(self.announce) + "\n"
+        retVal += "Use RPi LEDs: " + str(self.useRPiLEDs) + "\n"
+        retVal += "Record Interface: " + self.recordInterface + "\n"
+        retVal += "Mavlink GPS: " + self.mavlinkGPS + "\n"
+        retVal += "IP Allowed List: " + self.ipAllowedList + "\n"
+        
+        return retVal
+        
+    def __eq__(self, obj):
+        # This is equivance....   ==
+        if not isinstance(obj, AgentConfigSettings):
+           return False
+          
+        if self.cancelStart != obj.cancelStart:
+            return False
+        if self.port != obj.port:
+            return False
+
+        if self.announce != obj.announce:
+            return False
+            
+        if self.useRPiLEDs != obj.useRPiLEDs:
+            return False
+            
+        if self.recordInterface != obj.recordInterface:
+            return False
+            
+        if self.mavlinkGPS != obj.mavlinkGPS:
+            return False
+            
+        if self.ipAllowedList != obj.ipAllowedList:
+            return False
+            
+        return True
+
+    def __ne__(self, other):
+            return not self.__eq__(other)
+        
+    def toJsondict(self):
+        dictjson = {}
+        dictjson['cancelstart'] = str(self.cancelStart)
+        dictjson['port'] = self.port
+        dictjson['announce'] = str(self.announce)
+        dictjson['userpileds'] = str(self.useRPiLEDs)
+        dictjson['recordinterface'] = self.recordInterface
+        dictjson['mavlinkgps'] = self.mavlinkGPS
+        dictjson['allowedips'] = self.ipAllowedList
+                
+        return dictjson
+        
+    def toJson(self):
+        dictjson = self.toJsondict()
+        return json.dumps(dictjson)
+    
+    def fromJsondict(self, dictjson):
+        try:
+            self.cancelStart = stringtobool(dictjson['cancelstart'])
+            self.port = int(dictjson['port'])
+            self.announce = stringtobool(dictjson['announce'])
+            self.useRPiLEDs = stringtobool(dictjson['userpileds'])
+            self.recordInterface = dictjson['recordinterface']
+            self.mavlinkGPS = dictjson['mavlinkgps']
+            self.ipAllowedList = dictjson['allowedips']
+        except:
+            pass
+            
+    def fromJson(self, jsonstr):
+        dictjson = json.loads(jsonstr)
+        self.fromJsondict(dictjson)
+
+    def toConfigFile(self, cfgFile):
+        config = configparser.ConfigParser()
+        
+        config['agent'] = self.toJsondict()
+        
+        try:
+            with open(cfgFile, 'w') as configfile:
+                config.write(configfile)
+                
+            return True
+        except:
+            return False
+            
+    def fromConfigFile(self, cfgFile):
+        if os.path.isfile(cfgFile):
+            cfgParser = configparser.ConfigParser()
+            
+            try:
+                cfgParser.read(cfgFile)
+                
+                section="agent"
+                options = cfgParser.options(section)
+                for option in options:
+                    try:
+                        if option =='cancelstart':
+                            self.cancelStart = stringtobool(cfgParser.get(section, option))
+                        elif option == 'sendannounce':
+                            self.announce = stringtobool(cfgParser.get(section, option))
+                        elif option == 'userpileds':
+                            self.useRPiLEDs = stringtobool(cfgParser.get(section, option))
+                        elif option == 'port':
+                            self.port=int(cfgParser.get(section, option))
+                        elif option == 'recordinterface':
+                            self.recordInterface=cfgParser.get(section, option)
+                        elif option == 'mavlinkgps':
+                            self.mavlinkGPS=cfgParser.get(section, option)
+                        elif option == 'allowedips':
+                            self.self.ipAllowedList = cfgParser.get(section, option)
+                    except:
+                        print("exception on %s!" % option)
+                        settings[option] = None
+            except:
+                print("ERROR: Unable to read config file: ", cfgFile)
+                return False
+        else:
+            return False
+            
+        return True
     
 # ------------------  Agent auto scan thread  ------------------------------
 class AutoAgentScanThread(Thread):
@@ -312,6 +562,34 @@ class MavlinkGPSThread(Thread):
                     
         self.threadRunning = False
 
+class SparrowWiFiAgent(object):
+    # See https://docs.python.org/3/library/http.server.html
+    # For HTTP Server info
+    def run(self, port):
+        global useRPILeds
+        
+        server_address = ('', port)
+        httpd = HTTPServer.HTTPServer(server_address, SparrowWiFiAgentRequestHandler)
+        
+        curTime = datetime.datetime.now()
+        print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] Starting Sparrow-wifi agent on port " + str(port))
+
+        if useRPILeds:
+            SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_ON)
+            
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            pass
+    
+        httpd.server_close()
+        
+        if useRPILeds:
+            SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_OFF)
+            
+        curTime = datetime.datetime.now()
+        print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] Sparrow-wifi agent stopped.")
+
 # ---------------  HTTP Request Handler --------------------
 # Sample handler: https://wiki.python.org/moin/BaseHttpServer
 class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
@@ -320,12 +598,92 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
         s.send_header("Content-type", "text/html")
         s.end_headers()
 
+    def do_POST(s):
+        global runningcfg
+        
+        if len(s.client_address) == 0:
+            # This should have the connecting client IP.  If this isn't at least 1, something is wrong
+            return
+        
+        if len(allowedIPs) > 0:
+            if s.client_address[0] not in allowedIPs:
+                s.send_response(403)
+                s.send_header("Content-type", "text/html")
+                s.end_headers()
+                s.wfile.write("<html><body><p>Connections not authorized from your IP address</p>".encode("utf-8"))
+                s.wfile.write("</body></html>".encode("UTF-8"))
+                return
+                
+        if (s.path != '/system/config'):
+            s.send_response(404)
+            s.send_header("Content-type", "text/html")
+            s.end_headers()
+            s.wfile.write("<html><body><p>Bad Request</p>".encode("utf-8"))
+            s.wfile.write("</body></html>".encode("UTF-8"))
+            return
+            
+        try:
+            length = int(s.headers['Content-Length'])
+        except:
+            length = 0
+            
+        if length <= 0:
+            s.send_response(404)
+            s.send_header("Content-type", "text/html")
+            s.end_headers()
+            s.wfile.write("<html><body><p>Bad Request (zero-length post)</p>".encode("utf-8"))
+            s.wfile.write("</body></html>".encode("UTF-8"))
+            return
+            
+        jsonstr_data = s.rfile.read(length).decode('utf-8')
+        
+        try:
+            jsondata = json.loads(jsonstr_data)
+        except:
+            return
+            
+        try:
+            scfg = jsondata['startup']
+            startupCfg = AgentConfigSettings()
+            startupCfg.fromJsondict(scfg)
+            
+            dirname, filename = os.path.split(os.path.abspath(__file__))
+            cfgFile = dirname + '/sparrowwifiagent.cfg'
+            retVal = startupCfg.toConfigFile(cfgFile)
+            
+            if not retVal:
+                s.send_response(404)
+                s.send_header("Content-type", "text/html")
+                s.end_headers()
+                s.wfile.write("<html><body><p>An error occurred saving the startup config.</p>".encode("utf-8"))
+                s.wfile.write("</body></html>".encode("UTF-8"))
+        except:
+            s.send_response(404)
+            s.send_header("Content-type", "text/html")
+            s.end_headers()
+            s.wfile.write("<html><body><p>Bad startup config</p>".encode("utf-8"))
+            s.wfile.write("</body></html>".encode("UTF-8"))
+            
+        try:
+            rcfg = jsondata['running']
+            tmpcfg = AgentConfigSettings()
+            tmpcfg.fromJsondict(rcfg)
+            
+            updateRunningConfig(tmpcfg)
+        except:
+            s.send_response(404)
+            s.send_header("Content-type", "text/html")
+            s.end_headers()
+            s.wfile.write("<html><body><p>Bad running config</p>".encode("utf-8"))
+            s.wfile.write("</body></html>".encode("UTF-8"))
+        
     def do_GET(s):
         global gpsEngine
         global useMavlink
         global mavlinkGPSThread
         global lockList
         global allowedIPs
+        global runningcfg
 
         # For RPi LED's, using it during each get request wasn't completely working.  Short transactions like
         # status and interface list were so quick the light would get "confused" and stay off.  So
@@ -347,7 +705,8 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_ON)
                 return
                 
-        if (s.path != '/wireless/interfaces') and (s.path != '/gps/status') and ('/wireless/networks/' not in s.path):
+        if ((s.path != '/wireless/interfaces') and (s.path != '/gps/status') and 
+            ('/wireless/networks/' not in s.path) and ('/system/config' not in s.path)):
             s.send_response(404)
             s.send_header("Content-type", "text/html")
             s.end_headers()
@@ -404,6 +763,16 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 jsondict['gpspos'] = gpsPos
                 
             jsonstr = json.dumps(jsondict)
+            s.wfile.write(jsonstr.encode("UTF-8"))
+        elif s.path == '/system/config':
+            cfgSettings = AgentConfigSettings()
+            cfgSettings.fromConfigFile('sparrowwifiagent.cfg')
+            responsedict = {}
+            responsedict['startup'] = cfgSettings.toJsondict()
+            
+            responsedict['running'] = runningcfg.toJsondict()
+            
+            jsonstr = json.dumps(responsedict)
             s.wfile.write(jsonstr.encode("UTF-8"))
         elif '/wireless/networks/' in s.path:
             inputstr = s.path.replace('/wireless/networks/', '')
@@ -490,34 +859,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
             # Green will heartbeat when servicing requests. Turn back solid here
             SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_ON)
 
-class SparrowWiFiAgent(object):
-    # See https://docs.python.org/3/library/http.server.html
-    # For HTTP Server info
-    def run(self, port):
-        global useRPILeds
-        
-        server_address = ('', port)
-        httpd = HTTPServer.HTTPServer(server_address, SparrowWiFiAgentRequestHandler)
-        
-        curTime = datetime.datetime.now()
-        print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] Starting Sparrow-wifi agent on port " + str(port))
-
-        if useRPILeds:
-            SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_ON)
-            
-        try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            pass
-    
-        httpd.server_close()
-        
-        if useRPILeds:
-            SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_OFF)
-            
-        curTime = datetime.datetime.now()
-        print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] Sparrow-wifi agent stopped.")
-        
+# ----------------- Main -----------------------------
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description='Sparrow-wifi agent')
     argparser.add_argument('--port', help='Port for HTTP server to listen on', default=8020, required=False)
@@ -538,6 +880,7 @@ if __name__ == '__main__':
     dirname, filename = os.path.split(os.path.abspath(__file__))
     
     settings = {}
+    runningcfg=AgentConfigSettings()
 
     if len(args.cfgfile) == 0:
         cfgFile = dirname + '/sparrowwifiagent.cfg'
@@ -575,103 +918,92 @@ if __name__ == '__main__':
         if settings['cancelstart']:
             exit(0)
 
+    runningcfg.cancelStart = False
+    
     if 'port' not in settings.keys():
         port = args.port
     else:
         port = int(settings['port'])
+    
+    runningcfg.port = port
     
     if 'sendannounce' not in settings.keys():
         sendannounce = args.sendannounce
     else:
         sendannounce = settings['sendannounce']
     
+    runningcfg.announce = sendannounce
+    
     if 'userpileds' not in settings.keys():
         useRPILeds = args.userpileds
     else:
         useRPILeds = settings['userpileds']
+    
+    runningcfg.useRPiLEDs = useRPILeds
     
     if 'allowedips' not in settings.keys():
         allowedIPstr = args.allowedips
     else:
         allowedIPstr = settings['allowedips']
     
+    runningcfg.ipAllowedList = allowedIPstr
+    
     if 'mavlinkgps' not in settings.keys():
         mavlinksetting = args.mavlinkgps
     else:
         mavlinksetting = settings['mavlinkgps']
 
-    if 'mavlinkgps' not in settings.keys():
+    runningcfg.mavlinkGPS = mavlinksetting
+    
+    if 'recordinterface' not in settings.keys():
         recordinterface = args.recordinterface
     else:
         recordinterface = settings['recordinterface']
-        
+    
+    runningcfg.recordInterface = recordinterface
+    
     # Now start logic
     
-    if useRPILeds:
+    if runningcfg.useRPiLEDs:
         # One extra check that the LED's are really present
-        useRPILeds = SparrowRPi.hasLights()
+        runningcfg.useRPiLEDs = SparrowRPi.hasLights()
         
-        if not useRPILeds:
+        if not runningcfg.useRPiLEDs:
             # we changed state.  Print warning
             print('WARNING: RPi LEDs were requested but were not found on this platform.')
         
     # Now check again:
-    if useRPILeds:
+    if runningcfg.useRPiLEDs:
         SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_OFF)
         SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_OFF)
-        
-    if len(allowedIPstr) > 0:
-        ippattern = re.compile('([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})')
-        if ',' in allowedIPstr:
-            tmpList = allowedIPstr.split(',')
-            for curItem in tmpList:
-                ipStr = curItem.replace(' ', '')
-                try:
-                    ipValue = ippattern.search(ipStr).group(1)
-                except:
-                    ipValue = ""
-                    print('ERROR: Unknown IP pattern: ' + ipStr)
-                    exit(3)
-                
-                if len(ipValue) > 0:
-                    allowedIPs.append(ipValue)
-        else:
-            ipStr = allowedIPstr.replace(' ', '')
-            try:
-                ipValue = ippattern.search(ipStr).group(1)
-            except:
-                ipValue = ""
-                print('ERROR: Unknown IP pattern: ' + ipStr)
-                exit(3)
-                
-            if len(ipValue) > 0:
-                allowedIPs.append(ipValue)
-            
-    if len(mavlinksetting) > 0:
+
+    buildAllowedIPs(allowedIPstr)
+    
+    if len(runningcfg.mavlinkGPS) > 0:
         vehicle = SparrowDroneMavlink()
         
-        print('Connecting to ' + mavlinksetting)
+        print('Connecting to ' + runningcfg.mavlinkGPS)
 
         connected = False
         synchronized = False
 
-        if useRPILeds:
+        if runningcfg.useRPiLEDs:
             SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_OFF)
             
         # If we're in drone gps mode, wait for the drone to be up and gps synchronized before starting.
         while (not connected) or (not synchronized):
             if not connected:
-                if mavlinksetting == '3dr':
+                if runningcfg.mavlinkGPS == '3dr':
                     retVal = vehicle.connectToSolo()
-                elif (mavlinksetting == 'sitl'):
+                elif (runningcfg.mavlinkGPS == 'sitl'):
                     retVal = vehicle.connectToSimulator()
                 else:
-                    retVal = vehicle.connect(mavlinksetting)
+                    retVal = vehicle.connect(runningcfg.mavlinkGPS)
                     
                 connected = retVal
 
             if connected:
-                if useRPILeds:
+                if runningcfg.useRPiLEDs:
                     SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_HEARTBEAT)
                     
                 print('Mavlink connected.')
@@ -698,12 +1030,12 @@ if __name__ == '__main__':
                 print("ERROR: Unable to connect to " + mavlinksetting + '.  Retrying...')
                 sleep(2)
 
-            if useRPILeds:
+            if runningcfg.useRPiLEDs:
                 SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)
     else:
         # No mavlink specified.  Check the local GPS.
         if GPSEngine.GPSDRunning():
-            if useRPILeds:
+            if runningcfg.useRPiLEDs:
                 SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_HEARTBEAT)
                 
             gpsEngine.start()
@@ -716,25 +1048,15 @@ if __name__ == '__main__':
         else:
             print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] No local gpsd running.  No GPS data will be provided.")
 
-    # Start announce if needed
-    announceThread = None
-    
-    if sendannounce:
-        print('Sending agent announcements on port ' + str(port) + '.')
-        announceThread = AnnounceThread(port)
-        announceThread.start()
-    else:
-        announceThread = None
+    if runningcfg.announce:
+        startAnnounceThread()
 
-    if len(recordinterface) > 0:
-        recordThread = AutoAgentScanThread(recordinterface)
-        recordThread.start()
-    else:
-        recordThread = None
-        
+    if len(runningcfg.recordInterface) > 0:
+        startRecord(runningcfg.recordInterface)
+
     # Run HTTP Server
     server = SparrowWiFiAgent()
-    server.run(port)
+    server.run(runningcfg.port)
     
     if mavlinkGPSThread:
         mavlinkGPSThread.signalStop = True
@@ -742,22 +1064,13 @@ if __name__ == '__main__':
         while (mavlinkGPSThread.threadRunning):
             sleep(0.2)
 
-    if recordThread:
-        recordThread.signalStop = True
-        print('Waiting for record thread to terminate...')
-        while (recordThread.threadRunning):
-            sleep(0.2)
+    stopRecord()
         
     if useMavlink and vehicle:
         vehicle.close()
-        
-    if announceThread:
-        announceThread.signalStop = True
-        
-        print('Waiting for announce thread to terminate...')
-        while (announceThread.threadRunning):
-            sleep(0.2)
 
-    if useRPILeds:
+    stopAnnounceThread()
+    
+    if runningcfg.useRPiLEDs:
         SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_OFF)
         SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)

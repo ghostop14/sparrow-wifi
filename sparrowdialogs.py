@@ -28,11 +28,58 @@ from socket import *
 import datetime
 from threading import Thread
 from time import sleep
+import requests
+import json
+import re
+
 from sparrowmap import MapEngine
 
-# Example dialog:
-# https://stackoverflow.com/questions/18196799/how-can-i-show-a-pyqt-modal-dialog-and-get-data-out-of-its-controls-once-its-clo
+# ------------------  Global functions for agent HTTP requests ------------------------------
+def makeGetRequest(url):
+    try:
+        response = requests.get(url)
+    except:
+        return -1, ""
+        
+    if response.status_code != 200:
+        return response.status_code, ""
+        
+    htmlResponse=response.text
+    return response.status_code, htmlResponse
 
+def makePostRequest(url, jsonstr):
+        # use something like jsonstr = json.dumps(somestring) to get the right format
+        try:
+            response = requests.post(url, data=jsonstr)
+        except:
+            return -1, ""
+        
+        htmlResponse=response.text
+        return response.status_code, htmlResponse
+        
+def updateRemoteConfig(remoteIP, remotePort, startupCfg, runningCfg):
+    url = "http://" + remoteIP + ":" + str(remotePort) + "/system/config"
+    
+    cfgdict = {}
+    cfgdict['startup'] = startupCfg.toJsondict()
+    cfgdict['running'] = runningCfg.toJsondict()
+    
+    jsonstr = json.dumps(cfgdict)
+    statusCode, responsestr = makePostRequest(url, jsonstr)
+    
+    if statusCode == 200:
+        return 0, ""
+    else:
+        # This should never happen
+        if len(responsestr) == 0:
+            errmsg = "Error updating remote agent.  Is it still running?"
+        else:
+            errmsg = "Error updating remote agent:" + responsestr
+            
+        return -1, errmsg
+
+#  -----------  DB Settings ----------------------------
+# Note: This is not used in the main GUI
 class DBSettings(object):
     SQLITE = 1
     POSTGRES = 2
@@ -677,7 +724,6 @@ class GPSCoordDIalog(QDialog):
         self.lastGPS = None
         self.firstUpdate = True
         
-        # Map Type droplist
         self.lblMsg = QLabel("Newest coordinates are at the top", self)
         self.lblMsg.move(10, 20)
 
@@ -814,6 +860,304 @@ class GPSCoordDIalog(QDialog):
             if not self.gpsTimer.isActive():
                 self.gpsTimer.start(self.gpsTimerTimeout)
             
+# ------------------  Agent Configuration  ------------------------------
+class AgentConfigDialog(QDialog):
+    def __init__(self, startupCfg, runningCfg, agentIP='127.0.0.1', agentPort=8020,parent = None):
+        super(AgentConfigDialog,  self).__init__(parent)
+
+        self.agentIP = agentIP
+        self.agentPort = agentPort
+        
+        agentString = agentIP + ":" + str(agentPort)
+        
+        self.startupCfg = startupCfg
+        self.runningCfg = runningCfg
+        
+        self.lblMsg = QLabel("Startup", self)
+        self.lblMsg.move(120, 20)
+        self.lblMsg = QLabel("Running", self)
+        self.lblMsg.move(250, 20)
+
+
+        # Cancel Startup Controls
+        self.lblMsg = QLabel("Cancel Startup:", self)
+        self.lblMsg.move(10, 50)
+
+        self.comboCancelStartupCfgFile = QComboBox(self)
+        self.comboCancelStartupCfgFile.move(118, 45)
+        self.comboCancelStartupCfgFile.addItem("Yes")
+        self.comboCancelStartupCfgFile.addItem("No")
+        
+        if startupCfg.cancelStart:
+            self.comboCancelStartupCfgFile.setCurrentIndex(0)
+        else:
+            self.comboCancelStartupCfgFile.setCurrentIndex(1)
+        
+        # Port controls
+        self.lblPort = QLabel("Port: ", self)
+        self.lblPort.move(10, 90)
+        self.spinPortStartup = QSpinBox(self)
+        self.spinPortStartup.move(118, 85)
+        self.spinPortStartup.setRange(1, 65535)
+        self.spinPortStartup.setValue(startupCfg.port)
+        
+        self.spinPortRunning = QSpinBox(self)
+        self.spinPortRunning.move(250, 85)
+        self.spinPortRunning.setRange(1, 65535)
+        self.spinPortRunning.setValue(runningCfg.port)
+        self.spinPortRunning.setEnabled(False)
+        
+        # Announce controls
+        self.lblMsg = QLabel("Announce Agent:", self)
+        self.lblMsg.move(10, 130)
+
+        self.comboSendAnnouncementsStartup = QComboBox(self)
+        self.comboSendAnnouncementsStartup.move(118, 125)
+        self.comboSendAnnouncementsStartup.addItem("Yes")
+        self.comboSendAnnouncementsStartup.addItem("No")
+        
+        if startupCfg.announce:
+            self.comboSendAnnouncementsStartup.setCurrentIndex(0)
+        else:
+            self.comboSendAnnouncementsStartup.setCurrentIndex(1)
+        
+        self.comboSendAnnouncementsRunning = QComboBox(self)
+        self.comboSendAnnouncementsRunning.move(250, 125)
+        self.comboSendAnnouncementsRunning.addItem("Yes")
+        self.comboSendAnnouncementsRunning.addItem("No")
+        
+        if runningCfg.announce:
+            self.comboSendAnnouncementsRunning.setCurrentIndex(0)
+        else:
+            self.comboSendAnnouncementsRunning.setCurrentIndex(1)
+        
+        # RPi LEDs
+        self.lblMsg = QLabel("Use RPi LEDs:", self)
+        self.lblMsg.move(10, 170)
+
+        self.comboRPiLEDsStartup = QComboBox(self)
+        self.comboRPiLEDsStartup.move(118, 165)
+        self.comboRPiLEDsStartup.addItem("Yes")
+        self.comboRPiLEDsStartup.addItem("No")
+        
+        if startupCfg.useRPiLEDs:
+            self.comboRPiLEDsStartup.setCurrentIndex(0)
+        else:
+            self.comboRPiLEDsStartup.setCurrentIndex(1)
+        
+        self.comboRPiLEDsRunning = QComboBox(self)
+        self.comboRPiLEDsRunning.move(250, 165)
+        self.comboRPiLEDsRunning.addItem("Yes")
+        self.comboRPiLEDsRunning.addItem("No")
+        
+        if runningCfg.useRPiLEDs:
+            self.comboRPiLEDsRunning.setCurrentIndex(0)
+        else:
+            self.comboRPiLEDsRunning.setCurrentIndex(1)
+        
+        # Record on Startup
+        self.lblMsg = QLabel("Record Local:", self)
+        self.lblMsg.move(10, 210)
+
+        self.comboRecordStartup = QComboBox(self)
+        self.comboRecordStartup.move(118, 205)
+        self.comboRecordStartup.addItem("Yes")
+        self.comboRecordStartup.addItem("No")
+        
+        self.btnRecordStartStop = QPushButton("Start", self)
+        self.btnRecordStartStop.move(250, 205)
+        self.btnRecordStartStop.clicked.connect(self.onStartStopRecord)
+        
+        if len(startupCfg.recordInterface) > 0:
+            self.comboRecordStartup.setCurrentIndex(0)
+            self.btnRecordStartStop.setText('Stop')
+        else:
+            self.comboRecordStartup.setCurrentIndex(1)
+        
+        # Record Interface
+        self.lblMsg = QLabel("Record Interface:", self)
+        self.lblMsg.move(10, 250)
+
+        self.recordInterfaceStartup = QLineEdit(self)
+        self.recordInterfaceStartup.setGeometry(118, 245, 100, 25)
+        self.recordInterfaceStartup.setText(startupCfg.recordInterface)
+        
+        self.recordInterfaceRunning = QLineEdit(self)
+        self.recordInterfaceRunning.setGeometry(250, 245, 100, 25)
+        self.recordInterfaceRunning.setText(runningCfg.recordInterface)
+        if self.btnRecordStartStop.text() == 'Stop':
+            self.recordInterfaceRunning.setEnabled(False)
+        
+        # Mavlink GPS
+        self.lblMsg = QLabel("Mavlink GPS:", self)
+        self.lblMsg.move(10, 290)
+
+        self.mavlinkGPSStartup = QLineEdit(self)
+        self.mavlinkGPSStartup.setGeometry(118, 285, 100, 25)
+        self.mavlinkGPSStartup.setText(startupCfg.mavlinkGPS)
+        
+        self.mavlinkGPSRunning = QLineEdit(self)
+        self.mavlinkGPSRunning.setGeometry(250, 285, 100, 25)
+        self.mavlinkGPSRunning.setText(runningCfg.mavlinkGPS)
+        
+        self.btnChangeGPS = QPushButton("Update Running", self)
+        self.btnChangeGPS.move(370, 285)
+        self.btnChangeGPS.clicked.connect(self.onChangeGPS)
+        
+        # IP Allow List
+        self.lblMsg = QLabel("IP Allow List:", self)
+        self.lblMsg.move(10, 330)
+
+        self.ipAllowStartup = QLineEdit(self)
+        self.ipAllowStartup.setGeometry(118, 325, 100, 25)
+        self.ipAllowStartup.setText(startupCfg.ipAllowedList)
+        
+        self.ipAllowRunning = QLineEdit(self)
+        self.ipAllowRunning.setGeometry(250, 325, 100, 25)
+        self.ipAllowRunning.setText(runningCfg.ipAllowedList)
+        
+        # OK and Cancel buttons
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel,
+            Qt.Horizontal, self)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        buttons.move(170, 390)
+
+        # Window geometry
+        self.setGeometry(self.geometry().x(), self.geometry().y(), 500,440)
+        self.setWindowTitle("Agent Configuration:" + agentString)
+        self.center()
+
+    def comboTrueFalse(self, combo):
+        if combo.currentIndex() == 0:
+            return True
+        else:
+            return False
+    
+    def validateAllowedIPs(self, allowedIPstr):
+        if len(allowedIPstr) > 0:
+            ippattern = re.compile('([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})')
+            if ',' in allowedIPstr:
+                tmpList = allowedIPstr.split(',')
+                for curItem in tmpList:
+                    ipStr = curItem.replace(' ', '')
+                    try:
+                        ipValue = ippattern.search(ipStr).group(1)
+                    except:
+                        QMessageBox.question(self, 'Error','ERROR: Unknown IP pattern: ' + ipStr, QMessageBox.Ok)
+                        return False
+            else:
+                ipStr = allowedIPstr.replace(' ', '')
+                try:
+                    ipValue = ippattern.search(ipStr).group(1)
+                except:
+                    QMessageBox.question(self, 'Error','ERROR: Unknown IP pattern: ' + ipStr, QMessageBox.Ok)
+                    return False
+                    
+        return True
+    
+    def validateMavlink(self, mavlinkstr):
+        if mavlinkstr == '3dr' or mavlinkstr == 'sitl':
+            return True
+            
+        # for the moment we'll assume the user knows how to create a custom mavlink connection string.  I know.....
+        return True
+        
+    def done(self, result):
+        if result == QDialog.Accepted:
+            self.startupCfg.cancelStart = self.comboTrueFalse(self.comboCancelStartupCfgFile)
+            
+            self.startupCfg.announce = self.comboTrueFalse(self.comboSendAnnouncementsStartup)
+            self.runningCfg.announce = self.comboTrueFalse(self.comboSendAnnouncementsRunning)
+            
+            self.startupCfg.port = int(self.spinPortRunning.value())
+            self.runningCfg.port = self.agentPort # Can't change this
+            
+            self.startupCfg.useRPiLEDs = self.comboTrueFalse(self.comboRPiLEDsStartup)
+            self.runningCfg.useRPiLEDs = self.comboTrueFalse(self.comboRPiLEDsRunning)
+            
+            recordOnStartup = self.comboTrueFalse(self.comboRecordStartup)
+            
+            if recordOnStartup:
+                self.startupCfg.recordInterface = self.comboRecordStartup.text()
+            else:
+                self.startupCfg.recordInterface = ""
+                
+            self.runningCfg.recordInterface = self.recordInterfaceRunning.text()
+            
+            mavlinkstr = self.mavlinkGPSStartup.text().replace(' ', '')
+            
+            if not self.validateMavlink(mavlinkstr):
+                return
+                
+            self.startupCfg.mavlinkGPS = mavlinkstr
+
+            mavlinkstr = self.mavlinkGPSRunning.text().replace(' ', '')
+            
+            if not self.validateMavlink(mavlinkstr):
+                return
+            self.runningCfg.mavlinkGPS = mavlinkstr
+            
+            iptext = self.ipAllowStartup.text().replace(' ', '')
+            if not self.validateAllowedIPs(iptext):
+                return
+                
+            self.startupCfg.ipAllowedList = iptext
+            
+            iptext = self.ipAllowRunning.text().replace(' ', '')
+            if not self.validateAllowedIPs(iptext):
+                return
+                
+            self.runningCfg.ipAllowedList = iptext
+            
+            # Transmit updates here and notify the user if anything went wrong
+            retVal, errmsg = updateRemoteConfig(self.agentIP, self.agentPort, self.startupCfg, self.runningCfg)
+
+            if retVal != 0:
+                QMessageBox.question(self, 'Error',errmsg, QMessageBox.Ok)
+                return
+                
+        super().done(result)
+    
+    def onChangeGPS(self):
+        pass
+        
+    def onStartStopRecord(self):
+        if self.btnRecordStartStop.text() == 'Stop':
+            # Transition to start
+            self.btnRecordStartStop.setText('Start')
+            self.recordInterfaceRunning.setEnabled(True)
+        else:
+            if len(self.recordInterfaceRunning.text()) == 0:
+                QMessageBox.question(self, 'Error',"Please provide a valid wireless interface name.", QMessageBox.Ok)
+                return
+
+            # transition to stop
+            self.btnRecordStartStop.setText('Stop')
+            self.recordInterfaceRunning.setEnabled(False)
+        
+    def center(self):
+        # Get our geometry
+        qr = self.frameGeometry()
+        # Find the desktop center point
+        cp = QDesktopWidget().availableGeometry().center()
+        # Move our center point to the desktop center point
+        qr.moveCenter(cp)
+        # Move the top-left point of the application window to the top-left point of the qr rectangle, 
+        # basically centering the window
+        self.move(qr.topLeft())
+        
+    def closeEvent(self, event):
+        event.accept()
+            
+    def resizeEvent(self, event):
+        # self.resized.emit()
+        # self.statusBar().showMessage('Window resized.')
+        # return super(mainWin, self).resizeEvent(event)
+        size = self.geometry()
+
+
 # -------  Main Routine For Debugging-------------------------
 
 if __name__ == '__main__':
@@ -822,7 +1166,12 @@ if __name__ == '__main__':
     #mapSettings, ok = MapSettingsDialog.getSettings()
     # mapSettings, ok = TelemetryMapSettingsDialog.getSettings()
     # agentIP, port, accepted = AgentListenerDialog.getAgent()
-    testWin = GPSCoordDIalog(mainWin=None)
+    # testWin = GPSCoordDIalog(mainWin=None)
+    
+    from sparrowwifiagent import AgentConfigSettings
+    startupCfg = AgentConfigSettings()
+    runningCfg = AgentConfigSettings()
+    testWin = AgentConfigDialog(startupCfg, runningCfg)
     testWin.exec()
     
     app.exec_()

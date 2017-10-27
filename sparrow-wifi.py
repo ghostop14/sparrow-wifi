@@ -47,7 +47,8 @@ from sparrowgps import GPSEngine, GPSStatus, SparrowGPS
 from telemetry import TelemetryDialog
 from sparrowtablewidgets import IntTableWidgetItem, DateTableWidgetItem
 from sparrowmap import MapMarker, MapEngine
-from sparrowdialogs import MapSettingsDialog, TelemetryMapSettingsDialog, AgentListenerDialog, GPSCoordDIalog
+from sparrowdialogs import MapSettingsDialog, TelemetryMapSettingsDialog, AgentListenerDialog, GPSCoordDIalog, AgentConfigDialog
+from sparrowwifiagent import AgentConfigSettings
 
 # There are some "plugins" that are available for addons.  Let's see if they're present
 hasFalcon = False
@@ -106,6 +107,29 @@ def makeGetRequest(url):
         
     htmlResponse=response.text
     return response.status_code, htmlResponse
+
+def requestRemoteConfig(remoteIP, remotePort):
+    url = "http://" + remoteIP + ":" + str(remotePort) + "/system/config"
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        cfgjson = json.loads(responsestr)
+        startupCfg = AgentConfigSettings()
+        runningCfg = AgentConfigSettings()
+        
+        if 'startup' in cfgjson:
+            startupCfg.fromJsondict(cfgjson['startup'])
+        else:
+            return -2, "No startup configuration present in the response", None,  None
+            
+        if 'running' in cfgjson:
+            runningCfg.fromJsondict(cfgjson['running'])
+        else:
+            return -2, "No running configuration present in the response", None,  None
+            
+        return 0, "", startupCfg, runningCfg
+    else:
+        return -1, "Error connecting to remote agent", None, None
 
 def requestRemoteGPS(remoteIP, remotePort):
     url = "http://" + remoteIP + ":" + str(remotePort) + "/gps/status"
@@ -567,16 +591,25 @@ class mainWindow(QMainWindow):
 
         # Agent Menu Items
         helpMenu = menubar.addMenu('&Agent')
-        self.menuRemoteAgent = QAction('Remote Agent', self)        
-        self.menuRemoteAgent.setStatusTip('Remote Agent')
+        self.menuRemoteAgent = QAction('Connect to Remote Agent', self)        
+        self.menuRemoteAgent.setStatusTip('Use a Remote Agent')
         self.menuRemoteAgent.setCheckable(True)
         self.menuRemoteAgent.changed.connect(self.onRemoteAgent)
         helpMenu.addAction(self.menuRemoteAgent)
         
-        self.menuRemoteAgentListener = QAction('Agent Listener', self)        
+        helpMenu.addSeparator()
+        
+        self.menuRemoteAgentListener = QAction('Agent Discovery', self)        
         self.menuRemoteAgentListener.setStatusTip('Listen for remote agents')
         self.menuRemoteAgentListener.triggered.connect(self.onRemoteAgentListener)
         helpMenu.addAction(self.menuRemoteAgentListener)
+        
+        helpMenu.addSeparator()
+        
+        self.menuRemoteAgentConfig = QAction('Agent Configuration', self)        
+        self.menuRemoteAgentConfig.setStatusTip('Configure a remote agent')
+        self.menuRemoteAgentConfig.triggered.connect(self.onRemoteAgentConfig)
+        helpMenu.addAction(self.menuRemoteAgentConfig)
         
         # GPS Menu Items
         gpsMenu = menubar.addMenu('&Geo')
@@ -897,6 +930,7 @@ class mainWindow(QMainWindow):
         rowPosition = self.networkTable.rowCount()
 
         if rowPosition <= 0:
+            QMessageBox.question(self, 'Error',"There's no access points in the table.  Please run a scan first or open a saved scan.", QMessageBox.Ok)
             return
             
         mapSettings, ok = MapSettingsDialog.getSettings()
@@ -1293,8 +1327,8 @@ class mainWindow(QMainWindow):
             if self.gpsSynchronized and (self.gpsEngine.lastCoord is not None) and (self.gpsEngine.lastCoord.isValid):
                 for curKey in wirelessNetworks.keys():
                     curNet = wirelessNetworks[curKey]
-                    curNet.gps = self.gpsEngine.lastCoord
-                    curNet.strongestgps = self.gpsEngine.lastCoord
+                    curNet.gps.copy(self.gpsEngine.lastCoord)
+                    curNet.strongestgps.copy(self.gpsEngine.lastCoord)
         
         if self.menuRemoteAgent.isChecked() or ((not self.menuRemoteAgent.isChecked()) and self.scanRunning):
             # If is to prevent a messaging issue on last iteration
@@ -1450,7 +1484,8 @@ class mainWindow(QMainWindow):
                             
                             # Check strongest signal
                             # If we have a stronger signal, or we have an equal signal but we now have GPS
-                            if curData.strongestsignal > curNet.signal or (curData.strongestsignal == curNet.signal and curData.gps.isValid and (not curNet.strongestgps.isValid)):
+                            # Note the 0.9.  Can be close to store strongest with GPS
+                            if curData.strongestsignal > curNet.signal or (curData.strongestsignal > (curNet.signal*0.9) and curData.gps.isValid and (not curNet.strongestgps.isValid)):
                                 curNet.strongestsignal = curData.signal
                                 curNet.strongestgps.latitude = curData.gps.latitude
                                 curNet.strongestgps.longitude = curData.gps.longitude
@@ -1835,6 +1870,50 @@ class mainWindow(QMainWindow):
             self.agentListenerWindow.close()
             self.agentListenerWindow = None
             
+    def onRemoteAgentConfig(self):
+        text, okPressed = QInputDialog.getText(self, "Remote Agent","Please provide the <IP>:<port> of the remote agent\nor specify 'auto' to launch agent listener\n(auto requires agent to be on the same subnet and started with the --sendannounce flag):", QLineEdit.Normal, "127.0.0.1:8020")
+        if (not okPressed) or text == '':
+            return
+            
+        # Validate the input
+        p = re.compile('^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]{1,5})')
+        specIsGood = True
+        try:
+            agentSpec = p.search(text).group(1)
+            agentIP = agentSpec.split(':')[0]
+            agentPort = int(agentSpec.split(':')[1])
+            
+            if self.remoteAgentPort < 1 or self.remoteAgentPort > 65535:
+                QMessageBox.question(self, 'Error',"Port must be in an acceptable IP range (1-65535)", QMessageBox.Ok)
+                specIsGood = False
+        except:
+            if text.upper() == 'AUTO':
+                # Need to close the agent listener window.  Need it to get the info and it'll lock the listening port.
+                if self.agentListenerWindow:
+                    QMessageBox.question(self, 'Error',"Please close the agent listener window first.", QMessageBox.Ok)
+                    specIsGood = False
+                else:
+                    agentIP, agentPort, accepted = AgentListenerDialog.getAgent()
+                    specIsGood = accepted
+            else:
+                QMessageBox.question(self, 'Error',"Please enter it in the format <IP>:<port>", QMessageBox.Ok)
+                specIsGood = False
+            
+        if not specIsGood:
+            return
+            
+        # Now we can connect.
+        # Request the current config state.  If all is well, open the dialog,
+        # if it fails, notify the user
+        retVal, retmsg, startupCfg, runningCfg = requestRemoteConfig(agentIP, agentPort)
+        
+        if retVal != 0:
+            QMessageBox.question(self, 'Error',retmsg, QMessageBox.Ok)
+            return
+            
+        configDialog = AgentConfigDialog(startupCfg, runningCfg, agentIP, agentPort)
+        configDialog.exec()
+        
     def onRemoteAgent(self):
         if (self.menuRemoteAgent.isChecked() == self.lastRemoteState):
             # There's an extra bounce in this for some reason.
