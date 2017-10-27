@@ -129,10 +129,10 @@ def updateRunningConfig(newCfg):
     # recordInterface
     if runningcfg.recordInterface != newCfg.recordInterface:
         if len(newCfg.recordInterface) == 0:
-            stopRecord(newCfg.recordInterface)
+            stopRecord()
         else:
             # start will check if it's already running
-            startRecord()
+            startRecord(newCfg.recordInterface)
             
     # Finally swap out the config
     runningcfg = newCfg
@@ -254,6 +254,7 @@ class AgentConfigSettings(object):
         self.announce = False
         self.useRPiLEDs = False
         self.recordInterface=""
+        self.recordRunning = False
         self.mavlinkGPS = ""
         self.ipAllowedList = ""
         
@@ -263,6 +264,7 @@ class AgentConfigSettings(object):
         retVal += "Announce Agent: " + str(self.announce) + "\n"
         retVal += "Use RPi LEDs: " + str(self.useRPiLEDs) + "\n"
         retVal += "Record Interface: " + self.recordInterface + "\n"
+        retVal += "Record Running (for running configs): " + str(self.recordRunning) + "\n"
         retVal += "Mavlink GPS: " + self.mavlinkGPS + "\n"
         retVal += "IP Allowed List: " + self.ipAllowedList + "\n"
         
@@ -303,6 +305,7 @@ class AgentConfigSettings(object):
         dictjson['cancelstart'] = str(self.cancelStart)
         dictjson['port'] = self.port
         dictjson['announce'] = str(self.announce)
+        dictjson['recordrunning'] = str(self.recordRunning)
         dictjson['userpileds'] = str(self.useRPiLEDs)
         dictjson['recordinterface'] = self.recordInterface
         dictjson['mavlinkgps'] = self.mavlinkGPS
@@ -319,6 +322,7 @@ class AgentConfigSettings(object):
             self.cancelStart = stringtobool(dictjson['cancelstart'])
             self.port = int(dictjson['port'])
             self.announce = stringtobool(dictjson['announce'])
+            self.recordRunning = stringtobool(dictjson['recordrunning'])
             self.useRPiLEDs = stringtobool(dictjson['userpileds'])
             self.recordInterface = dictjson['recordinterface']
             self.mavlinkGPS = dictjson['mavlinkgps']
@@ -780,7 +784,8 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 return
                 
         if ((s.path != '/wireless/interfaces') and (s.path != '/gps/status') and 
-            ('/wireless/networks/' not in s.path) and ('/system/config' not in s.path)):
+            ('/wireless/networks/' not in s.path) and ('/system/config' not in s.path) and 
+            ('/system/startrecord' not in s.path)  and ('/system/stoprecord' not in s.path) ):
             s.send_response(404)
             s.send_header("Content-type", "text/html")
             s.end_headers()
@@ -844,8 +849,37 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
             responsedict = {}
             responsedict['startup'] = cfgSettings.toJsondict()
             
+            if recordThread:
+                runningcfg.recordRunning = True
+                
             responsedict['running'] = runningcfg.toJsondict()
             
+            jsonstr = json.dumps(responsedict)
+            s.wfile.write(jsonstr.encode("UTF-8"))
+        elif s.path.startswith('/system/startrecord'):
+            recordinterface = s.path.replace('/system/startrecord/', '')
+            
+            # Check that the specified interface is valid:
+            interfaces = WirelessEngine.getInterfaces()
+            
+            if recordinterface in interfaces:
+                startRecord(recordinterface)
+                responsedict = {}
+                responsedict['errcode'] = 0
+                responsedict['errmsg'] = ''
+                jsonstr = json.dumps(responsedict)
+            else:
+                responsedict = {}
+                responsedict['errcode'] = 1
+                responsedict['errmsg'] = 'The requested interface was not found on the system.'
+                jsonstr = json.dumps(responsedict)
+                
+            s.wfile.write(jsonstr.encode("UTF-8"))
+        elif s.path == '/system/stoprecord':
+            stopRecord()
+            responsedict = {}
+            responsedict['errcode'] = 0
+            responsedict['errmsg'] = ''
             jsonstr = json.dumps(responsedict)
             s.wfile.write(jsonstr.encode("UTF-8"))
         elif '/wireless/networks/' in s.path:

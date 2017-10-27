@@ -108,6 +108,21 @@ def makeGetRequest(url):
     htmlResponse=response.text
     return response.status_code, htmlResponse
 
+def requestRemoteInterfaces(agentIP, agentPort):
+    url = "http://" + agentIP + ":" + str(agentPort) + "/wireless/interfaces"
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            interfaces = json.loads(responsestr)
+            
+            retList = interfaces['interfaces']
+            return statusCode, retList
+        except:
+            return statusCode, None
+    else:
+        return statusCode, None
+        
 def requestRemoteConfig(remoteIP, remotePort):
     url = "http://" + remoteIP + ":" + str(remotePort) + "/system/config"
     statusCode, responsestr = makeGetRequest(url)
@@ -1910,8 +1925,16 @@ class mainWindow(QMainWindow):
         if retVal != 0:
             QMessageBox.question(self, 'Error',retmsg, QMessageBox.Ok)
             return
-            
-        configDialog = AgentConfigDialog(startupCfg, runningCfg, agentIP, agentPort)
+
+        # There is both a global and class-based version of this function.
+        # The global can take parameters, the class version uses the remote agent config settings
+        retVal, interfaces = requestRemoteInterfaces(agentIP, agentPort)
+        
+        if retVal != 200:
+            QMessageBox.question(self, 'Error','Unable to get remote interfaces.', QMessageBox.Ok)
+            return
+        
+        configDialog = AgentConfigDialog(startupCfg, runningCfg, interfaces, agentIP, agentPort)
         configDialog.exec()
         
     def onRemoteAgent(self):

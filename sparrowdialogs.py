@@ -47,6 +47,42 @@ def makeGetRequest(url):
     htmlResponse=response.text
     return response.status_code, htmlResponse
 
+def startRecord(agentIP, agentPort, interface):
+    url = "http://" + agentIP + ":" + str(agentPort) + "/system/startrecord/" + interface
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            responsedict = json.loads(responsestr)
+            try:
+                errcode = responsedict['errcode']
+                errmsg = responsedict['errmsg']
+                return errcode, errmsg
+            except:
+                return 2, "Error parsing response: " + responsestr
+        except:
+            return 1, "Error parsing response: " + responsestr
+    else:
+        return statusCode, 'Received error code: ' + str(statusCode)
+        
+def stopRecord(agentIP, agentPort):
+    url = "http://" + agentIP + ":" + str(agentPort) + "/system/stoprecord"
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            responsedict = json.loads(responsestr)
+            try:
+                errcode = responsedict['errcode']
+                errmsg = responsedict['errmsg']
+                return errcode, errmsg
+            except:
+                return 2, "Error parsing response: " + responsestr
+        except:
+            return 1, "Error parsing response: " + responsestr
+    else:
+        return statusCode, 'Received error code: ' + str(statusCode)
+        
 def makePostRequest(url, jsonstr):
         # use something like jsonstr = json.dumps(somestring) to get the right format
         try:
@@ -885,11 +921,12 @@ class GPSCoordDIalog(QDialog):
             
 # ------------------  Agent Configuration  ------------------------------
 class AgentConfigDialog(QDialog):
-    def __init__(self, startupCfg, runningCfg, agentIP='127.0.0.1', agentPort=8020,parent = None):
+    def __init__(self, startupCfg, runningCfg, interfaces, agentIP='127.0.0.1', agentPort=8020,parent = None):
         super(AgentConfigDialog,  self).__init__(parent)
 
         self.agentIP = agentIP
         self.agentPort = agentPort
+        self.interfaces = interfaces
         
         agentString = agentIP + ":" + str(agentPort)
         
@@ -991,12 +1028,6 @@ class AgentConfigDialog(QDialog):
         self.btnRecordStartStop.move(250, 205)
         self.btnRecordStartStop.clicked.connect(self.onStartStopRecord)
         
-        #if len(startupCfg.recordInterface) > 0:
-        #    self.comboRecordStartup.setCurrentIndex(0)
-        #    self.btnRecordStartStop.setText('Stop')
-        #else:
-        #    self.comboRecordStartup.setCurrentIndex(1)
-        
         # Record Interface
         self.lblMsg = QLabel("Record Interface:", self)
         self.lblMsg.move(10, 250)
@@ -1008,8 +1039,14 @@ class AgentConfigDialog(QDialog):
         self.recordInterfaceRunning = QLineEdit(self)
         self.recordInterfaceRunning.setGeometry(250, 245, 100, 25)
         self.recordInterfaceRunning.setText(runningCfg.recordInterface)
-        if self.btnRecordStartStop.text() == 'Stop':
+        
+        self.btnShowInterfaces = QPushButton("Interfaces", self)
+        self.btnShowInterfaces.move(360, 245)
+        self.btnShowInterfaces.clicked.connect(self.onShowInterfaces)
+        
+        if runningCfg.recordRunning:
             self.recordInterfaceRunning.setEnabled(False)
+            self.btnRecordStartStop.setText('Stop')
         
         # Mavlink GPS
         self.lblMsg = QLabel("Mavlink GPS:", self)
@@ -1037,14 +1074,14 @@ class AgentConfigDialog(QDialog):
             Qt.Horizontal, self)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        buttons.move(125, 390)
+        buttons.move(145, 380)
 
         self.btnReboot = QPushButton("Save and Restart", self)
-        self.btnReboot.setGeometry(125, 440, 170, 30)
+        self.btnReboot.setGeometry(145, 430, 170, 30)
         self.btnReboot.clicked.connect(self.onRestart)
 
         # Window geometry
-        self.setGeometry(self.geometry().x(), self.geometry().y(), 400,480)
+        self.setGeometry(self.geometry().x(), self.geometry().y(), 450,480)
         self.setWindowTitle("Agent Configuration:" + agentString)
         self.center()
 
@@ -1086,6 +1123,10 @@ class AgentConfigDialog(QDialog):
     def validateAndSend(self, sendRestart=False):
         settingsChanged = False
         
+        if self.btnRecordStartStop.text() == 'Start':
+            # Just make sure we clear the field or it may start recording on us.
+            self.recordInterfaceRunning.setText('')
+
         tmpBool = self.comboTrueFalse(self.comboCancelStartupCfgFile)
         
         if self.startupCfg.cancelStart != tmpBool:
@@ -1182,17 +1223,60 @@ class AgentConfigDialog(QDialog):
             
         super().done(result)
     
+    def onShowInterfaces(self):
+        validlist = ""
+        for curInt in self.interfaces:
+            if len(validlist) > 0:
+                validlist += ', ' + curInt
+            else:
+                validlist = curInt
+
+        if len(validlist) > 0:
+            QMessageBox.question(self, 'Error',"Interfaces reported by the remote agent are:\n\n" + validlist, QMessageBox.Ok)
+        else:
+            QMessageBox.question(self, 'Error',"No wireless interfaces found.", QMessageBox.Ok)
+        
     def onStartStopRecord(self):
         if self.btnRecordStartStop.text() == 'Stop':
             # Transition to start
+            retVal, errmsg = stopRecord(self.agentIP, self.agentPort)
+            
+            if retVal != 0:
+                QMessageBox.question(self, 'Error',errmsg, QMessageBox.Ok)
+                return
+                
             self.btnRecordStartStop.setText('Start')
             self.recordInterfaceRunning.setEnabled(True)
+            self.recordInterfaceRunning.setText('')
         else:
             if len(self.recordInterfaceRunning.text()) == 0:
                 QMessageBox.question(self, 'Error',"Please provide a valid wireless interface name.", QMessageBox.Ok)
                 return
 
+            interface = self.recordInterfaceRunning.text().replace(' ', '')
+            
+            if interface not in self.interfaces:
+                validlist = ""
+                for curInt in self.interfaces:
+                    if len(validlist) > 0:
+                        validlist += ', ' + curInt
+                    else:
+                        validlist = curInt
+
+                if len(validlist) > 0:
+                    QMessageBox.question(self, 'Error',"The requested interface does not appear to be valid.  Interfaces seen on remote agent are:\n\n" + validlist, QMessageBox.Ok)
+                else:
+                    QMessageBox.question(self, 'Error',"No wireless interfaces found.", QMessageBox.Ok)
+                    
+                return
+                
             # transition to stop
+            retVal, errmsg = startRecord(self.agentIP, self.agentPort, interface)
+            
+            if retVal != 0:
+                QMessageBox.question(self, 'Error',errmsg, QMessageBox.Ok)
+                return
+                
             self.btnRecordStartStop.setText('Stop')
             self.recordInterfaceRunning.setEnabled(False)
         
@@ -1230,7 +1314,7 @@ if __name__ == '__main__':
     from sparrowwifiagent import AgentConfigSettings
     startupCfg = AgentConfigSettings()
     runningCfg = AgentConfigSettings()
-    testWin = AgentConfigDialog(startupCfg, runningCfg)
+    testWin = AgentConfigDialog(startupCfg, runningCfg, ['test'])
     testWin.exec()
     
     app.exec_()
