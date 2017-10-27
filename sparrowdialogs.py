@@ -57,18 +57,41 @@ def makePostRequest(url, jsonstr):
         htmlResponse=response.text
         return response.status_code, htmlResponse
         
-def updateRemoteConfig(remoteIP, remotePort, startupCfg, runningCfg):
+def updateRemoteConfig(remoteIP, remotePort, startupCfg, runningCfg, sendRestart=False):
     url = "http://" + remoteIP + ":" + str(remotePort) + "/system/config"
     
     cfgdict = {}
     cfgdict['startup'] = startupCfg.toJsondict()
     cfgdict['running'] = runningCfg.toJsondict()
     
+    if sendRestart:
+        cfgdict['rebootagent'] = True
+        
     jsonstr = json.dumps(cfgdict)
     statusCode, responsestr = makePostRequest(url, jsonstr)
+
+    errmsg = ""
     
     if statusCode == 200:
         return 0, ""
+    elif statusCode == 400:
+        # 400 is a JSON response
+        try:
+            responsedict = json.loads(responsestr)
+            try:
+                errmsg = responsedict['errmsg']
+            except:
+                # response json didn't have the expected field
+                if len(responsestr) == 0:
+                    errmsg = "Error parsing agent response.  Is it still running?"
+                else:
+                    errmsg = "Error parsing agent response:" + responsestr                
+        except:
+            # Parsing json threw exception
+            if len(responsestr) == 0:
+                errmsg = "Error parsing agent response.  Is it still running?"
+            else:
+                errmsg = "Error parsing agent response:" + responsestr
     else:
         # This should never happen
         if len(responsestr) == 0:
@@ -959,20 +982,20 @@ class AgentConfigDialog(QDialog):
         self.lblMsg = QLabel("Record Local:", self)
         self.lblMsg.move(10, 210)
 
-        self.comboRecordStartup = QComboBox(self)
-        self.comboRecordStartup.move(118, 205)
-        self.comboRecordStartup.addItem("Yes")
-        self.comboRecordStartup.addItem("No")
+        # self.comboRecordStartup = QComboBox(self)
+        # self.comboRecordStartup.move(118, 205)
+        # self.comboRecordStartup.addItem("Yes")
+        # self.comboRecordStartup.addItem("No")
         
         self.btnRecordStartStop = QPushButton("Start", self)
         self.btnRecordStartStop.move(250, 205)
         self.btnRecordStartStop.clicked.connect(self.onStartStopRecord)
         
-        if len(startupCfg.recordInterface) > 0:
-            self.comboRecordStartup.setCurrentIndex(0)
-            self.btnRecordStartStop.setText('Stop')
-        else:
-            self.comboRecordStartup.setCurrentIndex(1)
+        #if len(startupCfg.recordInterface) > 0:
+        #    self.comboRecordStartup.setCurrentIndex(0)
+        #    self.btnRecordStartStop.setText('Stop')
+        #else:
+        #    self.comboRecordStartup.setCurrentIndex(1)
         
         # Record Interface
         self.lblMsg = QLabel("Record Interface:", self)
@@ -996,14 +1019,6 @@ class AgentConfigDialog(QDialog):
         self.mavlinkGPSStartup.setGeometry(118, 285, 100, 25)
         self.mavlinkGPSStartup.setText(startupCfg.mavlinkGPS)
         
-        self.mavlinkGPSRunning = QLineEdit(self)
-        self.mavlinkGPSRunning.setGeometry(250, 285, 100, 25)
-        self.mavlinkGPSRunning.setText(runningCfg.mavlinkGPS)
-        
-        self.btnChangeGPS = QPushButton("Update Running", self)
-        self.btnChangeGPS.move(370, 285)
-        self.btnChangeGPS.clicked.connect(self.onChangeGPS)
-        
         # IP Allow List
         self.lblMsg = QLabel("IP Allow List:", self)
         self.lblMsg.move(10, 330)
@@ -1022,10 +1037,14 @@ class AgentConfigDialog(QDialog):
             Qt.Horizontal, self)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        buttons.move(170, 390)
+        buttons.move(125, 390)
+
+        self.btnReboot = QPushButton("Save and Restart", self)
+        self.btnReboot.setGeometry(125, 440, 170, 30)
+        self.btnReboot.clicked.connect(self.onRestart)
 
         # Window geometry
-        self.setGeometry(self.geometry().x(), self.geometry().y(), 500,440)
+        self.setGeometry(self.geometry().x(), self.geometry().y(), 400,480)
         self.setWindowTitle("Agent Configuration:" + agentString)
         self.center()
 
@@ -1064,65 +1083,105 @@ class AgentConfigDialog(QDialog):
         # for the moment we'll assume the user knows how to create a custom mavlink connection string.  I know.....
         return True
         
-    def done(self, result):
-        if result == QDialog.Accepted:
+    def validateAndSend(self, sendRestart=False):
+        settingsChanged = False
+        
+        tmpBool = self.comboTrueFalse(self.comboCancelStartupCfgFile)
+        
+        if self.startupCfg.cancelStart != tmpBool:
             self.startupCfg.cancelStart = self.comboTrueFalse(self.comboCancelStartupCfgFile)
-            
+            settingsChanged = True
+        
+        tmpBool = self.comboTrueFalse(self.comboSendAnnouncementsStartup)
+        
+        if self.startupCfg.announce != tmpBool:
             self.startupCfg.announce = self.comboTrueFalse(self.comboSendAnnouncementsStartup)
+            settingsChanged = True
+            
+        tmpBool = self.comboTrueFalse(self.comboSendAnnouncementsRunning)
+        if self.runningCfg.announce != tmpBool:
             self.runningCfg.announce = self.comboTrueFalse(self.comboSendAnnouncementsRunning)
+            settingsChanged = True
+        
+        if self.startupCfg.port != int(self.spinPortStartup.value()):
+            self.startupCfg.port = int(self.spinPortStartup.value())
+            settingsChanged = True
             
-            self.startupCfg.port = int(self.spinPortRunning.value())
-            self.runningCfg.port = self.agentPort # Can't change this
-            
+        self.runningCfg.port = self.agentPort # Can't change this
+        
+        tmpBool = self.comboTrueFalse(self.comboRPiLEDsStartup)
+        if self.startupCfg.useRPiLEDs != tmpBool:
             self.startupCfg.useRPiLEDs = self.comboTrueFalse(self.comboRPiLEDsStartup)
-            self.runningCfg.useRPiLEDs = self.comboTrueFalse(self.comboRPiLEDsRunning)
+            settingsChanged = True
             
-            recordOnStartup = self.comboTrueFalse(self.comboRecordStartup)
+        tmpBool = self.comboTrueFalse(self.comboRPiLEDsRunning)
+        if self.runningCfg.useRPiLEDs != tmpBool:
+            self.runningCfg.useRPiLEDs = self.comboTrueFalse(self.comboRPiLEDsRunning)
+            settingsChanged = True
+
+        if self.startupCfg.recordInterface != self.recordInterfaceStartup.text():
+            settingsChanged = True
             
             if recordOnStartup:
-                self.startupCfg.recordInterface = self.comboRecordStartup.text()
+                self.startupCfg.recordInterface = self.recordInterfaceStartup.text()
             else:
                 self.startupCfg.recordInterface = ""
-                
-            self.runningCfg.recordInterface = self.recordInterfaceRunning.text()
             
-            mavlinkstr = self.mavlinkGPSStartup.text().replace(' ', '')
+        if self.runningCfg.recordInterface != self.recordInterfaceRunning.text():
+            self.runningCfg.recordInterface = self.recordInterfaceRunning.text().replace(' ', '')
+            settingsChanged = True
+        
+        mavlinkstr = self.mavlinkGPSStartup.text().replace(' ', '')
+        
+        if not self.validateMavlink(mavlinkstr):
+            return False
+        
+        if self.startupCfg.mavlinkGPS != mavlinkstr:
+            self.startupCfg = mavlinkstr
+            settingsChanged = True
             
-            if not self.validateMavlink(mavlinkstr):
-                return
-                
-            self.startupCfg.mavlinkGPS = mavlinkstr
-
-            mavlinkstr = self.mavlinkGPSRunning.text().replace(' ', '')
+        iptext = self.ipAllowStartup.text().replace(' ', '')
+        if not self.validateAllowedIPs(iptext):
+            return False
             
-            if not self.validateMavlink(mavlinkstr):
-                return
-            self.runningCfg.mavlinkGPS = mavlinkstr
-            
-            iptext = self.ipAllowStartup.text().replace(' ', '')
-            if not self.validateAllowedIPs(iptext):
-                return
-                
+        if self.startupCfg.ipAllowedList != iptext:
             self.startupCfg.ipAllowedList = iptext
+            settingsChanged = True
+        
+        iptext = self.ipAllowRunning.text().replace(' ', '')
+        if not self.validateAllowedIPs(iptext):
+            return False
             
-            iptext = self.ipAllowRunning.text().replace(' ', '')
-            if not self.validateAllowedIPs(iptext):
-                return
-                
+        if self.runningCfg.ipAllowedList != iptext:
             self.runningCfg.ipAllowedList = iptext
-            
-            # Transmit updates here and notify the user if anything went wrong
-            retVal, errmsg = updateRemoteConfig(self.agentIP, self.agentPort, self.startupCfg, self.runningCfg)
+            settingsChanged = True
+        
+        # Transmit updates here and notify the user if anything went wrong
+        if settingsChanged or sendRestart:
+            retVal, errmsg = updateRemoteConfig(self.agentIP, self.agentPort, self.startupCfg, self.runningCfg, sendRestart)
 
             if retVal != 0:
                 QMessageBox.question(self, 'Error',errmsg, QMessageBox.Ok)
-                return
+                return False
                 
+        return True
+        
+    def onRestart(self):
+        retVal = self.validateAndSend(True)
+        if not retVal:
+            return
+        
+        # Behave like OK but send restart flag
+        super().done(QDialog.Accepted)
+        
+    def done(self, result):
+        if result == QDialog.Accepted:
+            retVal = validateAndSend(False)
+            if not retVal:
+                return
+            
         super().done(result)
     
-    def onChangeGPS(self):
-        pass
-        
     def onStartStopRecord(self):
         if self.btnRecordStartStop.text() == 'Stop':
             # Transition to start

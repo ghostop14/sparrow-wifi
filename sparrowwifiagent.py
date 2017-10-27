@@ -23,6 +23,7 @@ import json
 import re
 import argparse
 import configparser
+import subprocess
 
 from socket import *
 from time import sleep
@@ -74,6 +75,35 @@ def TwoDigits(instr):
         
     return instr
 
+def restartAgent():
+    if mavlinkGPSThread:
+        mavlinkGPSThread.signalStop = True
+        print('Waiting for mavlink GPS thread to terminate...')
+        while (mavlinkGPSThread.threadRunning):
+            sleep(0.2)
+
+    stopRecord()
+        
+    stopAnnounceThread()
+    
+    if runningcfg.useRPiLEDs:
+        SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_OFF)
+        SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)
+        
+    if os.path.isfile('/usr/local/bin/python3.5') or os.path.isfile('/usr/bin/python3.5'):
+        exefile = 'python3.5'
+    else:
+        exefile = 'python3'
+        
+    params = [exefile, __file__, '--delaystart=2']
+
+    newCommand = exefile + ' ' + __file__ + ' --delaystart=2 &'
+    os.system(newCommand)
+    # subprocess.Popen(params, stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    # result = subprocess.run(params, stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    # restartResult = result.stdout.decode('ASCII')
+    os.kill(os.getpid(), 9)
+    
 def updateRunningConfig(newCfg):
     global runningcfg
     
@@ -92,6 +122,9 @@ def updateRunningConfig(newCfg):
             startAnnounceThread()
     
     # mavlinkGPS
+    # Need to restart to update mavlinkGPS
+    # So just copy forward
+    newCfg.mavlinkGPS = runningcfg.mavlinkGPS
     
     # recordInterface
     if runningcfg.recordInterface != newCfg.recordInterface:
@@ -334,7 +367,7 @@ class AgentConfigSettings(object):
                         elif option == 'mavlinkgps':
                             self.mavlinkGPS=cfgParser.get(section, option)
                         elif option == 'allowedips':
-                            self.self.ipAllowedList = cfgParser.get(section, option)
+                            self.ipAllowedList = cfgParser.get(section, option)
                     except:
                         print("exception on %s!" % option)
                         settings[option] = None
@@ -618,7 +651,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
             s.send_response(404)
             s.send_header("Content-type", "text/html")
             s.end_headers()
-            s.wfile.write("<html><body><p>Bad Request</p>".encode("utf-8"))
+            s.wfile.write("<html><body><p>Page not found.</p>".encode("utf-8"))
             s.wfile.write("</body></html>".encode("UTF-8"))
             return
             
@@ -628,11 +661,15 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
             length = 0
             
         if length <= 0:
-            s.send_response(404)
-            s.send_header("Content-type", "text/html")
+            responsedict = {}
+            responsedict['errcode'] = 1
+            responsedict['errmsg'] = 'Agent received a zero-length request.'
+
+            s.send_response(400)
+            s.send_header("Content-type", "application/jsonrequest")
             s.end_headers()
-            s.wfile.write("<html><body><p>Bad Request (zero-length post)</p>".encode("utf-8"))
-            s.wfile.write("</body></html>".encode("UTF-8"))
+            jsonstr = json.dumps(responsedict)
+            s.wfile.write(jsonstr.encode("UTF-8"))
             return
             
         jsonstr_data = s.rfile.read(length).decode('utf-8')
@@ -642,6 +679,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
         except:
             return
             
+        # -------------  Update startup config ------------------
         try:
             scfg = jsondata['startup']
             startupCfg = AgentConfigSettings()
@@ -652,18 +690,48 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
             retVal = startupCfg.toConfigFile(cfgFile)
             
             if not retVal:
-                s.send_response(404)
-                s.send_header("Content-type", "text/html")
+                # HTML 400 = Bad request
+                s.send_response(400)
+                responsedict = {}
+                responsedict['errcode'] = 2
+                responsedict['errmsg'] = 'An error occurred saving the startup config.'
+
+                s.send_response(400)
+                s.send_header("Content-type", "application/jsonrequest")
                 s.end_headers()
-                s.wfile.write("<html><body><p>An error occurred saving the startup config.</p>".encode("utf-8"))
-                s.wfile.write("</body></html>".encode("UTF-8"))
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
         except:
-            s.send_response(404)
-            s.send_header("Content-type", "text/html")
+            responsedict = {}
+            responsedict['errcode'] = 3
+            responsedict['errmsg'] = 'Bad startup config.'
+
+            s.send_response(400)
+            s.send_header("Content-type", "application/jsonrequest")
             s.end_headers()
-            s.wfile.write("<html><body><p>Bad startup config</p>".encode("utf-8"))
-            s.wfile.write("</body></html>".encode("UTF-8"))
+            jsonstr = json.dumps(responsedict)
+            s.wfile.write(jsonstr.encode("UTF-8"))
+
+        # -------------  Check if we should reboot ------------------
+        if 'rebootagent' in jsondata:
+            rebootFlag = jsondata['rebootagent']
+            if rebootFlag:
+                responsedict = {}
+                responsedict['errcode'] = 0
+                responsedict['errmsg'] = 'Restarting agent.'
+
+                s.send_response(200)
+                s.send_header("Content-type", "application/jsonrequest")
+                s.end_headers()
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+                
+                restartAgent()
             
+        # If we're restarting, we'll never get to running config.
+        
+        # -------------  Update Running config ------------------
+        
         try:
             rcfg = jsondata['running']
             tmpcfg = AgentConfigSettings()
@@ -671,11 +739,17 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
             
             updateRunningConfig(tmpcfg)
         except:
-            s.send_response(404)
-            s.send_header("Content-type", "text/html")
+            responsedict = {}
+            responsedict['errcode'] = 4
+            responsedict['errmsg'] = 'Bad running config.'
+
+            s.send_response(400)
+            s.send_header("Content-type", "application/jsonrequest")
             s.end_headers()
-            s.wfile.write("<html><body><p>Bad running config</p>".encode("utf-8"))
-            s.wfile.write("</body></html>".encode("UTF-8"))
+            jsonstr = json.dumps(responsedict)
+            s.wfile.write(jsonstr.encode("UTF-8"))
+
+        # -------------  Done updating config ------------------
         
     def do_GET(s):
         global gpsEngine
@@ -870,6 +944,7 @@ if __name__ == '__main__':
     argparser.add_argument('--recordinterface', help="Automatically start recording locally with the given wireless interface (headless mode) in a recordings directory", default='', required=False)
     argparser.add_argument('--ignorecfg', help="Don't load any config files (useful for overriding and/or testing)", action='store_true', default=False, required=False)
     argparser.add_argument('--cfgfile', help="Use the specified config file rather than the default sparrowwifiagent.cfg file", default='', required=False)
+    argparser.add_argument('--delaystart', help="Wait <delaystart> seconds before initializing", default=0, required=False)
     args = argparser.parse_args()
 
     if os.geteuid() != 0:
@@ -918,6 +993,10 @@ if __name__ == '__main__':
         if settings['cancelstart']:
             exit(0)
 
+    delayStart = int(args.delaystart)
+    if delayStart > 0:
+        sleep(delayStart)
+        
     runningcfg.cancelStart = False
     
     if 'port' not in settings.keys():
@@ -1054,10 +1133,11 @@ if __name__ == '__main__':
     if len(runningcfg.recordInterface) > 0:
         startRecord(runningcfg.recordInterface)
 
-    # Run HTTP Server
+    # -------------- Run HTTP Server / Main Loop-------------- 
     server = SparrowWiFiAgent()
     server.run(runningcfg.port)
-    
+
+    # -------------- This is the shutdown process -------------- 
     if mavlinkGPSThread:
         mavlinkGPSThread.signalStop = True
         print('Waiting for mavlink GPS thread to terminate...')
