@@ -496,9 +496,8 @@ class WirelessEngine(object):
             
         gpsdict = {}
         
-        if (gpsData is None):
-            gpsloc = SparrowGPS()
-        else:
+        gpsloc = SparrowGPS()
+        if (gpsData is not None):
             gpsloc.copy(gpsData)
         
         gpsdict['latitude'] = gpsloc.latitude

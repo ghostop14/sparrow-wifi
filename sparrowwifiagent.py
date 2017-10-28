@@ -901,6 +901,12 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 if useRPILeds:
                     # Green will heartbeat when servicing requests. Turn back solid here
                     SparrowRPi.greenLED(LIGHT_STATE_ON)
+                    
+                responsedict = {}
+                responsedict['errcode'] = 5
+                responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
                 return
             
             if '?' in inputstr:
@@ -966,7 +972,14 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 
             if (curLock):
                 curLock.release()
-                
+        
+            s.wfile.write(jsonstr.encode("UTF-8"))
+        else:
+            responsedict = {}
+            responsedict['errcode'] = 5
+            responsedict['errmsg'] = "Unknown request: " + s.path
+            
+            jsonstr = json.dumps(responsedict)
             s.wfile.write(jsonstr.encode("UTF-8"))
             
         if useRPILeds:
