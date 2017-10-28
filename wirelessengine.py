@@ -604,6 +604,20 @@ class WirelessEngine(object):
                 
             if (len(fieldValue) > 0):
                 curNetwork.mode = "AP"
+                # Had issue with WEP not showing up.
+                # If capability has "ESS Privacy" there's something there.
+                # If it's PSK, etc. there will be other RSN fields, etc.
+                # So for now start by assuming WEP
+                p = re.compile('^	capability:.*(ESS Privacy)')
+                try:
+                    fieldValue = p.search(curLine).group(1)
+                except:
+                    fieldValue = ""
+                    
+                if (len(fieldValue) > 0):
+                    curNetwork.security = "WEP"
+                    curNetwork.privacy = "WEP"
+                    
                 continue #Found the item
                 
             p = re.compile('^	capability:.*(IBSS)')
@@ -656,6 +670,16 @@ class WirelessEngine(object):
                 
             if (len(fieldValue) > 0):
                 curNetwork.cipher = fieldValue
+                continue #Found the item
+                
+            p = re.compile('^.*?DS Parameter set: channel +([0-9]+).*')
+            try:
+                fieldValue = int(p.search(curLine).group(1))
+            except:
+                fieldValue = 0
+                
+            if (fieldValue > 0):
+                curNetwork.channel = fieldValue
                 continue #Found the item
                 
             p = re.compile('^.*?primary channel: +([0-9]+).*')
