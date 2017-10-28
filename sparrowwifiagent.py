@@ -144,8 +144,13 @@ def startRecord(interface):
         return
         
     if len(interface) > 0:
-        recordThread = AutoAgentScanThread(interface)
-        recordThread.start()
+        interfaces = WirelessEngine.getInterfaces()
+        
+        if interface in interfaces:
+            recordThread = AutoAgentScanThread(interface)
+            recordThread.start()
+        else:
+            print('ERROR: Record was requested on ' + interface + ' but that interface was not found.')
     else:
         recordThread = None
         
@@ -851,6 +856,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
             
             if recordThread:
                 runningcfg.recordRunning = True
+                runningcfg.recordInterface = recordThread.interface
                 
             responsedict['running'] = runningcfg.toJsondict()
             
