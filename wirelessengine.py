@@ -547,8 +547,39 @@ class WirelessEngine(object):
             
         return retCode, errString, wirelessNetworks
         
+    def getFieldValue(p, curLine):
+        matchobj = p.search(curLine)
+        
+        if not matchobj:
+            return ""
+            
+        try:
+            retVal = matchobj.group(1)
+        except:
+            retVal = ""
+            
+        return retVal
+        
     def parseIWoutput(iwOutput):
         
+        # Define search regexes once:
+        p_bss = re.compile('^BSS (.*?)\(')
+        p_ssid = re.compile('^.+?SSID: +(.*)')
+        p_ess = re.compile('^	capability:.*(ESS)')
+        p_ess_privacy = re.compile('^	capability:.*(ESS Privacy)')
+        p_ibss = re.compile('^	capability:.*(IBSS)')
+        p_auth_suites = re.compile('.*?Authentication suites: *(.*)')
+        p_pw_ciphers = re.compile('.*?Pairwise ciphers: *(.*)')
+        p_param_channel = re.compile('^.*?DS Parameter set: channel +([0-9]+).*')
+        p_primary_channel = re.compile('^.*?primary channel: +([0-9]+).*')
+        p_freq = re.compile('^.*?freq:.*?([0-9]+).*')
+        p_signal = re.compile('^.*?signal:.*?([\-0-9]+).*?dBm')
+        p_ht = re.compile('.*?HT20/HT40.*')
+        p_bw = re.compile('.*?\\* channel width:.*?([0-9]+) MHz.*')
+        p_secondary = re.compile('^.*?secondary channel offset: *([^ \\t]+).*')
+        p_thirdfreq = re.compile('^.*?center freq segment 1: *([^ \\t]+).*')
+        
+        # start
         retVal = {}
         curNetwork = None
         now=datetime.datetime.now()
@@ -561,11 +592,7 @@ class WirelessEngine(object):
             inputLines = iwOutput
             
         for curLine in inputLines:
-            p = re.compile('^BSS (.*?)\(')
-            try:
-                fieldValue = p.search(curLine).group(1)
-            except:
-                fieldValue = ""
+            fieldValue = WirelessEngine.getFieldValue(p_bss, curLine)
                 
             if (len(fieldValue) > 0):
                 # New object
@@ -586,21 +613,13 @@ class WirelessEngine(object):
                 # If we don't have a network object yet, then we haven't
                 # seen a BSSID so just keep going through the lines.
                 continue
-        
-            p = re.compile('^.+?SSID: +(.*)')
-            try:
-                fieldValue = p.search(curLine).group(1)
-            except:
-                fieldValue = ""
+
+            fieldValue = WirelessEngine.getFieldValue(p_ssid, curLine)
                 
             if (len(fieldValue) > 0):
                 curNetwork.ssid = WirelessEngine.convertUnknownToString(fieldValue)
                 
-            p = re.compile('^	capability:.*(ESS)')
-            try:
-                fieldValue = p.search(curLine).group(1)
-            except:
-                fieldValue = ""
+            fieldValue = WirelessEngine.getFieldValue(p_ess, curLine)
                 
             if (len(fieldValue) > 0):
                 curNetwork.mode = "AP"
@@ -608,11 +627,9 @@ class WirelessEngine(object):
                 # If capability has "ESS Privacy" there's something there.
                 # If it's PSK, etc. there will be other RSN fields, etc.
                 # So for now start by assuming WEP
-                p = re.compile('^	capability:.*(ESS Privacy)')
-                try:
-                    fieldValue = p.search(curLine).group(1)
-                except:
-                    fieldValue = ""
+                
+                # See: https://wiki.archlinux.org/index.php/Wireless_network_configuration
+                fieldValue = WirelessEngine.getFieldValue(p_ess_privacy, curLine)
                     
                 if (len(fieldValue) > 0):
                     curNetwork.security = "WEP"
@@ -620,127 +637,67 @@ class WirelessEngine(object):
                     
                 continue #Found the item
                 
-            p = re.compile('^	capability:.*(IBSS)')
-            try:
-                fieldValue = p.search(curLine).group(1)
-            except:
-                fieldValue = ""
+            fieldValue = WirelessEngine.getFieldValue(p_ibss, curLine)
                 
             if (len(fieldValue) > 0):
                 curNetwork.mode = "Ad Hoc"
                 continue #Found the item
                 
-            p = re.compile('^	capability:.*(IBSS)')
-            try:
-                fieldValue = p.search(curLine).group(1)
-            except:
-                fieldValue = ""
-                
-            if (len(fieldValue) > 0):
-                curNetwork.mode = "Ad Hoc"
-                continue #Found the item
-                
-            p = re.compile('.*?Authentication suites: *(.*)')
-            try:
-                fieldValue = p.search(curLine).group(1)
-            except:
-                fieldValue = ""
+            fieldValue = WirelessEngine.getFieldValue(p_auth_suites, curLine)
                 
             if (len(fieldValue) > 0):
                 curNetwork.security = fieldValue
                 continue #Found the item
                 
             # p = re.compile('.*?Group cipher: *(.*)')
-            p = re.compile('.*?Pairwise ciphers: *(.*)')
-            try:
-                fieldValue = p.search(curLine).group(1)
-                fieldValue = fieldValue.replace(' ', '/')
-            except:
-                fieldValue = ""
+            fieldValue = WirelessEngine.getFieldValue(p_pw_ciphers, curLine)
+            fieldValue = fieldValue.replace(' ', '/')
                 
             if (len(fieldValue) > 0):
                 curNetwork.privacy = fieldValue
-                continue #Found the item
-                
-            p = re.compile('.*?Pairwise ciphers: *(.*)')
-            try:
-                fieldValue = p.search(curLine).group(1)
-            except:
-                fieldValue = ""
-                
-            if (len(fieldValue) > 0):
                 curNetwork.cipher = fieldValue
                 continue #Found the item
                 
-            p = re.compile('^.*?DS Parameter set: channel +([0-9]+).*')
-            try:
-                fieldValue = int(p.search(curLine).group(1))
-            except:
-                fieldValue = 0
+            fieldValue = WirelessEngine.getFieldValue(p_param_channel, curLine)
                 
-            if (fieldValue > 0):
-                curNetwork.channel = fieldValue
+            if (len(fieldValue) > 0):
+                curNetwork.channel = int(fieldValue)
                 continue #Found the item
                 
-            p = re.compile('^.*?primary channel: +([0-9]+).*')
-            try:
-                fieldValue = int(p.search(curLine).group(1))
-            except:
-                fieldValue = 0
+            fieldValue = WirelessEngine.getFieldValue(p_primary_channel, curLine)
                 
-            if (fieldValue > 0):
-                curNetwork.channel = fieldValue
+            if (len(fieldValue) > 0):
+                curNetwork.channel = int(fieldValue)
                 continue #Found the item
                 
-            p = re.compile('^.*?freq:.*?([0-9]+).*')
-            try:
-                fieldValue = int(p.search(curLine).group(1))
-            except:
-                fieldValue = 0
+            fieldValue = WirelessEngine.getFieldValue(p_freq, curLine)
                 
-            if (fieldValue > 0):
-                curNetwork.frequency = fieldValue
+            if (len(fieldValue) > 0):
+                curNetwork.frequency = int(fieldValue)
                 continue #Found the item
                 
-            p = re.compile('^.*?signal:.*?([\-0-9]+).*?dBm')
-            try:
-                fieldValue = int(p.search(curLine).group(1))
-            except:
-                fieldValue = 10
+            fieldValue = WirelessEngine.getFieldValue(p_signal, curLine)
                 
             # This test is different.  dBm is negative so can't test > 0.  10dBm is really high so lets use that
-            if (fieldValue < 10):
-                curNetwork.signal = fieldValue
-                curNetwork.strongestsignal = fieldValue
+            if (len(fieldValue) > 0):
+                curNetwork.signal = int(fieldValue)
+                curNetwork.strongestsignal = curNetwork.signal
                 continue #Found the item
                 
-            p = re.compile('.*?HT20/HT40.*')
-            try:
-                # This is just a presence check using group(0).
-                fieldValue = p.search(curLine).group(0)
-            except:
-                fieldValue = ""
+            fieldValue = WirelessEngine.getFieldValue(p_ht, curLine)
                 
             if (len(fieldValue) > 0):
                 if (curNetwork.bandwidth == 20):
                     curNetwork.bandwidth = 40
                 continue #Found the item
                 
-            p = re.compile('.*?\\* channel width:.*?([0-9]+) MHz.*')
-            try:
-                fieldValue = int(p.search(curLine).group(1))
-            except:
-                fieldValue = 0
+            fieldValue = WirelessEngine.getFieldValue(p_bw, curLine)
                 
-            if (fieldValue > 0):
-                curNetwork.bandwidth = fieldValue
+            if (len(fieldValue) > 0):
+                curNetwork.bandwidth = int(fieldValue)
                 continue #Found the item
                 
-            p = re.compile('^.*?secondary channel offset: *([^ \\t]+).*')
-            try:
-                fieldValue = p.search(curLine).group(1)
-            except:
-                fieldValue = ""
+            fieldValue = WirelessEngine.getFieldValue(p_secondary, curLine)
                 
             if (len(fieldValue) > 0):
                 curNetwork.secondaryChannelLocation = fieldValue
@@ -752,14 +709,10 @@ class WirelessEngine(object):
                     
                 continue #Found the item
                 
-            p = re.compile('^.*?center freq segment 1: *([^ \\t]+).*')
-            try:
-                fieldValue = int(p.search(curLine).group(1))
-            except:
-                fieldValue = 0
+            fieldValue = WirelessEngine.getFieldValue(p_thirdfreq, curLine)
                 
-            if (fieldValue > 0):
-                curNetwork.thirdChannel = fieldValue
+            if (len(fieldValue) > 0):
+                curNetwork.thirdChannel = int(fieldValue)
                     
                 continue #Found the item
                 
