@@ -87,5 +87,12 @@ Then you can run the agent directly with commands like this:
 
 /usr/local/bin/python3.5 ./sparrowwifiagent.py --mavlinkgps=3dr --recordinterface=wlan1
 
+Another important note about using dual band USB wireless dongles on the Raspberry Pi (tested on a Pi 3), is that as along as the internal wireless is enabled, Raspbian won't see the 5 GHz band.
+
+Add this line in your /boot/config.txt to disable the internal wireless, then your dual-band USB wireless will be able to see the 5 GHz band:
+
+dtoverlay=pi3-disable-wifi
+
+
 
 
