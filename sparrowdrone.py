@@ -33,7 +33,7 @@ class SparrowDroneMavlink(object):
         else:
             return False
             
-    def connectToSolo(self, wait_ready=False):
+    def connectToSolo(self, wait_ready=True):
         # return self.connect('udpin:0.0.0.0:14550', wait_ready)
         return self.connect('udp:0.0.0.0:14550', wait_ready)
     
@@ -146,7 +146,10 @@ class SparrowDroneMavlink(object):
             latitude = self.vehicle.location.global_frame.lat
             longitude = self.vehicle.location.global_frame.lon
             
-            return True, latitude, longitude, altitude
+            # If it's still in PreArm: Need 3D Fix, is_armable will be false
+            # However, I don't know what would happen if GPS fix gets lost.
+            # return True, latitude, longitude, altitude
+            return self.vehicle.is_armable, latitude, longitude, altitude
         else:
             return False, 0.0, 0.0, 0.0
             
@@ -214,7 +217,12 @@ class SparrowDroneMavlink(object):
         
     def getFirmwareVersion(self):
         if self.vehicle:
-            return self.vehicle.version
+            try:
+                firmwareversion = self.vehicle.version
+            except:
+                firmwareversion = ""
+                
+            return firmwareversion
         else:
             return ""
         
@@ -239,7 +247,7 @@ if __name__ == '__main__':
     # drone.connectToSimulator()
     
     if drone.isConnected():
-        print('Firmware Version: ' + str(drone.getFirmwareVersion() ))
+        # print('Firmware Version: ' + str(drone.getFirmwareVersion() ))
         print('System Status: ' + drone.getSystemStatus())
         print('Vehicle Mode: ' + str(drone.vehicle.mode.name))
         print('Gimbal Status: ' + str(drone.getGimbalStatus()))
