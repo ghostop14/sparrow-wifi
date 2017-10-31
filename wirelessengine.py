@@ -159,6 +159,25 @@ class WirelessClient(object):
             
         return retVal
         
+    def copy(self):
+        return copy.deepcopy(self)
+        
+    def __eq__(self, obj):
+        # This is equivance....   ==
+        if not isinstance(obj, WirelessClient):
+           return False
+          
+        if self.macAddr != obj.macAddr:
+            return False
+            
+        if self.apMacAddr != obj.apMacAddr:
+            return False
+
+        return True
+
+    def __ne__(self, other):
+            return not self.__eq__(other)
+        
     def getKey(self):
         return self.macAddr
         
@@ -167,6 +186,74 @@ class WirelessClient(object):
             return False
             
         return True
+        
+    def createFromJsonDict(jsondict):
+        retVal = WirelessClient()
+        retVal.fromJsondict(jsondict)
+        return retVal
+        
+    def fromJsondict(self, dictjson):
+        # Note: if the json dictionary isn't correct, this will naturally throw an exception that may
+        # need to be caught for error detection
+        self.macAddr = dictjson['macAddr']
+        self.apMacAddr = dictjson['apMacAddr']
+        self.ssid = dictjson['ssid']
+        self.channel = int(dictjson['channel'])
+        
+        self.signal = int(dictjson['signal'])
+        self.strongestsignal = int(dictjson['strongestsignal'])
+
+        self.firstSeen = parser.parse(dictjson['firstseen'])
+        self.lastSeen = parser.parse(dictjson['lastseen'])
+
+        self.gps.latitude = float(dictjson['lat'])
+        self.gps.longitude = float(dictjson['lon'])
+        self.gps.altitude = float(dictjson['alt'])
+        self.gps.speed = float(dictjson['speed'])
+        self.gps.isValid = stringtobool(dictjson['gpsvalid'])
+        
+        self.strongestgps.latitude = float(dictjson['strongestlat'])
+        self.strongestgps.longitude = float(dictjson['strongestlon'])
+        self.strongestgps.altitude = float(dictjson['strongestalt'])
+        self.strongestgps.speed = float(dictjson['strongestspeed'])
+        self.strongestgps.isValid = stringtobool(dictjson['strongestgpsvalid'])
+        
+        self.probedSSIDs = dictjson['probedssids']
+            
+    def fromJson(self, jsonstr):
+        dictjson = json.loads(jsonstr)
+        self.fromJsondict(dictjson)
+            
+    def toJson(self):
+        dictjson = self.toJsondict()
+        return json.dumps(dictjson)
+        
+    def toJsondict(self):
+        dictjson = {}
+        dictjson['type'] = 'wifi-client'
+        dictjson['macAddr'] = self.macAddr
+        dictjson['apMacAddr'] = self.apMacAddr
+        dictjson['ssid'] = self.ssid
+        dictjson['channel'] = self.channel
+        dictjson['signal'] = self.signal
+        dictjson['firstseen'] = str(self.firstSeen)
+        dictjson['lastseen'] = str(self.lastSeen)
+        dictjson['lat'] = str(self.gps.latitude)
+        dictjson['lon'] = str(self.gps.longitude)
+        dictjson['alt'] = str(self.gps.altitude)
+        dictjson['speed'] = str(self.gps.speed)
+        dictjson['gpsvalid'] = str(self.gps.isValid)
+        
+        dictjson['strongestsignal'] = self.strongestsignal
+        dictjson['strongestlat'] = str(self.strongestgps.latitude)
+        dictjson['strongestlon'] = str(self.strongestgps.longitude)
+        dictjson['strongestalt'] = str(self.strongestgps.altitude)
+        dictjson['strongestspeed'] = str(self.strongestgps.speed)
+        dictjson['strongestgpsvalid'] = str(self.strongestgps.isValid)
+
+        dictjson['probedssids'] = self.probedSSIDs
+        
+        return dictjson
         
 class WirelessNetwork(object):
     ERR_NETDOWN = 156
@@ -226,9 +313,6 @@ class WirelessNetwork(object):
 
         return retVal
 
-    def defatul(self, obj):
-        pass
-        
     def copy(self):
         return copy.deepcopy(self)
         
@@ -262,35 +346,35 @@ class WirelessNetwork(object):
         return retVal
         
     def fromJsondict(self, dictjson):
-        try:
-            self.macAddr = dictjson['macAddr']
-            self.ssid = dictjson['ssid']
-            self.mode = dictjson['mode']
-            self.security = dictjson['security']
-            self.privacy = dictjson['privacy']
-            self.cipher = dictjson['cipher']
-            self.frequency = int(dictjson['frequency'])
-            self.channel = int(dictjson['channel'])
-            self.secondaryChannel = int(dictjson['secondaryChannel'])
-            self.secondaryChannelLocation = dictjson['secondaryChannelLocation']
-            self.thirdChannel = int(dictjson['thirdChannel'])
-            self.signal = int(dictjson['signal'])
-            self.signal = int(dictjson['strongestsignal'])
-            self.bandwidth = int(dictjson['bandwidth'])
-            self.firstSeen = parser.parse(dictjson['firstseen'])
-            self.lastSeen = parser.parse(dictjson['lastseen'])
-            self.gps.latitude = float(dictjson['lat'])
-            self.gps.longitude = float(dictjson['lon'])
-            self.gps.altitude = float(dictjson['alt'])
-            self.gps.speed = float(dictjson['speed'])
-            self.gps.isValid = stringtobool(dictjson['gpsvalid'])
-            self.gps.latitude = float(dictjson['strongestlat'])
-            self.gps.longitude = float(dictjson['strongestlon'])
-            self.gps.altitude = float(dictjson['strongestalt'])
-            self.gps.speed = float(dictjson['strongestspeed'])
-            self.gps.isValid = stringtobool(dictjson['strongestgpsvalid'])
-        except:
-            pass
+        # Note: if the json dictionary isn't correct, this will naturally throw an exception that may
+        # need to be caught for error detection
+        self.macAddr = dictjson['macAddr']
+        self.ssid = dictjson['ssid']
+        self.mode = dictjson['mode']
+        self.security = dictjson['security']
+        self.privacy = dictjson['privacy']
+        self.cipher = dictjson['cipher']
+        self.frequency = int(dictjson['frequency'])
+        self.channel = int(dictjson['channel'])
+        self.secondaryChannel = int(dictjson['secondaryChannel'])
+        self.secondaryChannelLocation = dictjson['secondaryChannelLocation']
+        self.thirdChannel = int(dictjson['thirdChannel'])
+        self.signal = int(dictjson['signal'])
+        self.strongestsignal = int(dictjson['strongestsignal'])
+        self.bandwidth = int(dictjson['bandwidth'])
+        self.firstSeen = parser.parse(dictjson['firstseen'])
+        self.lastSeen = parser.parse(dictjson['lastseen'])
+        self.gps.latitude = float(dictjson['lat'])
+        self.gps.longitude = float(dictjson['lon'])
+        self.gps.altitude = float(dictjson['alt'])
+        self.gps.speed = float(dictjson['speed'])
+        self.gps.isValid = stringtobool(dictjson['gpsvalid'])
+        
+        self.strongestgps.latitude = float(dictjson['strongestlat'])
+        self.strongestgps.longitude = float(dictjson['strongestlon'])
+        self.strongestgps.altitude = float(dictjson['strongestalt'])
+        self.strongestgps.speed = float(dictjson['strongestspeed'])
+        self.strongestgps.isValid = stringtobool(dictjson['strongestgpsvalid'])
             
     def fromJson(self, jsonstr):
         dictjson = json.loads(jsonstr)
@@ -298,6 +382,7 @@ class WirelessNetwork(object):
             
     def toJsondict(self):
         dictjson = {}
+        dictjson['type'] = 'wifi-ap'
         dictjson['macAddr'] = self.macAddr
         dictjson['ssid'] = self.ssid
         dictjson['mode'] = self.mode

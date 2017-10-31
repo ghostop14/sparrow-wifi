@@ -202,15 +202,39 @@ def requestRemoteNetworks(remoteIP, remotePort, remoteInterface, channelList=Non
         return -1, "Error connecting to remote agent", None
 
 
+# ------------------  Class Base Thread ----------------------------------
+class MyBaseThread(Thread):
+    def __init__(self):
+        super().__init__()
+        self.signalStop = False
+        self.threadRunning = False
+
+    def run(self):
+        self.threadRunning = True
+        
+        # Just a basic sleep for 1 second example loop.
+        # Instantiate and call start() to get it going
+        while not self.signalStop:
+            sleep(1)
+            
+        self.threadRunning = False
+
+    def stopAndWait(self):
+        self.signalStop = True
+        
+        self.waitTillFinished()
+        
+    def waitTillFinished(self):
+        while self.threadRunning:
+            sleep(0.1)
+            
 # ------------------  Local network scan thread  ------------------------------
-class ScanThread(Thread):
+class ScanThread(MyBaseThread):
     def __init__(self, interface, mainWin, channelList=None):
-        super(ScanThread, self).__init__()
+        super().__init__()
         self.interface = interface
         self.mainWin = mainWin
-        self.signalStop = False
         self.scanDelay = 0.5  # seconds
-        self.threadRunning = False
         self.channelList = channelList
         
     def run(self):
@@ -257,15 +281,36 @@ class ScanThread(Thread):
                     
         self.threadRunning = False
 
-# ------------------  Remote agent network scan thread  ------------------------------
-class RemoteScanThread(Thread):
-    def __init__(self, interface, mainWin, channelList=None):
-        super(RemoteScanThread, self).__init__()
+# ------------------  Remote single-shot scan thread  ------------------------------
+class remoteSingleShotThread(Thread):
+    def __init__(self, interface, mainWin, remoteAgentIP, remoteAgentPort, channelList=None):
+        super().__init__()
         self.interface = interface
         self.mainWin = mainWin
-        self.signalStop = False
-        self.scanDelay = 0.5  # seconds
+        self.huntChannelList = channelList
+        self.remoteAgentIP = remoteAgentIP
+        self.remoteAgentPort = remoteAgentPort
+        
+    def run(self):
+        self.threadRunning = True
+        
+        # Run one shot and emit results
+        if (not self.huntChannelList) or (len(self.huntChannelList) == 0):
+            retCode, errString, wirelessNetworks = requestRemoteNetworks(self.remoteAgentIP, self.remoteAgentPort, self.interface)
+        else:
+            retCode, errString, wirelessNetworks = requestRemoteNetworks(self.remoteAgentIP, self.remoteAgentPort, self.interface, self.huntChannelList)
+        
+        mainWin.singleshotscanresults.emit(wirelessNetworks, retCode, errString)
+        
         self.threadRunning = False
+
+# ------------------  Remote agent network scan thread  ------------------------------
+class RemoteScanThread(MyBaseThread):
+    def __init__(self, interface, mainWin, channelList=None):
+        super().__init__()
+        self.interface = interface
+        self.mainWin = mainWin
+        self.scanDelay = 0.5  # seconds
         self.remoteAgentIP = "127.0.0.1"
         self.remoteAgentPort = 8020
         self.channelList = channelList
@@ -315,6 +360,7 @@ class mainWindow(QMainWindow):
     # Notify signals
     resized = QtCore.pyqtSignal()
     scanresults = QtCore.pyqtSignal(dict)
+    singleshotscanresults = QtCore.pyqtSignal(dict, int, str)
     scanresultsfromadvanced = QtCore.pyqtSignal(dict)
     errmsg = QtCore.pyqtSignal(int, str)
     gpsSynchronizedsignal = QtCore.pyqtSignal()
@@ -361,15 +407,18 @@ class mainWindow(QMainWindow):
         self.scanThread = None
         self.scanDelay = 0.5
         self.scanresults.connect(self.scanResults)
+        self.singleshotscanresults.connect(self.onSingleShotScanResults)
         self.scanresultsfromadvanced.connect(self.scanResultsFromAdvanced)
         self.errmsg.connect(self.onErrMsg)
         
+        # Remote Scans
         self.remoteAgentIP = ''
         self.remoteAgentPort = 8020
         self.remoteAutoUpdates = True
         self.remoteScanRunning = False
         self.remoteScanIsBlocking = False
         self.remoteScanThread = None
+        self.remoteSingleShotThread = None
         self.remoteScanDelay = 0.5
         self.lastRemoteState = False
         self.remoteAgentUp = False
@@ -581,21 +630,36 @@ class mainWindow(QMainWindow):
         fileMenu.addAction(newAct)
 
         # import
-        newAct = QAction('&Import from saved IW output', self)        
-        newAct.setStatusTip("Run 'iw dev <wireless interface> scan > <somefile>' and import the data directly with this option")
-        newAct.triggered.connect(self.importIWData)
-        fileMenu.addAction(newAct)
-        
-        newAct = QAction('&Import from saved CSV', self)        
+        importMenu = fileMenu.addMenu('&Import')
+
+        newAct = QAction('&Saved CSV', self)        
         newAct.setStatusTip('Import from saved CSV')
-        newAct.triggered.connect(self.importData)
-        fileMenu.addAction(newAct)
+        newAct.triggered.connect(self.onImportCSV)
+        importMenu.addAction(newAct)
+        
+        newAct = QAction('&Saved JSON', self)        
+        newAct.setStatusTip('Import from saved JSON')
+        newAct.triggered.connect(self.onImportJSON)
+        importMenu.addAction(newAct)
+
+        importMenu.addSeparator()
+        
+        newAct = QAction('&Import iw scan (iw dev <interface> scan > <file>)', self)        
+        newAct.setStatusTip("Run 'iw dev <wireless interface> scan > <somefile>' and import the data directly with this option")
+        newAct.triggered.connect(self.onImportIWData)
+        importMenu.addAction(newAct)
         
         # export
-        newAct = QAction('&Export to CSV', self)        
+        exportMenu = fileMenu.addMenu('&Export')
+        newAct = QAction('&To CSV', self)        
         newAct.setStatusTip('Export to CSV')
-        newAct.triggered.connect(self.exportData)
-        fileMenu.addAction(newAct)
+        newAct.triggered.connect(self.onExportCSV)
+        exportMenu.addAction(newAct)
+        
+        newAct = QAction('&To JSON', self)        
+        newAct.setStatusTip('Export to JSON')
+        newAct.triggered.connect(self.onExportJSON)
+        exportMenu.addAction(newAct)
         
         # exitAct = QAction(QIcon('exit.png'), '&Exit', self)        
         exitAct = QAction('&Exit', self)        
@@ -1148,9 +1212,17 @@ class mainWindow(QMainWindow):
                     self.statusBar().showMessage("Remote GPS service is not running.")
                     self.btnGPSStatus.setStyleSheet("background-color: red; border: 1px;")
             else:
-                self.statusBar().showMessage("Remote GPS Error: " + errMsg)
-                self.btnGPSStatus.setStyleSheet("background-color: red; border: 1px;")
+                if errCode == -1:
+                    # Agent disconnected.
+                    # Stop any active scan and transition local
+                    self.agentDisconnected()
+                    self.statusBar().showMessage("Error connecting to remote agent.  Agent disconnected.")
+                    QMessageBox.question(self, 'Error',"Error connecting to remote agent.  Agent disconnected.", QMessageBox.Ok)
+                else:
+                    self.statusBar().showMessage("Remote GPS Error: " + errMsg)
+                    self.btnGPSStatus.setStyleSheet("background-color: red; border: 1px;")
             
+
     def onGPSSyncChanged(self):
         # GPS status has changed
         self.onGPSStatus()
@@ -1191,47 +1263,86 @@ class mainWindow(QMainWindow):
         else:
             selectedSeries = None
 
-    def onRemoteScanClicked(self, pressed):
+    def onGPSStatusIndicatorClicked(self):
+        if self.menuRemoteAgent.isChecked():
+            self.onXGPSRemote()
+        else:
+            if GPSEngine.GPSDRunning():
+                self.onXGPSLocal()
+
+    def onSingleShotScanResults(self, wirelessNetworks, retCode, errString):
+        # Change the GUI controls back
+        self.scanModeCombo.setEnabled(True)
+        self.huntChannels.setEnabled(True)
         
+        self.btnScan.setEnabled(True)
+        self.btnScan.setStyleSheet("background-color: rgba(2,128,192,255); border: none;")
+        self.btnScan.setText('&Scan')
+        
+        # Display the data or any errors if they occurred
+        if (retCode == 0):
+            # Good data
+            if len(wirelessNetworks) > 0:
+                self.populateTable(wirelessNetworks)
+                
+            self.statusBar().showMessage('Ready')
+        else:
+            # Errors (note, device busy can happen, but for single-shot mode we want to know because no display change would happen)
+            self.errmsg.emit(retCode, errString)
+                    
+        # reset the shortcut (seems to undo when we change the text)
+        self.btnScan.setShortcut('Ctrl+S')
+        self.btnScan.setChecked(False)
+        
+    def onRemoteScanSingleShot(self):
+        # Quick sanity check for interfaces
+        if (self.combo.count() > 0):
+            curInterface = str(self.combo.currentText())
+            self.statusBar().showMessage('Scanning on interface ' + curInterface)
+        else:
+            # No interfaces, don't do anything and just debounce the scan button
+            self.btnScan.setChecked(False)
+            return
+            
+        # Disable the GUI controls to indicate we're scanning
+        self.scanModeCombo.setEnabled(False)
+        self.huntChannels.setEnabled(False)
+        
+        self.btnScan.setEnabled(False)
+        self.btnScan.setStyleSheet("background-color: rgba(224,224,224,255); border: none;")
+        self.btnScan.setText('&Scanning')
+        self.btnScan.repaint()
+        
+        # Make the call to get the data
+
+        if self.scanMode == "Normal" or (len(self.huntChannelList) == 0):
+            # retCode, errString, wirelessNetworks = requestRemoteNetworks(self.remoteAgentIP, self.remoteAgentPort, curInterface)
+            self.remoteSingleShotThread = remoteSingleShotThread(curInterface, self, self.remoteAgentIP, self.remoteAgentPort)
+        else:
+            # retCode, errString, wirelessNetworks = requestRemoteNetworks(self.remoteAgentIP, self.remoteAgentPort, curInterface, self.huntChannelList)
+            self.remoteSingleShotThread = remoteSingleShotThread(curInterface, self, self.remoteAgentIP, self.remoteAgentPort, self.huntChannelList)
+        
+        self.remoteSingleShotThread.start()
+        
+        # Change the GUI controls back happens when the emit happens
+
+    def agentDisconnected(self):
+        # Don't try to pull any more GPS status
+        self.remoteAgentUp = False
+        
+        # Stop any running scans
+        if self.remoteAutoUpdates and self.btnScan.isChecked():
+            self.btnScan.setChecked(False)
+            self.onScanClicked(False)
+            
+        # Signal disconnect agent internally
+        self.menuRemoteAgent.setChecked(False)
+        self.onRemoteAgent()
+                
+    def onRemoteScanClicked(self, pressed):
         if not self.remoteAutoUpdates:
             # Single-shot mode.
-            if (self.combo.count() > 0):
-                curInterface = str(self.combo.currentText())
-                self.statusBar().showMessage('Scanning on interface ' + curInterface)
-            else:
-                self.btnScan.setChecked(False)
-                return
-                
-            
-            self.scanModeCombo.setEnabled(False)
-            self.huntChannels.setEnabled(False)
-            
-            self.btnScan.setEnabled(False)
-            self.btnScan.setStyleSheet("background-color: rgba(224,224,224,255); border: none;")
-            self.btnScan.setText('&Scanning')
-            self.btnScan.repaint()
-            if self.scanMode == "Normal" or (len(self.huntChannelList) == 0):
-                retCode, errString, wirelessNetworks = requestRemoteNetworks(self.remoteAgentIP, self.remoteAgentPort, curInterface)
-            else:
-                retCode, errString, wirelessNetworks = requestRemoteNetworks(self.remoteAgentIP, self.remoteAgentPort, curInterface, self.huntChannelList)
-            
-            self.scanModeCombo.setEnabled(True)
-            self.huntChannels.setEnabled(True)
-            
-            self.btnScan.setEnabled(True)
-            self.btnScan.setStyleSheet("background-color: rgba(2,128,192,255); border: none;")
-            self.btnScan.setText('&Scan')
-            if (retCode == 0):
-                if len(wirelessNetworks) > 0:
-                    self.scanresults.emit(wirelessNetworks)
-                self.statusBar().showMessage('Ready')
-            else:
-                    if (retCode != WirelessNetwork.ERR_DEVICEBUSY):
-                        self.errmsg.emit(retCode, errString)
-                        
-                        
-            self.btnScan.setShortcut('Ctrl+S')
-            self.btnScan.setChecked(False)
+            self.onRemoteScanSingleShot()
             return
             
         # Auto update
@@ -1277,13 +1388,6 @@ class mainWindow(QMainWindow):
         # Need to reset the shortcut after changing the text
         self.btnScan.setShortcut('Ctrl+S')
 
-    def onGPSStatusIndicatorClicked(self):
-        if self.menuRemoteAgent.isChecked():
-            self.onXGPSRemote()
-        else:
-            if GPSEngine.GPSDRunning():
-                self.onXGPSLocal()
-        
     def onScanClicked(self, pressed):
         if self.menuRemoteAgent.isChecked():
             # We're in remote mode.  Let's handle it there
@@ -1736,7 +1840,7 @@ class mainWindow(QMainWindow):
         else:
             return None
 
-    def importIWData(self):
+    def onImportIWData(self):
         fileName = self.openFileDialog("iw scan output Files (*.iw);;All Files (*)")
 
         if not fileName:
@@ -1760,12 +1864,52 @@ class mainWindow(QMainWindow):
         if len(wirelessNetworks) > 0:
             self.populateTable(wirelessNetworks)
                 
-    def importData(self):
+    def onImportJSON(self):
+        fileName = self.openFileDialog("JSON Files (*.json);;All Files (*)")
+
+        if not fileName:
+            return
+            
+        if not os.path.isfile(fileName):
+            QMessageBox.question(self, 'Error','File ' + fileName + " doesn't exist.", QMessageBox.Ok)
+            return
+            
+        wirelessNetworks = {}
+        json_data = ""
+        
+        with open(fileName, 'r') as f:
+            json_data = f.read()
+        
+        try:
+            netDict = json.loads(json_data)
+        except:
+            QMessageBox.question(self, 'Error',"Unable to parse JSON data.", QMessageBox.Ok)
+            return
+        
+        if not 'wifi-aps' in netDict:
+            QMessageBox.question(self, 'Error',"JSON appears to be the wrong format (no wifi-aps tag).", QMessageBox.Ok)
+            return
+            
+        netList = netDict['wifi-aps']
+        
+        for curNet in netList:
+            newNet = WirelessNetwork.createFromJsonDict(curNet)
+            wirelessNetworks[newNet.getKey()] = newNet
+            
+        if len(wirelessNetworks) > 0:
+            self.onClearData()
+            self.populateTable(wirelessNetworks)
+            
+    def onImportCSV(self):
         fileName = self.openFileDialog()
 
         if not fileName:
             return
             
+        if not os.path.isfile(fileName):
+            QMessageBox.question(self, 'Error','File ' + fileName + " doesn't exist.", QMessageBox.Ok)
+            return
+        
         wirelessNetworks = {}
         
         with open(fileName, 'r') as f:
@@ -1831,7 +1975,43 @@ class mainWindow(QMainWindow):
             self.onClearData()
             self.populateTable(wirelessNetworks)
 
-    def exportData(self):
+    def onExportJSON(self):
+        fileName = self.saveFileDialog("JSON Files (*.json);;All Files (*)")
+
+        if not fileName:
+            return
+            
+        try:
+            outputFile = open(fileName, 'w')
+        except:
+            QMessageBox.question(self, 'Error',"Unable to write to " + fileName, QMessageBox.Ok)
+            return
+        
+        self.updateLock.acquire()
+        
+        numItems = self.networkTable.rowCount()
+        
+        if numItems == 0:
+            outputFile.close()
+            return
+
+        # This will create a dictionary with an item named 'wifi-aps' which will contain a list of networks
+        outputdict = {}
+        netlist = []
+        
+        for i in range(0, numItems):
+            curData = self.networkTable.item(i, 2).data(Qt.UserRole+1)
+            netlist.append(curData.toJsondict())
+            
+        outputdict['wifi-aps'] = netlist
+        
+        outputstr=json.dumps(outputdict)
+        outputFile.write(outputstr)
+        
+        outputFile.close()
+        self.updateLock.release()
+        
+    def onExportCSV(self):
         fileName = self.saveFileDialog()
 
         if not fileName:
@@ -1844,6 +2024,8 @@ class mainWindow(QMainWindow):
             return
             
         outputFile.write('macAddr,vendor,SSID,Security,Privacy,Channel,Frequency,Signal Strength,Strongest Signal Strength,Bandwidth,Last Seen,First Seen,GPS Valid,Latitude,Longitude,Altitude,Speed,Strongest GPS Valid,Strongest Latitude,Strongest Longitude,Strongest Altitude,Strongest Speed\n')
+
+        self.updateLock.acquire()
 
         numItems = self.networkTable.rowCount()
         
@@ -1861,6 +2043,8 @@ class mainWindow(QMainWindow):
                                     str(curData.strongestgps.isValid) + ',' + str(curData.strongestgps.latitude) + ',' + str(curData.strongestgps.longitude) + ',' + str(curData.strongestgps.altitude) + ',' + str(curData.strongestgps.speed) + '\n')
             
         outputFile.close()
+        
+        self.updateLock.release()
         
     def center(self):
         # Get our geometry
@@ -1994,12 +2178,12 @@ class mainWindow(QMainWindow):
                 self.remoteAgentUp = True
                 
                 # If we're here we're good.
-                reply = QMessageBox.question(self, 'Question',"Would you like updates to happen automatically?", QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+                reply = QMessageBox.question(self, 'Question',"Would you like to just do 1 scan pass when pressing scan?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
 
                 if reply == QMessageBox.Yes:
-                    self.remoteAutoUpdates = True
-                else:
                     self.remoteAutoUpdates = False
+                else:
+                    self.remoteAutoUpdates = True
 
                 # Configure the GUI.
                 self.lblInterface.setText("Remote Interface")
@@ -2038,6 +2222,8 @@ class mainWindow(QMainWindow):
                     self.combo.addItem(curInterface)
             else:
                 self.statusBar().showMessage('No wireless interfaces found.')
+
+            self.remoteAgentUp = False
 
             self.lastRemoteState = self.menuRemoteAgent.isChecked() 
             self.onGPSStatus()
