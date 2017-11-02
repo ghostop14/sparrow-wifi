@@ -778,7 +778,7 @@ class GPSCoordDIalog(QDialog):
         self.gpsTimer.timeout.connect(self.onGPSTimer)
         self.gpsTimer.setSingleShot(True)
         self.gpsTimerTimeout = 2000
-        self.gpsTimer.start(self.gpsTimerTimeout)   # Check every 5 seconds
+        self.gpsTimer.start(self.gpsTimerTimeout)
         
         self.lastGPS = None
         self.firstUpdate = True

@@ -833,7 +833,7 @@ class mainWindow(QMainWindow):
                         curNet = wirelessNetworks[curKey]
                         if (curData.macAddr == curNet.macAddr) and (curData.channel == curNet.channel):
                             # See if we had an unknown SSID
-                            if curData.ssid.startswith('<Unknown') and (not curNet.startswith('<Unknown')):
+                            if curData.ssid.startswith('<Unknown') and (not curNet.ssid.startswith('<Unknown')):
                                 curData.ssid = curNet.ssid
                                 self.networkTable.item(curRow, 2).setText(curData.ssid)
         
@@ -842,10 +842,24 @@ class mainWindow(QMainWindow):
             return
                     
         if not self.advancedScan:
-            self.advancedScan = AdvancedScanDialog(self, None)  # Need to set parent to None to allow it to not always be on top
+            self.advancedScan = AdvancedScanDialog(self.remoteAgentUp,  self.remoteAgentIP,  self.remoteAgentPort, self, None)  # Need to set parent to None to allow it to not always be on top
+
+        self.checkNotifyAdvancedScan()
             
         self.advancedScan.show()
         self.advancedScan.activateWindow()
+
+    def checkNotifyAdvancedScan(self):
+        if not self.advancedScan:
+            return
+            
+        # If we've changed from local<->remote, or something about the remote end has changed, let's signal update
+        if ((self.advancedScan.usingRemoteAgent != self.remoteAgentUp) or 
+            (self.remoteAgentUp and (self.remoteAgentIP !=self.advancedScan.remoteAgentIP or self.remoteAgentPort !=self.advancedScan.remoteAgentPort))) :
+            if self.remoteAgentUp:
+                self.advancedScan.setRemoteAgent(self.remoteAgentIP, self.remoteAgentPort)
+            else:
+                self.advancedScan.setLocal()
         
     def onScanModeChanged(self):
         self.scanMode = str(self.scanModeCombo.currentText())
@@ -1338,6 +1352,8 @@ class mainWindow(QMainWindow):
         # Signal disconnect agent internally
         self.menuRemoteAgent.setChecked(False)
         self.onRemoteAgent()
+        
+        self.checkNotifyAdvancedScan()
                 
     def onRemoteScanClicked(self, pressed):
         if not self.remoteAutoUpdates:
@@ -2227,6 +2243,8 @@ class mainWindow(QMainWindow):
 
             self.lastRemoteState = self.menuRemoteAgent.isChecked() 
             self.onGPSStatus()
+            
+        self.checkNotifyAdvancedScan()
 
     def onAbout(self):
         aboutMsg = "Sparrow-wifi 802.11 WiFi Graphic Analyzer\n"
@@ -2258,6 +2276,10 @@ class mainWindow(QMainWindow):
                 except:
                     pass
                     
+        if self.advancedScan:
+            self.advancedScan.close()
+            self.advancedScan = None
+            
         if self.agentListenerWindow:
             self.agentListenerWindow.close()
             self.agentListenerWindow = None
