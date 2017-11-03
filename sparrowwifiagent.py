@@ -918,7 +918,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
     def isValidGetURL(s):
         allowedfullurls = ['/wireless/interfaces', 
                                     '/wireless/moninterfaces', 
-                                    '/falcon/getscanresults', 
+                                    '/falcon/getscanresults',
                                     '/gps/status']
         allowedstarturls=['/wireless/networks/', 
                                     '/falcon/startmonmode/', 
@@ -926,6 +926,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                                     '/falcon/scanrunning/', 
                                     '/falcon/startscan/', 
                                     '/falcon/stopscan/', 
+                                    '/falcon/stopalldeauths', 
                                     '/system/config', 
                                     '/system/startrecord', 
                                     '/system/stoprecord']
@@ -1391,6 +1392,42 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                         # This just signals that the GPS isn't synced
                         SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_HEARTBEAT)
                 
+                s.wfile.write(jsonstr.encode("UTF-8"))
+        elif '/falcon/stopalldeauths' in s.path:
+            if not hasFalcon:
+                responsedict = {}
+                responsedict['errcode'] = 5
+                responsedict['errmsg'] = "Unknown request: " + s.path
+                
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            else:
+                inputstr = s.path.replace('/falcon/stopalldeauths/', '')
+                # Sanitize command-line input here:
+                p = re.compile('^([0-9a-zA-Z]+)')
+                try:
+                    fieldValue = p.search(inputstr).group(1)
+                except:
+                    fieldValue = ""
+                    
+                if len(fieldValue) == 0:
+                    if useRPILeds:
+                        # Green will heartbeat when servicing requests. Turn back solid here
+                        SparrowRPi.greenLED(LIGHT_STATE_ON)
+                        
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    return
+                    
+                falconWiFiRemoteAgent.stopAllDeauths(fieldValue)
+                responsedict = {}
+                responsedict['errcode'] = 0
+                responsedict['errmsg'] = ""
+                
+                jsonstr = json.dumps(responsedict)
                 s.wfile.write(jsonstr.encode("UTF-8"))
         else:
             # Catch-all.  Should never be here
