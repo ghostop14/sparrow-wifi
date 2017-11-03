@@ -24,7 +24,7 @@ import json
 import re
 import argparse
 import configparser
-import subprocess
+# import subprocess
 
 from socket import *
 from time import sleep
@@ -632,6 +632,9 @@ class SparrowWiFiAgent(object):
         if useRPILeds:
             SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_OFF)
             
+        if hasFalcon:
+            falconWiFiRemoteAgent.cleanup()
+            
         curTime = datetime.datetime.now()
         print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] Sparrow-wifi agent stopped.")
 
@@ -659,7 +662,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 s.wfile.write("</body></html>".encode("UTF-8"))
                 return
                 
-        if (s.path != '/system/config'):
+        if (not s.isValidPostURL()):
             s.send_response(404)
             s.send_header("Content-type", "text/html")
             s.end_headers()
@@ -667,6 +670,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
             s.wfile.write("</body></html>".encode("UTF-8"))
             return
             
+        # Get the size of the posted data
         try:
             length = int(s.headers['Content-Length'])
         except:
@@ -684,85 +688,233 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
             s.wfile.write(jsonstr.encode("UTF-8"))
             return
             
+        # get the POSTed payload
         jsonstr_data = s.rfile.read(length).decode('utf-8')
         
+        # Try to convert it to JSON
         try:
             jsondata = json.loads(jsonstr_data)
         except:
+            responsedict = {}
+            responsedict['errcode'] = 1
+            responsedict['errmsg'] = 'bad posted data.'
+
+            s.send_response(400)
+            s.send_header("Content-type", "application/json")
+            s.end_headers()
+            jsonstr = json.dumps(responsedict)
+            s.wfile.write(jsonstr.encode("UTF-8"))
             return
             
-        # -------------  Update startup config ------------------
-        try:
-            scfg = jsondata['startup']
-            startupCfg = AgentConfigSettings()
-            startupCfg.fromJsondict(scfg)
-            
-            dirname, filename = os.path.split(os.path.abspath(__file__))
-            cfgFile = dirname + '/sparrowwifiagent.cfg'
-            retVal = startupCfg.toConfigFile(cfgFile)
-            
-            if not retVal:
-                # HTML 400 = Bad request
-                s.send_response(400)
-                responsedict = {}
-                responsedict['errcode'] = 2
-                responsedict['errmsg'] = 'An error occurred saving the startup config.'
-
-                s.send_response(400)
-                s.send_header("Content-type", "application/json")
-                s.end_headers()
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-        except:
-            responsedict = {}
-            responsedict['errcode'] = 3
-            responsedict['errmsg'] = 'Bad startup config.'
-
-            s.send_response(400)
-            s.send_header("Content-type", "application/json")
-            s.end_headers()
-            jsonstr = json.dumps(responsedict)
-            s.wfile.write(jsonstr.encode("UTF-8"))
-
-        # -------------  Check if we should reboot ------------------
-        if 'rebootagent' in jsondata:
-            rebootFlag = jsondata['rebootagent']
-            if rebootFlag:
-                responsedict = {}
-                responsedict['errcode'] = 0
-                responsedict['errmsg'] = 'Restarting agent.'
-
-                s.send_response(200)
-                s.send_header("Content-type", "application/json")
-                s.end_headers()
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
+        if s.path == '/system/config':
+            # -------------  Update startup config ------------------
+            try:
+                scfg = jsondata['startup']
+                startupCfg = AgentConfigSettings()
+                startupCfg.fromJsondict(scfg)
                 
-                restartAgent()
+                dirname, filename = os.path.split(os.path.abspath(__file__))
+                cfgFile = dirname + '/sparrowwifiagent.cfg'
+                retVal = startupCfg.toConfigFile(cfgFile)
+                
+                if not retVal:
+                    # HTML 400 = Bad request
+                    s.send_response(400)
+                    responsedict = {}
+                    responsedict['errcode'] = 2
+                    responsedict['errmsg'] = 'An error occurred saving the startup config.'
+
+                    s.send_response(400)
+                    s.send_header("Content-type", "application/json")
+                    s.end_headers()
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+            except:
+                responsedict = {}
+                responsedict['errcode'] = 3
+                responsedict['errmsg'] = 'Bad startup config.'
+
+                s.send_response(400)
+                s.send_header("Content-type", "application/json")
+                s.end_headers()
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+
+            # -------------  Check if we should reboot ------------------
+            if 'rebootagent' in jsondata:
+                rebootFlag = jsondata['rebootagent']
+                if rebootFlag:
+                    responsedict = {}
+                    responsedict['errcode'] = 0
+                    responsedict['errmsg'] = 'Restarting agent.'
+
+                    s.send_response(200)
+                    s.send_header("Content-type", "application/json")
+                    s.end_headers()
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    
+                    restartAgent()
+                
+            # If we're restarting, we'll never get to running config.
             
-        # If we're restarting, we'll never get to running config.
-        
-        # -------------  Update Running config ------------------
-        
-        try:
-            rcfg = jsondata['running']
-            tmpcfg = AgentConfigSettings()
-            tmpcfg.fromJsondict(rcfg)
+            # -------------  Update Running config ------------------
             
-            updateRunningConfig(tmpcfg)
-        except:
+            try:
+                rcfg = jsondata['running']
+                tmpcfg = AgentConfigSettings()
+                tmpcfg.fromJsondict(rcfg)
+                
+                updateRunningConfig(tmpcfg)
+            except:
+                responsedict = {}
+                responsedict['errcode'] = 4
+                responsedict['errmsg'] = 'Bad running config.'
+
+                s.send_response(400)
+                s.send_header("Content-type", "application/json")
+                s.end_headers()
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+
+            # -------------  Done updating config ------------------
+        elif s.path == '/falcon/stopdeauth':
+            if not hasFalcon:
+                s.send_response(400)
+                s.send_header("Content-type", "application/json")
+                s.end_headers()
+                responsedict = {}
+                responsedict['errcode'] = 5
+                responsedict['errmsg'] = "Unknown request: " + s.path
+                
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            else:
+                # Should get a FalconDeauth object
+                # This is in jsondata
+                try:
+                    apMacAddr = jsondata['apmacaddr']
+                    clientMacAddr = jsondata['stationmacaddr']
+                    channel = jsondata['channel']
+                    curInterface = jsondata['interface']
+                    
+                    falconWiFiRemoteAgent.stopDeauth(apMacAddr, clientMacAddr, curInterface, channel)
+                    responsedict = {}
+                    responsedict['errcode'] = 0
+                    responsedict['errmsg'] = ""
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.send_response(200)
+                    s.send_header("Content-type", "application/json")
+                    s.end_headers()
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                except:
+                    s.send_response(400)
+                    s.send_header("Content-type", "application/json")
+                    s.end_headers()
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Error parsing json"
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+        elif s.path == '/falcon/deauth':
+            if not hasFalcon:
+                s.send_response(400)
+                s.send_header("Content-type", "application/json")
+                s.end_headers()
+                responsedict = {}
+                responsedict['errcode'] = 5
+                responsedict['errmsg'] = "Unknown request: " + s.path
+                
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            else:
+                # Should get a FalconDeauth object
+                # This is in jsondata
+                try:
+                    apMacAddr = jsondata['apmacaddr']
+                    clientMacAddr = jsondata['stationmacaddr']
+                    channel = jsondata['channel']
+                    curInterface = jsondata['interface']
+                    continuous = jsondata['continuous']
+                    
+                    if len(clientMacAddr) == 0:
+                        newDeauth = falconWiFiRemoteAgent.deauthAccessPoint(apMacAddr, curInterface, channel, continuous)
+                    else:
+                        newDeauth = falconWiFiRemoteAgent.deauthAccessPointAndClient(apMacAddr, clientMacAddr, curInterface, channel, continuous)
+                        
+                    if not continuous:
+                        # There's nothing to check.  Just return
+                        s.send_response(200)
+                        s.send_header("Content-type", "application/json")
+                        s.end_headers()
+                        responsedict = {}
+                        responsedict['errcode'] = 0
+                        responsedict['errmsg'] = ""
+                        
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    else:
+                        if newDeauth:
+                            # Deauth was started
+                            s.send_response(200)
+                            #s.send_header("Content-type", "text/html")
+                            s.send_header("Content-type", "application/json")
+                            s.end_headers()
+                            responsedict = {}
+                            responsedict['errcode'] = 0
+                            responsedict['errmsg'] = ""
+                            
+                            jsonstr = json.dumps(responsedict)
+                            s.wfile.write(jsonstr.encode("UTF-8"))
+                        else:
+                            # Something went wrong with the start
+                            s.send_response(400)
+                            s.send_header("Content-type", "application/json")
+                            s.end_headers()
+                            responsedict = {}
+                            responsedict['errcode'] = 1
+                            responsedict['errmsg'] = "An error occurred starting the deauth process."
+                            
+                            jsonstr = json.dumps(responsedict)
+                            s.wfile.write(jsonstr.encode("UTF-8"))
+                except:
+                    s.send_response(400)
+                    s.send_header("Content-type", "application/json")
+                    s.end_headers()
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Error parsing json"
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+        else:
             responsedict = {}
-            responsedict['errcode'] = 4
-            responsedict['errmsg'] = 'Bad running config.'
+            responsedict['errcode'] = 5
+            responsedict['errmsg'] = 'Bad request.'
 
             s.send_response(400)
             s.send_header("Content-type", "application/json")
             s.end_headers()
             jsonstr = json.dumps(responsedict)
             s.wfile.write(jsonstr.encode("UTF-8"))
-
-        # -------------  Done updating config ------------------
-
+            
+    def isValidPostURL(s):
+        allowedfullurls = ['/system/config', 
+                                    '/falcon/deauth', 
+                                    '/falcon/stopdeauth']
+        allowedstarturls=[]
+        
+        if s.path in allowedfullurls:
+            return True
+        else:
+            for curURL in allowedstarturls:
+                if s.path.startswith(curURL):
+                    return True
+        
+        return False
+        
     def isValidGetURL(s):
         allowedfullurls = ['/wireless/interfaces', 
                                     '/wireless/moninterfaces', 
@@ -771,6 +923,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
         allowedstarturls=['/wireless/networks/', 
                                     '/falcon/startmonmode/', 
                                     '/falcon/stopmonmode/', 
+                                    '/falcon/scanrunning/', 
                                     '/falcon/startscan/', 
                                     '/falcon/stopscan/', 
                                     '/system/config', 
@@ -1079,6 +1232,50 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 
                 jsonstr = json.dumps(responsedict)
                 s.wfile.write(jsonstr.encode("UTF-8"))
+        elif '/falcon/scanrunning' in s.path:
+            if not hasFalcon:
+                responsedict = {}
+                responsedict['errcode'] = 5
+                responsedict['errmsg'] = "Unknown request: " + s.path
+                
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            else:
+                inputstr = s.path.replace('/falcon/scanrunning/', '')
+                # Sanitize command-line input here:
+                p = re.compile('^([0-9a-zA-Z]+)')
+                try:
+                    fieldValue = p.search(inputstr).group(1)
+                except:
+                    fieldValue = ""
+                    
+                if len(fieldValue) == 0:
+                    if useRPILeds:
+                        # Green will heartbeat when servicing requests. Turn back solid here
+                        SparrowRPi.greenLED(LIGHT_STATE_ON)
+                        
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    return
+                    
+                scanrunning = falconWiFiRemoteAgent.isScanRunning(fieldValue)
+                
+                if scanrunning:
+                    retVal = 0
+                    errMsg = "scan for " + fieldValue + " is running"
+                else:
+                    retVal = 1
+                    errMsg = "scan for " + fieldValue + " is not running"
+                    
+                responsedict = {}
+                responsedict['errcode'] = retVal
+                responsedict['errmsg'] = errMsg
+                
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
         elif '/falcon/startscan' in s.path:
             if not hasFalcon:
                 responsedict = {}
@@ -1231,6 +1428,8 @@ if __name__ == '__main__':
     
     if dirname not in sys.path:
         sys.path.insert(0, dirname)
+
+    # Check for Falcon offensive plugin
     pluginsdir = dirname+'/plugins'
     if  os.path.exists(pluginsdir):
         if pluginsdir not in sys.path:
@@ -1239,6 +1438,10 @@ if __name__ == '__main__':
             from falconwifi import FalconWiFiRemoteAgent
             hasFalcon = True
             falconWiFiRemoteAgent = FalconWiFiRemoteAgent()
+            if not falconWiFiRemoteAgent.toolsInstalled():
+                print("ERROR: aircrack suite of tools does not appear to be installed.  Please install it.")
+                exit(4)
+
 
     # See if we have a config file:
     dirname, filename = os.path.split(os.path.abspath(__file__))

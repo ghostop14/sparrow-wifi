@@ -422,6 +422,8 @@ class mainWindow(QMainWindow):
         self.remoteScanDelay = 0.5
         self.lastRemoteState = False
         self.remoteAgentUp = False
+        self.missedAgentCycles = 0
+        self.allowedMissedAgentCycles = 1
         
         desktopSize = QApplication.desktop().screenGeometry()
         #self.mainWidth=1024
@@ -1213,6 +1215,7 @@ class mainWindow(QMainWindow):
             errCode, errMsg, gpsStatus = requestRemoteGPS(self.remoteAgentIP, self.remoteAgentPort)
             
             if errCode == 0:
+                self.missedAgentCycles = 0
                 if (gpsStatus.isValid):
                     self.gpsSynchronized = True
                     self.btnGPSStatus.setStyleSheet("background-color: green; border: 1px;")
@@ -1227,11 +1230,16 @@ class mainWindow(QMainWindow):
                     self.btnGPSStatus.setStyleSheet("background-color: red; border: 1px;")
             else:
                 if errCode == -1:
-                    # Agent disconnected.
-                    # Stop any active scan and transition local
-                    self.agentDisconnected()
-                    self.statusBar().showMessage("Error connecting to remote agent.  Agent disconnected.")
-                    QMessageBox.question(self, 'Error',"Error connecting to remote agent.  Agent disconnected.", QMessageBox.Ok)
+                    self.missedAgentCycles += 1
+                    
+                    if self.missedAgentCycles > self.allowedMissedAgentCycles:
+                        # We may let it miss a cycle or two just as a good practice
+                        
+                        # Agent disconnected.
+                        # Stop any active scan and transition local
+                        self.agentDisconnected()
+                        self.statusBar().showMessage("Error connecting to remote agent.  Agent disconnected.")
+                        QMessageBox.question(self, 'Error',"Error connecting to remote agent.  Agent disconnected.", QMessageBox.Ok)
                 else:
                     self.statusBar().showMessage("Remote GPS Error: " + errMsg)
                     self.btnGPSStatus.setStyleSheet("background-color: red; border: 1px;")
@@ -2192,6 +2200,7 @@ class mainWindow(QMainWindow):
                     return
                     
                 self.remoteAgentUp = True
+                self.missedAgentCycles = 0
                 
                 # If we're here we're good.
                 reply = QMessageBox.question(self, 'Question',"Would you like to just do 1 scan pass when pressing scan?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
