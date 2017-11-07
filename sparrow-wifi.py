@@ -352,7 +352,8 @@ class GPSEngineNotifyWin(GPSEngine):
             self.mainWin.gpsSynchronizedsignal.emit()
 
 # ------------------  Global color list that we'll cycle through  ------------------------------
-colors = [Qt.black, Qt.red, Qt.darkRed, Qt.green, Qt.darkGreen, Qt.blue, Qt.darkBlue, Qt.cyan, Qt.darkCyan, Qt.magenta, Qt.darkMagenta, Qt.darkGray]
+orange = QColor(255,165,0)
+colors = [Qt.black, Qt.red, Qt.darkRed, Qt.green, Qt.darkGreen, Qt.blue, orange, Qt.darkBlue, Qt.cyan, Qt.darkCyan, Qt.magenta, Qt.darkMagenta, Qt.darkGray]
 
 # ------------------  Main Application Window  ------------------------------
 class mainWindow(QMainWindow):
@@ -465,6 +466,8 @@ class mainWindow(QMainWindow):
         self.createMenu()
         
         self.createControls()
+
+        self.setBlackoutColors()
         
         self.setMinimumWidth(800)
         self.setMinimumHeight(400)
@@ -571,6 +574,9 @@ class mainWindow(QMainWindow):
         self.networkTable.horizontalHeader().sectionClicked.connect(self.onTableHeadingClicked)
         self.networkTable.cellClicked.connect(self.onTableClicked)
         
+        self.networkTableSortOrder = Qt.DescendingOrder
+        self.networkTableSortIndex = -1
+        
         # Network Table right-click menu
         self.ntRightClickMenu = QMenu(self)
         newAct = QAction('Telemetry', self)        
@@ -618,7 +624,40 @@ class mainWindow(QMainWindow):
                 self.btnGPSStatus.setStyleSheet("background-color: yellow; border: 1px;")
         else:
             self.btnGPSStatus.setStyleSheet("background-color: red; border: 1px;")
- 
+
+        
+    def setBlackoutColors(self):
+        global colors
+        global orange
+        colors = [Qt.white, Qt.red, Qt.yellow, Qt.green, Qt.darkGreen, orange, Qt.blue,Qt.cyan, Qt.darkCyan, Qt.magenta, Qt.darkMagenta, Qt.gray]
+
+        # return
+        # self.setStyleSheet("background-color: black")
+        #self.Plot24.setBackgroundBrush(Qt.black)
+        mainTitleBrush = QBrush(Qt.red)
+        self.chart24.setTitleBrush(mainTitleBrush)
+        self.chart5.setTitleBrush(mainTitleBrush)
+        
+        self.chart24.setBackgroundBrush(QBrush(Qt.black))
+        self.chart24.axisX().setLabelsColor(Qt.white)
+        self.chart24.axisY().setLabelsColor(Qt.white)
+        titleBrush = QBrush(Qt.white)
+        self.chart24.axisX().setTitleBrush(titleBrush)
+        self.chart24.axisY().setTitleBrush(titleBrush)
+        #self.Plot5.setBackgroundBrush(Qt.black)
+        self.chart5.setBackgroundBrush(QBrush(Qt.black))
+        self.chart5.axisX().setLabelsColor(Qt.white)
+        self.chart5.axisY().setLabelsColor(Qt.white)
+        self.chart5.axisX().setTitleBrush(titleBrush)
+        self.chart5.axisY().setTitleBrush(titleBrush)
+        
+        #$ self.networkTable.setStyleSheet("QTableCornerButton::section{background-color: white;}")
+        # self.networkTable.cornerWidget().setStylesheet("background-color: black")
+        self.networkTable.setStyleSheet("background-color: black;gridline-color: white;color: white")
+        headerStyle = "QHeaderView::section{background-color: white;border: 1px solid black;color: black}"
+        self.networkTable.horizontalHeader().setStyleSheet(headerStyle)
+        self.networkTable.verticalHeader().setStyleSheet(headerStyle)
+        
     def createMenu(self):
         # Create main menu bar
         menubar = self.menuBar()
@@ -775,13 +814,13 @@ class mainWindow(QMainWindow):
         newAxis.setTitleText("Channel")
         self.chart24.addAxis(newAxis, Qt.AlignBottom)
         
-        newAxis = QValueAxis()
-        newAxis.setMin(-100)
-        newAxis.setMax(-10)
-        newAxis.setTickCount(9)
-        newAxis.setLabelFormat("%d")
-        newAxis.setTitleText("dBm")
-        self.chart24.addAxis(newAxis, Qt.AlignLeft)
+        self.chart24yAxis = QValueAxis()
+        self.chart24yAxis.setMin(-100)
+        self.chart24yAxis.setMax(-10)
+        self.chart24yAxis.setTickCount(9)
+        self.chart24yAxis.setLabelFormat("%d")
+        self.chart24yAxis.setTitleText("dBm")
+        self.chart24.addAxis(self.chart24yAxis, Qt.AlignLeft)
         
         chartBorder = Qt.darkGray
         self.Plot24 = QChartView(self.chart24, self)
@@ -1260,6 +1299,9 @@ class mainWindow(QMainWindow):
             # when the section was clicked, so there is no need to reverse it
             order = header.sortIndicatorOrder()
         header.setSortIndicator( logical_index, order )
+
+        self.networkTableSortOrder = order
+        self.networkTableSortIndex = logical_index
         self.networkTable.sortItems(logical_index, order )
         
     def onTableClicked(self, row, col):
@@ -1704,6 +1746,8 @@ class mainWindow(QMainWindow):
         
         # Update existing if we have it (this will mark the networ's foundInList flag if we did
         self.populateUpdateExisting(wirelessNetworks, FromAdvanced)
+
+        addedNetworks = 0
         
         for curKey in wirelessNetworks.keys():
             # Don't add duplicate
@@ -1711,6 +1755,8 @@ class mainWindow(QMainWindow):
             if (curNet.foundInList):
                 continue
 
+            addedNetworks += 1
+            
             # ----------- Update the plots -------------------
             nextColor = self.getNextColor()
             newSeries = self.createNewSeries(nextColor)
@@ -1772,6 +1818,11 @@ class mainWindow(QMainWindow):
                 self.networkTable.setItem(rowPosition, 11, QTableWidgetItem('No'))
 
         self.ageOut()
+
+        if addedNetworks > 0:
+            if self.networkTableSortIndex >=0:
+                self.networkTable.sortItems(self.networkTableSortIndex, self.networkTableSortOrder )
+                
         self.checkTelemetryWindows()
         
         # Last formatting tweaks on network table
@@ -1796,6 +1847,8 @@ class mainWindow(QMainWindow):
                 # If the length of this dictionary changes it may throw an exception.
                 # We'll just pick it up next pass.  This is low-priority cleanup
                 
+                keysToRemove = []
+                
                 for curKey in self.telemetryWindows.keys():
                     # For each telemetry window we have stored,
                     # If it's no longer in the network table and it's not visible
@@ -1805,7 +1858,12 @@ class mainWindow(QMainWindow):
                         curWin = self.telemetryWindows[curKey]
                         if not curWin.isVisible():
                             curWin.close()
-                            del curWin
+                            keysToRemove.append(curKey)
+                            
+                # Have to separate the iteration and the removal or you'll get a "list changed during iteration" exception
+                for curKey in keysToRemove:
+                    del self.telemetryWindows[curKey]
+
             except:
                 pass
         

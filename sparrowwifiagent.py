@@ -93,6 +93,9 @@ def restartAgent():
         SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_OFF)
         SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)
         
+    if hasFalcon:
+        falconWiFiRemoteAgent.cleanup()
+    
     if os.path.isfile('/usr/local/bin/python3.5') or os.path.isfile('/usr/bin/python3.5'):
         exefile = 'python3.5'
     else:
@@ -648,6 +651,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
 
     def do_POST(s):
         global runningcfg
+        global falconWiFiRemoteAgent
         
         if len(s.client_address) == 0:
             # This should have the connecting client IP.  If this isn't at least 1, something is wrong
@@ -889,6 +893,73 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     
                     jsonstr = json.dumps(responsedict)
                     s.wfile.write(jsonstr.encode("UTF-8"))
+        elif s.path == '/falcon/startcrack':
+            if not hasFalcon:
+                s.send_response(400)
+                s.send_header("Content-type", "application/json")
+                s.end_headers()
+                responsedict = {}
+                responsedict['errcode'] = 5
+                responsedict['errmsg'] = "Unknown request: " + s.path
+                
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            else:
+                # Extract necessary info for cracking
+                try:
+                    crackType = jsondata['cracktype']  # This will be wep or wpapsk
+                    curInterface = jsondata['interface']
+                    channel = jsondata['channel']
+                    ssid = jsondata['ssid']
+                    apMacAddr=jsondata['apmacaddr']
+                    hasClient = jsondata['hasclient']
+
+                    # For now you can only run 1 crack globally due to tmp flie naming.
+                    # At some point I'll scale it out
+                    if crackType == 'wep':
+                        if curInterface in falconWiFiRemoteAgent.WEPCrackList:
+                            wepCrack = falconWiFiRemoteAgent.WEPCrackList[curInterface]
+                            # Stop one if it was already running
+                            wepCrack.stopCrack()
+                        else:
+                            wepCrack = WEPCrack()
+                            falconWiFiRemoteAgent.WEPCrackList[curInterface] = wepCrack
+                            
+                        wepCrack.cleanupTempFiles()
+                        retVal, errMsg = wepCrack.startCrack(curInterface, channel, ssid, apMacAddr, hasClient)
+                    else:
+                        if curInterface in falconWiFiRemoteAgent.WPAPSKCrackList:
+                            wpaPSKCrack = falconWiFiRemoteAgent.WPAPSKCrackList[curInterface]
+                            # Stop one if it was already running
+                            wpaPSKCrack.stopCrack()
+                        else:
+                            wpaPSKCrack = WPAPSKCrack()
+                            falconWiFiRemoteAgent.WPAPSKCrackList[curInterface] = wpaPSKCrack
+                        
+                        wpaPSKCrack.cleanupTempFiles()
+                        retVal, errMsg = wpaPSKCrack.startCrack(curInterface, channel, ssid, apMacAddr, hasClient)
+                    
+                    s.send_response(200)
+                    s.send_header("Content-type", "application/json")
+                    s.end_headers()
+                    responsedict = {}
+
+                    # For start, retVal is True/False
+                    responsedict['errcode'] = retVal
+                    responsedict['errmsg'] = errMsg
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                except:
+                    s.send_response(400)
+                    s.send_header("Content-type", "application/json")
+                    s.end_headers()
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Error parsing json"
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
         else:
             responsedict = {}
             responsedict['errcode'] = 5
@@ -902,6 +973,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
             
     def isValidPostURL(s):
         allowedfullurls = ['/system/config', 
+                                    '/falcon/startcrack', 
                                     '/falcon/deauth', 
                                     '/falcon/stopdeauth']
         allowedstarturls=[]
@@ -916,10 +988,14 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
         return False
         
     def isValidGetURL(s):
+        # Full urls
         allowedfullurls = ['/wireless/interfaces', 
                                     '/wireless/moninterfaces', 
                                     '/falcon/getscanresults',
+                                    '/falcon/getalldeauths', 
                                     '/gps/status']
+                                    
+        # partials that have more in the URL
         allowedstarturls=['/wireless/networks/', 
                                     '/falcon/startmonmode/', 
                                     '/falcon/stopmonmode/', 
@@ -927,6 +1003,9 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                                     '/falcon/startscan/', 
                                     '/falcon/stopscan/', 
                                     '/falcon/stopalldeauths', 
+                                    '/falcon/crackstatuswpapsk', 
+                                    '/falcon/crackstatuswep', 
+                                    '/falcon/stopcrack', 
                                     '/system/config', 
                                     '/system/startrecord', 
                                     '/system/stoprecord']
@@ -947,7 +1026,8 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
         global lockList
         global allowedIPs
         global runningcfg
-
+        global falconWiFiRemoteAgent
+        
         # For RPi LED's, using it during each get request wasn't completely working.  Short transactions like
         # status and interface list were so quick the light would get "confused" and stay off.  So
         # the LED is only used for long calls like scan
@@ -1363,6 +1443,129 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 
                 jsonstr = json.dumps(responsedict)
                 s.wfile.write(jsonstr.encode("UTF-8"))
+        elif '/falcon/stopcrack' in s.path:
+            if not hasFalcon:
+                responsedict = {}
+                responsedict['errcode'] = 5
+                responsedict['errmsg'] = "Unknown request: " + s.path
+                
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            else:
+                inputstr = s.path.replace('/falcon/stopcrack/', '')
+                # Sanitize command-line input here:
+                p = re.compile('^([0-9a-zA-Z]+)')
+                try:
+                    curInterface = p.search(inputstr).group(1)
+                except:
+                    curInterface = ""
+                    
+                if len(curInterface) == 0:
+                    if useRPILeds:
+                        # Green will heartbeat when servicing requests. Turn back solid here
+                        SparrowRPi.greenLED(LIGHT_STATE_ON)
+                        
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    return
+                
+                try:
+                    if curInterface in falconWiFiRemoteAgent.WEPCrackList:
+                        falconWiFiRemoteAgent.WEPCrackList[curInterface].stopCrack()
+                        falconWiFiRemoteAgent.WEPCrackList[curInterface].cleanupTempFiles()
+                        del falconWiFiRemoteAgent.WEPCrackList[curInterface]
+                        
+                    if curInterface in falconWiFiRemoteAgent.WPAPSKCrackList:
+                        falconWiFiRemoteAgent.WPAPSKCrackList[curInterface].stopCrack()
+                        falconWiFiRemoteAgent.WPAPSKCrackList[curInterface].cleanupTempFiles()
+                        del falconWiFiRemoteAgent.WPAPSKCrackList[curInterface]
+                except:
+                    pass
+                    
+                retVal = 0
+                errMsg = ""
+                
+                responsedict = {}
+                responsedict['errcode'] = retVal
+                responsedict['errmsg'] = errMsg
+                
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+        elif '/falcon/crackstatus' in s.path:
+            if not hasFalcon:
+                responsedict = {}
+                responsedict['errcode'] = 5
+                responsedict['errmsg'] = "Unknown request: " + s.path
+                
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            else:
+                if 'crackstatuswep' in s.path:
+                    type='wep'
+                else:
+                    type = 'wpapsk'
+                    
+                inputstr = s.path.replace('/falcon/crackstatus'+type+'/', '')
+                # Sanitize command-line input here:
+                p = re.compile('^([0-9a-zA-Z]+)')
+                try:
+                    curInterface = p.search(inputstr).group(1)
+                except:
+                    curInterface = ""
+                    
+                if len(curInterface) == 0:
+                    if useRPILeds:
+                        # Green will heartbeat when servicing requests. Turn back solid here
+                        SparrowRPi.greenLED(LIGHT_STATE_ON)
+                        
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + curInterface
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    return
+                
+                responsedict = {}
+                retVal = -1
+                errMsg = "Unable to find running crack."
+                                
+                try:
+                    if type == 'wep':
+                        if curInterface in falconWiFiRemoteAgent.WEPCrackList:
+                            wepCrack = falconWiFiRemoteAgent.WEPCrackList[curInterface]
+                            retVal = 0
+                            errMsg = ""
+                            responsedict['isrunning'] = wepCrack.isRunning()
+                            responsedict['ivcount'] = wepCrack.getIVCount()
+                            responsedict['ssid'] = wepCrack.SSID
+                            responsedict['crackedpasswords'] = wepCrack.getCrackedPasswords()
+                    else:
+                        if curInterface in falconWiFiRemoteAgent.WPAPSKCrackList:
+                            wpaPSKCrack = falconWiFiRemoteAgent.WPAPSKCrackList[curInterface]
+                            retVal = 0
+                            errMsg = ""
+                            responsedict['isrunning'] = wpaPSKCrack.isRunning()
+                            hasHandshake = wpaPSKCrack.hasHandshake()
+                            responsedict['hashandshake'] = hasHandshake
+                            
+                            if hasHandshake:
+                                # For WPAPSK, lets copy the capture file to our recording directory for recovery
+                                dirname, filename = os.path.split(os.path.abspath(__file__))
+                                fullpath, filename=wpaPSKCrack.copyCaptureFile(dirname + '/recordings')
+                                responsedict['capturefile'] = filename
+                            else:
+                                responsedict['capturefile'] = ""
+                except:
+                    pass
+                    
+                responsedict['errcode'] = retVal
+                responsedict['errmsg'] = errMsg
+                
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
         elif s.path == '/falcon/getscanresults':
             if not hasFalcon:
                 responsedict = {}
@@ -1429,6 +1632,22 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 
                 jsonstr = json.dumps(responsedict)
                 s.wfile.write(jsonstr.encode("UTF-8"))
+        elif '/falcon/getalldeauths' in s.path:
+            if not hasFalcon:
+                responsedict = {}
+                responsedict['errcode'] = 5
+                responsedict['errmsg'] = "Unknown request: " + s.path
+                
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            else:
+                responsedict = falconWiFiRemoteAgent.getAllDeauthsAsJsonDict()
+                # Add in successful response
+                responsedict['errcode'] = 0
+                responsedict['errmsg'] = ""
+                
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
         else:
             # Catch-all.  Should never be here
             responsedict = {}
@@ -1472,7 +1691,7 @@ if __name__ == '__main__':
         if pluginsdir not in sys.path:
             sys.path.insert(0,pluginsdir)
         if  os.path.isfile(pluginsdir + '/falconwifi.py'):
-            from falconwifi import FalconWiFiRemoteAgent
+            from falconwifi import FalconWiFiRemoteAgent, WPAPSKCrack, WEPCrack
             hasFalcon = True
             falconWiFiRemoteAgent = FalconWiFiRemoteAgent()
             if not falconWiFiRemoteAgent.toolsInstalled():

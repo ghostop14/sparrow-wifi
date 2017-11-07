@@ -43,13 +43,23 @@ from threading import Lock
 # https://matplotlib.org/examples/user_interfaces/embedding_in_qt5.html
 
 class RadarWidget(FigureCanvas):
-    def __init__(self, parent=None, width=4, height=4, dpi=100):
+    def __init__(self, parent=None, useBlackoutColors=True, width=4, height=4, dpi=100):
         # fig = Figure(figsize=(width, height), dpi=dpi)
         # self.axes = fig.add_subplot(111)
         # -----------------------------------------------------------
         # fig = plt.figure()
+        # useBlackoutColors = False
+        self.useBlackoutColors = useBlackoutColors
+        if self.useBlackoutColors:
+            self.fontColor = 'white'
+            self.backgroundColor = 'black'
+        else:
+            self.fontColor = 'black'
+            self.backgroundColor = 'white'
+            
         self.fig = Figure(figsize=(width, height), dpi=dpi)
-        self.axes = self.fig.add_subplot(111, polar=True)
+        self.fig.patch.set_facecolor(self.backgroundColor)
+        self.axes = self.fig.add_subplot(111, polar=True, axisbg=self.backgroundColor)
         # Angle: np.linspace(0, 2*np.pi, 100)
         # Radius: np.ones(100)*5
         # ax.plot(np.linspace(0, 2*np.pi, 100), np.ones(100)*5, color='r', linestyle='-')
@@ -57,11 +67,11 @@ class RadarWidget(FigureCanvas):
         # np.ones creates a 100 point array filled with 1's then multiplies that by the scalar 5
 
         # Create an "invisible" line at 100 to set the max for the plot
-        self.axes.plot(np.linspace(0, 2*np.pi, 100), np.ones(100)*100, color='black', linestyle='')
+        self.axes.plot(np.linspace(0, 2*np.pi, 100), np.ones(100)*100, color=self.fontColor, linestyle='')
 
         # Plot line: Initialize out to 100 and blank
         radius = 100
-        self.blackline = self.axes.plot(np.linspace(0, 2*np.pi, 100), np.ones(100)*radius, color='black', linestyle='-')
+        self.blackline = self.axes.plot(np.linspace(0, 2*np.pi, 100), np.ones(100)*radius, color=self.fontColor, linestyle='-')
         self.redline = None
 
         # Plot a filled circle
@@ -71,20 +81,20 @@ class RadarWidget(FigureCanvas):
         # self.filledcircle = self.axes.add_artist(circle)
         self.filledcircle = None
         # Create bullseye
-        circle = plt.Circle((0.0, 0.0), 20, transform=self.axes.transData._b, color="black", alpha=0.4)
+        circle = plt.Circle((0.0, 0.0), 20, transform=self.axes.transData._b, color=self.fontColor, alpha=0.4)
         self.bullseye = self.axes.add_artist(circle)
 
         # Rotate zero up
         self.axes.set_theta_zero_location("N")
 
-        self.axes.set_yticklabels(['-20', '-40', '-60', '-80', '-100'])
+        self.axes.set_yticklabels(['-20', '-40', '-60', '-80', '-100'], color=self.fontColor)
         # plt.show()
         # -----------------------------------------------------------
         FigureCanvas.__init__(self, self.fig)
         self.setParent(parent)
 
 
-        self.title  = self.fig.suptitle('Tracker', fontsize=8, fontweight='bold')
+        self.title  = self.fig.suptitle('Tracker', fontsize=8, fontweight='bold', color=self.fontColor)
 
         FigureCanvas.setSizePolicy(self,
                                    QtWidgets.QSizePolicy.Expanding,
@@ -103,7 +113,7 @@ class RadarWidget(FigureCanvas):
         circle = plt.Circle((0.0, 0.0), radius, transform=self.axes.transData._b, color="red", alpha=0.4)
         self.filledcircle = self.axes.add_artist(circle)
         # Create bullseye
-        circle = plt.Circle((0.0, 0.0), 20, transform=self.axes.transData._b, color="black", alpha=0.4)
+        circle = plt.Circle((0.0, 0.0), 20, transform=self.axes.transData._b, color=self.fontColor, alpha=0.4)
         self.bullseye = self.axes.add_artist(circle)
         
 class TelemetryDialog(QDialog):
@@ -185,11 +195,29 @@ class TelemetryDialog(QDialog):
         
         self.createChart()
         
+        self.setBlackoutColors()
+        
         self.setMinimumWidth(600)
         self.setMinimumHeight(600)
         
         self.center()
 
+    def setBlackoutColors(self):
+        self.locationTable.setStyleSheet("background-color: black;gridline-color: white;color: white")
+        headerStyle = "QHeaderView::section{background-color: white;border: 1px solid black;color: black}"
+        self.locationTable.horizontalHeader().setStyleSheet(headerStyle)
+        self.locationTable.verticalHeader().setStyleSheet(headerStyle)
+        
+        mainTitleBrush = QBrush(Qt.red)
+        self.timeChart.setTitleBrush(mainTitleBrush)
+        
+        self.timeChart.setBackgroundBrush(QBrush(Qt.black))
+        self.timeChart.axisX().setLabelsColor(Qt.white)
+        self.timeChart.axisY().setLabelsColor(Qt.white)
+        titleBrush = QBrush(Qt.white)
+        self.timeChart.axisX().setTitleBrush(titleBrush)
+        self.timeChart.axisY().setTitleBrush(titleBrush)
+        
     def resizeEvent(self, event):
         wDim = self.geometry().width()/2-20
         hDim = self.geometry().height()/2
@@ -379,8 +407,9 @@ class TelemetryDialog(QDialog):
         self.timePlot.setRenderHint(QPainter.Antialiasing)
         
         self.timeSeries = QLineSeries()
-        pen = QPen(Qt.black)
-        pen.setWidth(1)
+        pen = QPen(Qt.yellow)
+            
+        pen.setWidth(2)
         self.timeSeries.setPen(pen)
         self.timeChart.addSeries(self.timeSeries)
         self.timeSeries.attachAxis(self.timeChart.axisX())

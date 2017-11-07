@@ -648,11 +648,19 @@ class AgentListenerDialog(QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         self.buttons.move(170, 280)
+
+        self.setBlackoutColors()
         
         self.setGeometry(self.geometry().x(), self.geometry().y(), 500,320)
         self.setWindowTitle("Remote Agent Detection")
         self.center()
 
+    def setBlackoutColors(self):
+        self.agentTable.setStyleSheet("background-color: black;gridline-color: white;color: white")
+        headerStyle = "QHeaderView::section{background-color: white;border: 1px solid black;color: black}"
+        self.agentTable.horizontalHeader().setStyleSheet(headerStyle)
+        self.agentTable.verticalHeader().setStyleSheet(headerStyle)
+        
     def center(self):
         # Get our geometry
         qr = self.frameGeometry()
@@ -806,6 +814,8 @@ class GPSCoordDIalog(QDialog):
         self.historyTable.setContextMenuPolicy(Qt.CustomContextMenu)
         self.historyTable.customContextMenuRequested.connect(self.showNTContextMenu)
         
+        self.setBlackoutColors()
+        
         self.setGeometry(self.geometry().x(), self.geometry().y(), 500,320)
         self.setWindowTitle("GPS Coordinate Viewer")
         self.center()
@@ -815,6 +825,12 @@ class GPSCoordDIalog(QDialog):
             curGPS = self.mainWin.getCurrentGPS()
             self.updateTable(curGPS)
 
+    def setBlackoutColors(self):
+        self.historyTable.setStyleSheet("background-color: black;gridline-color: white;color: white")
+        headerStyle = "QHeaderView::section{background-color: white;border: 1px solid black;color: black}"
+        self.historyTable.horizontalHeader().setStyleSheet(headerStyle)
+        self.historyTable.verticalHeader().setStyleSheet(headerStyle)
+        
     def center(self):
         # Get our geometry
         qr = self.frameGeometry()

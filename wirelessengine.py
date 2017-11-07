@@ -652,6 +652,7 @@ class WirelessEngine(object):
         p_ess = re.compile('^	capability:.*(ESS)')
         p_ess_privacy = re.compile('^	capability:.*(ESS Privacy)')
         p_ibss = re.compile('^	capability:.*(IBSS)')
+        p_ibss_privacy = re.compile('^	capability:.*(IBSS Privacy)')
         p_auth_suites = re.compile('.*?Authentication suites: *(.*)')
         p_pw_ciphers = re.compile('.*?Pairwise ciphers: *(.*)')
         p_param_channel = re.compile('^.*?DS Parameter set: channel +([0-9]+).*')
@@ -725,6 +726,14 @@ class WirelessEngine(object):
                 
             if (len(fieldValue) > 0):
                 curNetwork.mode = "Ad Hoc"
+                curNetwork.security = "[Ad-Hoc] Open"
+
+                fieldValue = WirelessEngine.getFieldValue(p_ibss_privacy, curLine)
+                    
+                if (len(fieldValue) > 0):
+                    curNetwork.security = "[Ad-Hoc] WEP"
+                    curNetwork.privacy = "WEP"
+                    
                 continue #Found the item
                 
             fieldValue = WirelessEngine.getFieldValue(p_auth_suites, curLine)
