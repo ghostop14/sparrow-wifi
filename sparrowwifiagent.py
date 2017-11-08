@@ -29,6 +29,7 @@ import configparser
 from socket import *
 from time import sleep
 from threading import Thread, Lock
+from dateutil import parser
 from http import server as HTTPServer
 
 from wirelessengine import WirelessEngine
@@ -77,6 +78,52 @@ def TwoDigits(instr):
         instr = '0' + instr
         
     return instr
+
+def deleteRecordingFiles(filelist):
+    dirname, filename = os.path.split(os.path.abspath(__file__))
+    recordingsDir = dirname + '/recordings'
+    retVal = ''
+    for curFilename in filelist:
+        # This split is simply a safety check to prevent path traversal attacks
+        dirname, filename = os.path.split(curFilename)
+        if len(filename) > 0:
+            fullpath = recordingsDir + '/' + filename
+            try:
+                os.remove(fullpath)
+            except:
+                if len(retVal) == 0:
+                    retVal = filename
+                else:
+                    retVal += ',' + filename
+                    
+    return retVal
+
+def getRecordingFiles():
+    dirname, filename = os.path.split(os.path.abspath(__file__))
+    recordingsDir = dirname + '/recordings'
+    if  not os.path.exists(recordingsDir):
+        os.makedirs(recordingsDir)
+    
+    retVal = []
+    
+    try:
+        for filename in os.listdir(recordingsDir):
+            fullPath = recordingsDir + '/' + filename
+            
+            if not os.path.isdir(fullPath):
+                curFile = FileSystemFile()
+                curFile.filename = filename
+                curFile.size = os.path.getsize(fullPath)
+                try:
+                    curFile.timestamp = datetime.datetime.fromtimestamp(os.path.getmtime(fullPath))
+                except:
+                    curFile.timestamp = None
+                    
+                retVal.append(curFile.toJsondict())
+    except:
+        pass
+        
+    return retVal
 
 def restartAgent():
     if mavlinkGPSThread:
@@ -256,6 +303,36 @@ def getOUIDB():
         ouidb = None
         
     return ouidb
+
+# ------------------  File  ------------------------------
+class FileSystemFile(object):
+    def __init__(self):
+        self.filename = ""
+        self.size = 0
+        self.timestamp = None
+        
+    def __str__(self):
+        retVal = self.filename
+        
+        return retVal
+        
+    def toJsondict(self):
+        jsondict = {}
+        jsondict['filename'] = self.filename
+        jsondict['size'] = self.size
+        jsondict['timestamp'] = str(self.timestamp)
+        
+        return jsondict
+        
+    def fromJsondict(self, jsondict):
+        self.filename = jsondict['filename']
+        self.size = jsondict['size']
+        
+        if jsondict['timestamp'] == 'None':
+            self.timestamp = None
+        else:
+            self.timestamp = parser.parse(jsondict['timestamp'])
+        
 
 # ------------------  Config Settings  ------------------------------
 class AgentConfigSettings(object):
@@ -782,6 +859,33 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 s.wfile.write(jsonstr.encode("UTF-8"))
 
             # -------------  Done updating config ------------------
+        elif s.path == '/system/deleterecordings':
+            try:
+                filelist = jsondata['files']
+                
+                problemfiles=deleteRecordingFiles(filelist)
+                
+                responsedict = {}
+                
+                if len(problemfiles) == 0:
+                    responsedict['errcode'] = 0
+                    responsedict['errmsg'] = ""
+                else:
+                    responsedict['errcode'] = 1
+                    responsedict['errmsg'] = problemfiles
+                    
+                jsonstr = json.dumps(responsedict)
+                s.send_response(200)
+                s.send_header("Content-type", "application/json")
+                s.end_headers()
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            except:
+                s.send_response(400)
+                s.send_header("Content-type", "application/json")
+                s.end_headers()
+                responsedict = {}
+                responsedict['errcode'] = 5
+                responsedict['errmsg'] = "Error parsing json"
         elif s.path == '/falcon/stopdeauth':
             if not hasFalcon:
                 s.send_response(400)
@@ -975,7 +1079,9 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
         allowedfullurls = ['/system/config', 
                                     '/falcon/startcrack', 
                                     '/falcon/deauth', 
-                                    '/falcon/stopdeauth']
+                                    '/falcon/stopdeauth', 
+                                    '/system/deleterecordings']
+                                    
         allowedstarturls=[]
         
         if s.path in allowedfullurls:
@@ -993,6 +1099,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                                     '/wireless/moninterfaces', 
                                     '/falcon/getscanresults',
                                     '/falcon/getalldeauths', 
+                                    '/system/getrecordings', 
                                     '/gps/status']
                                     
         # partials that have more in the URL
@@ -1008,7 +1115,8 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                                     '/falcon/stopcrack', 
                                     '/system/config', 
                                     '/system/startrecord', 
-                                    '/system/stoprecord']
+                                    '/system/stoprecord', 
+                                    '/system/getrecording']
         
         if s.path in allowedfullurls:
             return True
@@ -1018,6 +1126,61 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     return True
         
         return False
+        
+    def sendFile(s, passedfilename):
+        # Directory traversal safety check
+        dirname, runfilename = os.path.split(os.path.abspath(__file__))
+        tmpdirname, filename = os.path.split(passedfilename)
+        recordingsDir = dirname + '/recordings'
+
+        fullPath = recordingsDir + '/' + filename
+        
+        if not os.path.isfile(fullPath):
+            s.send_response(400)
+            s.send_header("Content-type", "application/json")
+            s.end_headers()
+            responsedict = {}
+            responsedict['errcode'] = 1
+            responsedict['errmsg'] = 'File not found.'
+            jsonstr = json.dumps(responsedict)
+            s.wfile.write(jsonstr.encode("UTF-8"))
+            return
+        
+        try:
+            f = open(fullPath, 'rb')
+        except:
+            s.send_response(400)
+            s.send_header("Content-type", "application/json")
+            s.end_headers()
+            responsedict = {}
+            responsedict['errcode'] = 2
+            responsedict['errmsg'] = 'Unable to open file.'
+            jsonstr = json.dumps(responsedict)
+            s.wfile.write(jsonstr.encode("UTF-8"))
+            return
+            
+        fileExtension = filename.split(".")[-1]
+        
+        if fileExtension in ['txt', 'csv', 'json', 'xml']:
+            contentType = 'text/plain'
+        elif fileExtension == 'html':
+            contentType = 'text/html'
+        else:
+            contentType = 'application/octet-stream'
+            
+        s.send_response(200)
+        #s.send_header("Content-type", "text/html")
+        s.send_header("Content-type", contentType)
+        s.end_headers()
+
+        try:
+            s.wfile.write(f.read())
+        except:
+            pass
+            
+        f.close()
+        
+        return
         
     def do_GET(s):
         global gpsEngine
@@ -1060,10 +1223,13 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
             return
             
         """Respond to a GET request."""
-        s.send_response(200)
-        #s.send_header("Content-type", "text/html")
-        s.send_header("Content-type", "application/json")
-        s.end_headers()
+        if not s.path.startswith('/system/getrecording/'):
+            # In getrecording we may adjust the content type header based on file extension
+            s.send_response(200)
+            #s.send_header("Content-type", "text/html")
+            s.send_header("Content-type", "application/json")
+            s.end_headers()
+            
         # NOTE: In python 3, string is a bit different.  Examples write strings directly for Python2,
         # In python3 you have to convert it to UTF-8 bytes
         # s.wfile.write("<html><head><title>Sparrow-wifi agent</title></head><body>".encode("utf-8"))
@@ -1193,6 +1359,23 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 
             jsonstr = json.dumps(jsondict)
             s.wfile.write(jsonstr.encode("UTF-8"))
+        elif s.path == '/wireless/moninterfaces':
+            wirelessInterfaces = WirelessEngine.getMonitoringModeInterfaces()
+            jsondict={}
+            jsondict['interfaces']=wirelessInterfaces
+            jsonstr = json.dumps(jsondict)
+            s.wfile.write(jsonstr.encode("UTF-8"))
+        elif s.path == '/system/getrecordings':
+            filelist = getRecordingFiles()
+            
+            responsedict = {}
+            responsedict['files'] = filelist
+            
+            jsonstr = json.dumps(responsedict)
+            s.wfile.write(jsonstr.encode("UTF-8"))
+        elif s.path.startswith('/system/getrecording/'):
+            filename = s.path.replace('/system/getrecording/', '')
+            s.sendFile(filename)
         elif s.path == '/system/config':
             cfgSettings = AgentConfigSettings()
             cfgSettings.fromConfigFile('sparrowwifiagent.cfg')
@@ -1232,14 +1415,6 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
             responsedict['errcode'] = 0
             responsedict['errmsg'] = ''
             jsonstr = json.dumps(responsedict)
-            s.wfile.write(jsonstr.encode("UTF-8"))
-            
-        # Falcon-related requests
-        elif s.path == '/wireless/moninterfaces':
-            wirelessInterfaces = WirelessEngine.getMonitoringModeInterfaces()
-            jsondict={}
-            jsondict['interfaces']=wirelessInterfaces
-            jsonstr = json.dumps(jsondict)
             s.wfile.write(jsonstr.encode("UTF-8"))
         elif '/falcon/startmonmode' in s.path:
             if not hasFalcon:

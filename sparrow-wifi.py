@@ -47,7 +47,8 @@ from sparrowgps import GPSEngine, GPSStatus, SparrowGPS
 from telemetry import TelemetryDialog
 from sparrowtablewidgets import IntTableWidgetItem, DateTableWidgetItem
 from sparrowmap import MapMarker, MapEngine
-from sparrowdialogs import MapSettingsDialog, TelemetryMapSettingsDialog, AgentListenerDialog, GPSCoordDIalog, AgentConfigDialog
+from sparrowdialogs import MapSettingsDialog, TelemetryMapSettingsDialog, AgentListenerDialog, GPSCoordDialog
+from sparrowdialogs import AgentConfigDialog, RemoteFilesDialog
 from sparrowwifiagent import AgentConfigSettings
 
 # There are some "plugins" that are available for addons.  Let's see if they're present
@@ -716,6 +717,11 @@ class mainWindow(QMainWindow):
         self.menuRemoteAgent.setCheckable(True)
         self.menuRemoteAgent.changed.connect(self.onRemoteAgent)
         helpMenu.addAction(self.menuRemoteAgent)
+
+        self.menuRemoteFiles = QAction('Remote Recordings', self)        
+        self.menuRemoteFiles.setStatusTip('Get/Manage remote recordings')
+        self.menuRemoteFiles.triggered.connect(self.onRemoteFiles)
+        helpMenu.addAction(self.menuRemoteFiles)
         
         helpMenu.addSeparator()
         
@@ -1204,7 +1210,7 @@ class mainWindow(QMainWindow):
         
     def onGPSCoordinates(self):
         if not self.gpsCoordWindow:
-            self.gpsCoordWindow = GPSCoordDIalog(mainWin=self)
+            self.gpsCoordWindow = GPSCoordDialog(mainWin=self)
             
         self.gpsCoordWindow.show()
         self.gpsCoordWindow.activateWindow()
@@ -2165,36 +2171,55 @@ class mainWindow(QMainWindow):
         if self.agentListenerWindow:
             self.agentListenerWindow.close()
             self.agentListenerWindow = None
+
+    def getAgentIPandPort(self):
+        if self.remoteAgentUp:
+            agentIP = self.remoteAgentIP
+            agentPort = self.remoteAgentPort
+            specIsGood = True
+        else:
+            text, okPressed = QInputDialog.getText(self, "Remote Agent","Please provide the <IP>:<port> of the remote agent\nor specify 'auto' to launch agent listener\n(auto requires agent to be on the same subnet and started with the --sendannounce flag):", QLineEdit.Normal, "127.0.0.1:8020")
+            if (not okPressed) or text == '':
+                return False, "", 0
             
-    def onRemoteAgentConfig(self):
-        text, okPressed = QInputDialog.getText(self, "Remote Agent","Please provide the <IP>:<port> of the remote agent\nor specify 'auto' to launch agent listener\n(auto requires agent to be on the same subnet and started with the --sendannounce flag):", QLineEdit.Normal, "127.0.0.1:8020")
-        if (not okPressed) or text == '':
-            return
-            
-        # Validate the input
-        p = re.compile('^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]{1,5})')
-        specIsGood = True
-        try:
-            agentSpec = p.search(text).group(1)
-            agentIP = agentSpec.split(':')[0]
-            agentPort = int(agentSpec.split(':')[1])
-            
-            if self.remoteAgentPort < 1 or self.remoteAgentPort > 65535:
-                QMessageBox.question(self, 'Error',"Port must be in an acceptable IP range (1-65535)", QMessageBox.Ok)
-                specIsGood = False
-        except:
-            if text.upper() == 'AUTO':
-                # Need to close the agent listener window.  Need it to get the info and it'll lock the listening port.
-                if self.agentListenerWindow:
-                    QMessageBox.question(self, 'Error',"Please close the agent listener window first.", QMessageBox.Ok)
+            # Validate the input
+            p = re.compile('^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]{1,5})')
+            specIsGood = True
+            try:
+                agentSpec = p.search(text).group(1)
+                agentIP = agentSpec.split(':')[0]
+                agentPort = int(agentSpec.split(':')[1])
+                
+                if agentPort < 1 or agentPort > 65535:
+                    QMessageBox.question(self, 'Error',"Port must be in an acceptable IP range (1-65535)", QMessageBox.Ok)
                     specIsGood = False
+            except:
+                if text.upper() == 'AUTO':
+                    # Need to close the agent listener window.  Need it to get the info and it'll lock the listening port.
+                    if self.agentListenerWindow:
+                        QMessageBox.question(self, 'Error',"Please close the agent listener window first.", QMessageBox.Ok)
+                        specIsGood = False
+                    else:
+                        agentIP, agentPort, accepted = AgentListenerDialog.getAgent()
+                        specIsGood = accepted
                 else:
-                    agentIP, agentPort, accepted = AgentListenerDialog.getAgent()
-                    specIsGood = accepted
-            else:
-                QMessageBox.question(self, 'Error',"Please enter it in the format <IP>:<port>", QMessageBox.Ok)
-                specIsGood = False
-            
+                    QMessageBox.question(self, 'Error',"Please enter it in the format <IP>:<port>", QMessageBox.Ok)
+                    specIsGood = False
+        
+        return specIsGood, agentIP, agentPort
+    
+    def onRemoteFiles(self):
+        specIsGood, agentIP, agentPort = self.getAgentIPandPort()
+        
+        if not specIsGood:
+            return
+
+        filesWin = RemoteFilesDialog(self,agentIP, agentPort, self)
+        filesWin.exec()
+        
+    def onRemoteAgentConfig(self):
+        specIsGood, agentIP, agentPort = self.getAgentIPandPort()
+        
         if not specIsGood:
             return
             

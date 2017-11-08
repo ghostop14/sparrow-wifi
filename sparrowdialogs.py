@@ -31,8 +31,13 @@ from time import sleep
 import requests
 import json
 import re
+# import urllib
+from urllib.request import urlretrieve
+
+import os
 
 from sparrowmap import MapEngine
+from sparrowwifiagent import FileSystemFile
 
 # ------------------  Global functions for agent HTTP requests ------------------------------
 def makeGetRequest(url):
@@ -46,6 +51,66 @@ def makeGetRequest(url):
         
     htmlResponse=response.text
     return response.status_code, htmlResponse
+
+def getRemoteRecordingsFiles(agentIP, agentPort):
+    url = "http://" + agentIP + ":" + str(agentPort) + "/system/getrecordings"
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            responsedict = json.loads(responsestr)
+            filelist = []
+            try:
+                for curFileDict in responsedict['files']:
+                    curFile = FileSystemFile()
+                    curFile.fromJsondict(curFileDict)
+                    filelist.append(curFile)
+                return 0, "", filelist
+            except:
+                return 2, "Error parsing response: " + responsestr, None
+        except:
+            return 1, "Error parsing response: " + responsestr, None
+    else:
+        return statusCode, 'Received error code: ' + str(statusCode), None
+        
+def delRemoteRecordingFiles(remoteIP, remotePort, filelist):
+    url = "http://" + remoteIP + ":" + str(remotePort) + "/system/deleterecordings"
+    
+    filedict={}
+    filedict['files'] = filelist
+        
+    jsonstr = json.dumps(filedict)
+    statusCode, responsestr = makePostRequest(url, jsonstr)
+
+    errcode = -1
+    errmsg = ""
+    
+    if statusCode == 200 or statusCode == 400:
+        try:
+            responsedict = json.loads(responsestr)
+            try:
+                errcode = responsedict['errcode']
+                errmsg = responsedict['errmsg']
+            except:
+                # response json didn't have the expected field
+                if len(responsestr) == 0:
+                    errmsg = "Error parsing agent response.  Is it still running?"
+                else:
+                    errmsg = "Error parsing agent response:" + responsestr                
+        except:
+            # Parsing json threw exception
+            if len(responsestr) == 0:
+                errmsg = "Error parsing agent response.  Is it still running?"
+            else:
+                errmsg = "Error parsing agent response:" + responsestr
+    else:
+        # This should never happen
+        if len(responsestr) == 0:
+            errmsg = "Error updating remote agent.  Is it still running?"
+        else:
+            errmsg = "Error updating remote agent:" + responsestr
+            
+    return errcode, errmsg
 
 def startRecord(agentIP, agentPort, interface):
     url = "http://" + agentIP + ":" + str(agentPort) + "/system/startrecord/" + interface
@@ -770,11 +835,11 @@ class AgentListenerDialog(QDialog):
 
 
 # ------------------  GPS Coordinate  ------------------------------
-class GPSCoordDIalog(QDialog):
+class GPSCoordDialog(QDialog):
     visibility = QtCore.pyqtSignal(bool)
     
     def __init__(self, mainWin, parent = None):
-        super(GPSCoordDIalog, self).__init__(parent)
+        super(GPSCoordDialog, self).__init__(parent)
 
         self.visibility.connect(self.onVisibilityChanged)
         
@@ -1317,6 +1382,242 @@ class AgentConfigDialog(QDialog):
         size = self.geometry()
 
 
+# ------------------  GPS Coordinate  ------------------------------
+class RemoteFilesDialog(QDialog):
+    visibility = QtCore.pyqtSignal(bool)
+    
+    def __init__(self, mainWin, agentIP, agentPort, parent = None):
+        super(RemoteFilesDialog, self).__init__(parent)
+
+        self.visibility.connect(self.onVisibilityChanged)
+        
+        self.mainWin = mainWin
+        
+        self.remoteAgentIP = agentIP
+        self.remoteAgentPort = agentPort
+
+        self.lblMsg = QLabel("Remote Files", self)
+        self.lblMsg.move(10, 20)
+
+        self.btnRefresh = QPushButton("&Refresh", self)
+        self.btnRefresh.setShortcut('Ctrl+R')
+        self.btnRefresh.clicked.connect(self.onRefreshFiles)
+        # self.btnRefresh.setStyleSheet("background-color: rgba(0,128,192,255); border: none;")
+        # self.btnRefresh.move(90, 30)
+
+        self.btnCopy = QPushButton("&Copy", self)
+        self.btnCopy.clicked.connect(self.onCopyFiles)
+        
+        self.btnDelete = QPushButton("&Delete", self)
+        self.btnDelete.clicked.connect(self.onDeleteFiles)
+        
+        self.fileTable = QTableWidget(self)
+        self.fileTable.setColumnCount(3)
+        self.fileTable.setShowGrid(True)
+        self.fileTable.setHorizontalHeaderLabels(['Filename','Size','Last Modified'])
+        #self.fileTable.setGeometry(10, 30, 100, 30)
+        self.fileTable.resizeColumnsToContents()
+        self.fileTable.setRowCount(0)
+        self.fileTable.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.fileTable.horizontalHeader().sectionClicked.connect(self.onTableHeadingClicked)
+       
+        self.fileTableSortOrder = Qt.DescendingOrder
+        self.fileTableSortIndex = -1
+        
+        self.ntRightClickMenu = QMenu(self)
+        newAct = QAction('Copy', self)        
+        newAct.setStatusTip('Copy data to clipboard')
+        newAct.triggered.connect(self.onCopy)
+        self.ntRightClickMenu.addAction(newAct)
+ 
+        # Attach it to the table
+        self.fileTable.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.fileTable.customContextMenuRequested.connect(self.showNTContextMenu)
+        
+        self.setBlackoutColors()
+        
+        self.setGeometry(self.geometry().x(), self.geometry().y(), 650,400)
+        self.setWindowTitle("Remote Files: " + self.remoteAgentIP + ':' + str(self.remoteAgentPort))
+        self.center()
+        
+        self.onRefreshFiles()
+
+    def resizeEvent(self, event):
+        # self.resized.emit()
+        # self.statusBar().showMessage('Window resized.')
+        # return super(mainWin, self).resizeEvent(event)
+        size = self.geometry()
+        self.fileTable.setGeometry(10, 50, size.width()-120, size.height()-60)
+        
+        self.btnRefresh.setGeometry(size.width()-170, 10, 60, 30)
+
+        self.btnCopy.setGeometry(size.width()-90, 80, 80, 30)
+        self.btnDelete.setGeometry(size.width()-90, 130, 80, 30)
+
+    def setBlackoutColors(self):
+        self.fileTable.setStyleSheet("background-color: black;gridline-color: white;color: white")
+        headerStyle = "QHeaderView::section{background-color: white;border: 1px solid black;color: black}"
+        self.fileTable.horizontalHeader().setStyleSheet(headerStyle)
+        self.fileTable.verticalHeader().setStyleSheet(headerStyle)
+        
+    def center(self):
+        # Get our geometry
+        qr = self.frameGeometry()
+        # Find the desktop center point
+        cp = QDesktopWidget().availableGeometry().center()
+        # Move our center point to the desktop center point
+        qr.moveCenter(cp)
+        # Move the top-left point of the application window to the top-left point of the qr rectangle, 
+        # basically centering the window
+        self.move(qr.topLeft())
+        
+    def closeEvent(self, event):
+        event.accept()
+            
+    def onTableHeadingClicked(self, logical_index):
+        header = self.fileTable.horizontalHeader()
+        order = Qt.DescendingOrder
+        # order = Qt.DescendingOrder
+        if not header.isSortIndicatorShown():
+            header.setSortIndicatorShown( True )
+        elif header.sortIndicatorSection()==logical_index:
+            # apparently, the sort order on the header is already switched
+            # when the section was clicked, so there is no need to reverse it
+            order = header.sortIndicatorOrder()
+        header.setSortIndicator( logical_index, order )
+
+        self.fileTableSortOrder = order
+        self.fileTableSortIndex = logical_index
+        self.fileTable.sortItems(logical_index, order )
+        
+    def showNTContextMenu(self, pos):
+        curRow = self.fileTable.currentRow()
+        
+        if curRow == -1:
+            return
+            
+        self.ntRightClickMenu.exec_(self.fileTable.mapToGlobal(pos))
+ 
+    def onCopy(self):
+        curRow = self.fileTable.currentRow()
+        curCol = self.fileTable.currentColumn()
+        
+        if curRow == -1 or curCol == -1:
+            return
+        
+        curText = self.fileTable.item(curRow, curCol).text()
+            
+        clipboard = QApplication.clipboard()
+        clipboard.setText(curText)
+
+    def onRefreshFiles(self):
+        retVal, errmsg, filelist = getRemoteRecordingsFiles(self.remoteAgentIP, self.remoteAgentPort)
+        
+        if retVal != 0:
+            QMessageBox.question(self, 'Error',"Could not list remote files: " + errmsg, QMessageBox.Ok)
+            return
+            
+        self.populateTable(filelist)
+            
+    
+    def getSelectedFilenames(self):
+        retVal = []
+        
+        selectedItems = self.fileTable.selectedIndexes()
+        
+        for curIndex in selectedItems:
+            curRow = curIndex.row()
+            curFilename = self.fileTable.item(curRow, 0).text()
+            
+            retVal.append(curFilename)
+            
+        return retVal
+        
+    def getRemoteFile(self, agentIP, agentPort, filename):
+        url = "http://" + agentIP + ":" + str(agentPort) + "/system/getrecording/" + filename
+
+        dirname, runfilename = os.path.split(os.path.abspath(__file__))
+        recordingsDir = dirname + '/recordings'
+        fullPath = recordingsDir + '/' + filename
+        
+        if os.path.isfile(fullPath):
+            reply = QMessageBox.question(self, 'Question',"Local file by that name already exists.  Overwrite?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+            if reply == QMessageBox.No:
+                return
+        
+        try:
+            # urllib.urlretrieve(url, fullPath)
+            urlretrieve(url, fullPath)
+            return 0, ""
+        except:
+            return 1, "Error downloading and saving file."
+            
+    def onCopyFiles(self):
+        filenames = self.getSelectedFilenames()
+        
+        if len(filenames) == 0:
+            return
+        
+        for curFile in filenames:
+            retVal, errmsg = self.getRemoteFile(self.remoteAgentIP, self.remoteAgentPort, curFile)
+            
+            if retVal != 0:
+                QMessageBox.question(self, 'Error',errmsg, QMessageBox.Ok)
+
+        self.onRefreshFiles()
+        
+    def onDeleteFiles(self):
+        filenames = self.getSelectedFilenames()
+        
+        if len(filenames) == 0:
+            return
+
+        retVal, errmsg = delRemoteRecordingFiles(self.remoteAgentIP, self.remoteAgentPort, filenames)
+        
+        if retVal != 0:
+            QMessageBox.question(self, 'Error',errmsg, QMessageBox.Ok)
+            
+        self.onRefreshFiles()
+        
+    def populateTable(self, filelist):
+        self.fileTable.setRowCount(0)
+        
+        for curFile in filelist:
+            rowCount = self.fileTable.rowCount()
+            rowCount -= 1
+            addedFirstRow = False
+            if rowCount < 0:
+                addedFirstRow = True
+                rowCount = 0
+                
+            # Insert new at the top
+            self.fileTable.insertRow(0)
+
+            # Just make sure we don't get an extra blank row
+            if (addedFirstRow):
+                self.fileTable.setRowCount(1)
+
+            rowPosition = 0 # Always at the first row
+            self.fileTable.setItem(rowPosition,0, QTableWidgetItem(curFile.filename))
+            self.fileTable.setItem(rowPosition,1, IntTableWidgetItem(str(curFile.size)))
+            self.fileTable.setItem(rowPosition, 2, DateTableWidgetItem(curFile.timestamp.strftime("%m/%d/%Y %H:%M:%S")))
+            
+        if self.fileTableSortIndex >=0:
+            self.fileTable.sortItems(self.fileTableSortIndex, self.fileTableSortOrder )
+            
+    def hideEvent(self, event):
+        self.visibility.emit(False)
+        
+    def showEvent(self, event):
+        self.visibility.emit(True)
+        
+    def onVisibilityChanged(self, visible):
+        if not visible:
+            pass
+        else:
+            pass
+            
 # -------  Main Routine For Debugging-------------------------
 
 if __name__ == '__main__':
@@ -1325,12 +1626,14 @@ if __name__ == '__main__':
     #mapSettings, ok = MapSettingsDialog.getSettings()
     # mapSettings, ok = TelemetryMapSettingsDialog.getSettings()
     # agentIP, port, accepted = AgentListenerDialog.getAgent()
-    # testWin = GPSCoordDIalog(mainWin=None)
+    # testWin = GPSCoordDialog(mainWin=None)
     
-    from sparrowwifiagent import AgentConfigSettings
-    startupCfg = AgentConfigSettings()
-    runningCfg = AgentConfigSettings()
-    testWin = AgentConfigDialog(startupCfg, runningCfg, ['test'])
+    #from sparrowwifiagent import AgentConfigSettings
+    #startupCfg = AgentConfigSettings()
+    #runningCfg = AgentConfigSettings()
+    #testWin = AgentConfigDialog(startupCfg, runningCfg, ['test'])
+    
+    testWin = RemoteFilesDialog(None,'127.0.0.1', 8020)
     testWin.exec()
     
     app.exec_()
