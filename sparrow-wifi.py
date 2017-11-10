@@ -1014,6 +1014,16 @@ class mainWindow(QMainWindow):
             except:
                 QMessageBox.question(self, 'Error',"Could not convert " + text + " to a number.", QMessageBox.Ok)
 
+    def createSpectrumLine(self):
+        if not self.spectrumLine:
+            # add it
+            self.spectrumLine = self.createNewSeries(Qt.white, self.chart24)
+            self.spectrumLine.setName('Spectrum')
+            
+            self.chart24.addSeries(self.spectrumLine)
+            self.spectrumLine.attachAxis(self.chart24.axisX())
+            self.spectrumLine.attachAxis(self.chart24.axisY())
+        
     def onBtSpectrumAnalyzer(self):
         if (self.menuBtSpectrum.isChecked() == self.btLastSpectrumState):
             # There's an extra bounce in this for some reason.
@@ -1042,15 +1052,8 @@ class mainWindow(QMainWindow):
             
         if self.btShowSpectrum:
             # Add it on the plot
-            if not self.spectrumLine:
-                # add it
-                self.spectrumLine = self.createNewSeries(Qt.white, self.chart24)
-                self.spectrumLine.setName('Spectrum')
-                
-                self.chart24.addSeries(self.spectrumLine)
-                self.spectrumLine.attachAxis(self.chart24.axisX())
-                self.spectrumLine.attachAxis(self.chart24.axisY())
-                
+            self.createSpectrumLine()
+            
             if self.bluetooth and (not self.remoteAgentUp):
                 self.bluetooth.startScanning()
                 
@@ -1282,13 +1285,7 @@ class mainWindow(QMainWindow):
                     channelData = {}
                 
             # Plot it
-            if not self.spectrumLine:
-                # add it
-                self.spectrumLine = self.createNewSeries(Qt.white, self.chart24)
-                self.spectrumLine.setName('Spectrum')
-                self.chart24.addSeries(self.spectrumLine)
-                self.spectrumLine.attachAxis(self.chart24.axisX())
-                self.spectrumLine.attachAxis(self.chart24.axisY())
+            self.createSpectrumLine()
 
             self.spectrumLine.clear()
 
@@ -2174,6 +2171,7 @@ class mainWindow(QMainWindow):
     def onClearData(self):
         self.networkTable.setRowCount(0)
         self.chart24.removeAllSeries()
+        self.spectrumLine = None
         self.chart5.removeAllSeries()
         
         
