@@ -30,8 +30,8 @@ import requests
 from time import sleep
 from threading import Thread, Lock
 
-from PyQt5.QtWidgets import QApplication, QMainWindow,  QDesktopWidget
-from PyQt5.QtWidgets import QMessageBox, QFileDialog, QInputDialog, QLineEdit
+from PyQt5.QtWidgets import QApplication, QMainWindow,  QDesktopWidget, QGraphicsSimpleTextItem
+from PyQt5.QtWidgets import QMessageBox, QFileDialog, QInputDialog, QLineEdit, QAbstractItemView #, QSplitter
 from PyQt5.QtWidgets import QMenu, QAction, QComboBox, QLabel, QPushButton, QCheckBox, QTableWidget,QTableWidgetItem, QHeaderView
 #from PyQt5.QtWidgets import QTabWidget, QWidget, QVBoxLayout
 from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
@@ -43,6 +43,7 @@ from PyQt5 import QtCore
 
 # from PyQt5.QtCore import QCoreApplication # programatic quit
 from wirelessengine import WirelessEngine, WirelessNetwork
+from sparrowcommon import BaseThreadClass
 from sparrowgps import GPSEngine, GPSStatus, SparrowGPS
 from telemetry import TelemetryDialog
 from sparrowtablewidgets import IntTableWidgetItem, DateTableWidgetItem
@@ -53,6 +54,7 @@ from sparrowwifiagent import AgentConfigSettings
 
 # There are some "plugins" that are available for addons.  Let's see if they're present
 hasFalcon = False
+hasBluetooth = False
 
 try:
     from manuf import manuf
@@ -109,6 +111,73 @@ def makeGetRequest(url):
     htmlResponse=response.text
     return response.status_code, htmlResponse
 
+def remoteHasBluetooth(agentIP, agentPort):
+    url = "http://" + agentIP + ":" + str(agentPort) + "/bluetooth/present"
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            responsedict = json.loads(responsestr)
+            errcode = responsedict['errcode']
+            errmsg = responsedict['errmsg']
+            btPresent = responsedict['hasbluetooth']
+            scanRunning = responsedict['scanrunning']
+            
+            return errcode, errmsg, btPresent, scanRunning
+        except:
+            return -1, 'Error parsing response', False, False
+    else:
+            return -2, 'Bad response from agent [' + str(statusCode) + ']', False, False
+        
+def startRemoteBluetoothScan(agentIP, agentPort):
+    url = "http://" + agentIP + ":" + str(agentPort) + "/bluetooth/scanstart"
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            responsedict = json.loads(responsestr)
+            errcode = responsedict['errcode']
+            errmsg = responsedict['errmsg']
+            return errcode, errmsg
+        except:
+            return -1, 'Error parsing response'
+    else:
+            return -2, 'Bad response from agent [' + str(statusCode) + ']'
+        
+def stopRemoteBluetoothScan(agentIP, agentPort):
+    url = "http://" + agentIP + ":" + str(agentPort) + "/bluetooth/scanstop"
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            responsedict = json.loads(responsestr)
+            errcode = responsedict['errcode']
+            errmsg = responsedict['errmsg']
+            return errcode, errmsg
+        except:
+            return -1, 'Error parsing response'
+    else:
+            return -2, 'Bad response from agent [' + str(statusCode) + ']'
+        
+def getRemoteBluetoothScanSpectrum(agentIP, agentPort):
+    url = "http://" + agentIP + ":" + str(agentPort) + "/bluetooth/scanstatus"
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            responsedict = json.loads(responsestr)
+            errcode = responsedict['errcode']
+            errmsg = responsedict['errmsg']
+            tmpChannelData = responsedict['channeldata']
+            channelData = {}
+            for curKey in tmpChannelData.keys():
+                channelData[float(curKey)] = float(tmpChannelData[curKey])
+            return errcode, errmsg, channelData
+        except:
+            return -1, 'Error parsing response', None
+    else:
+            return -2, 'Bad response from agent [' + str(statusCode) + ']', None
+        
 def requestRemoteInterfaces(agentIP, agentPort):
     url = "http://" + agentIP + ":" + str(agentPort) + "/wireless/interfaces"
     statusCode, responsestr = makeGetRequest(url)
@@ -203,34 +272,54 @@ def requestRemoteNetworks(remoteIP, remotePort, remoteInterface, channelList=Non
         return -1, "Error connecting to remote agent", None
 
 
-# ------------------  Class Base Thread ----------------------------------
-class MyBaseThread(Thread):
-    def __init__(self):
+# ------------------  Hover Line  ------------------------------
+class QHoverLineSeries(QLineSeries):
+    def __init__(self, parentChart, color=Qt.white):
         super().__init__()
-        self.signalStop = False
-        self.threadRunning = False
+        self.textColor = color
+        self.parentChart = parentChart
+        
+        self.hovered.connect(self.onHover)
+        self.callout = Callout(self.name(), parentChart, self.textColor)
 
-    def run(self):
-        self.threadRunning = True
+        self.callout.setZValue(100)
         
-        # Just a basic sleep for 1 second example loop.
-        # Instantiate and call start() to get it going
-        while not self.signalStop:
-            sleep(1)
+    def onHover(self, point, state):
+        if state:
+            self.callout.setTextAndPos(self.name(), point)
+            # self.callout.setVisible(True)
+            self.callout.show()
+        else:
+            self.callout.hide()
             
-        self.threadRunning = False
+# ------------------  Graphics Callout  ------------------------------
+class Callout(QGraphicsSimpleTextItem):
+    def __init__(self, displayText, parent, textColor=Qt.white):
+        # super().__init__(displayText, parent)
+        super().__init__(parent=parent)
+        self.textColor = textColor
+        self.chartParent = parent
+        
+        # Pen draws the outline, brush does the character fill
+        # The doc says the pen is slow so don't use it unless you have to
+        # penBorder = QPen(self.textColor)
+        # penBorder.setWidth(2)
+        # self.setPen(penBorder)
 
-    def stopAndWait(self):
-        self.signalStop = True
+        newBrush = QBrush(self.textColor)
+        self.setBrush(newBrush)
         
-        self.waitTillFinished()
-        
-    def waitTillFinished(self):
-        while self.threadRunning:
-            sleep(0.1)
-            
+    # Has setText() and text() methods
+    def setTextAndPos(self, displayText, point):
+        self.setText(displayText)
+        bR = self.sceneBoundingRect()
+        localCoord = self.chartParent.mapToPosition(point)
+        # self.setPos(point.x() - bR.width()/2, point.y() - bR.height()/2)
+        #self.setPos(point)
+        self.setPos(localCoord.x() - bR.width()/2, localCoord.y() - bR.height()/2-5)
+
 # ------------------  Local network scan thread  ------------------------------
-class ScanThread(MyBaseThread):
+class ScanThread(BaseThreadClass):
     def __init__(self, interface, mainWin, channelList=None):
         super().__init__()
         self.interface = interface
@@ -306,7 +395,7 @@ class remoteSingleShotThread(Thread):
         self.threadRunning = False
 
 # ------------------  Remote agent network scan thread  ------------------------------
-class RemoteScanThread(MyBaseThread):
+class RemoteScanThread(BaseThreadClass):
     def __init__(self, interface, mainWin, channelList=None):
         super().__init__()
         self.interface = interface
@@ -376,6 +465,28 @@ class mainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        global hasBluetooth
+        
+        if hasBluetooth:
+            self.hasBluetooth = hasBluetooth
+            self.hasRemoteBluetooth = False
+            
+            self.bluetooth = SparrowBluetooth()
+        else:
+            self.hasBluetooth = hasBluetooth
+            self.hasRemoteBluetooth = False
+            self.bluetooth = None
+    
+        self.btSpectrumGain = 1.0
+        
+        self.btShowSpectrum = False
+        self.btLastSpectrumState = False
+        self.btSpectrumTimer = QTimer()
+        self.btSpectrumTimeout = 200
+        self.btSpectrumTimer.timeout.connect(self.onSpectrumTimer)
+        self.btSpectrumTimer.setSingleShot(True)
+        self.spectrumLine = None
+        
         self.ouiLookupEngine = getOUIDB()
             
         self.agentListenerWindow = None
@@ -468,6 +579,13 @@ class mainWindow(QMainWindow):
         
         self.createControls()
 
+        #self.splitter1 = QSplitter(Qt.Vertical)
+        #self.splitter2 = QSplitter(Qt.Horizontal)
+        #self.splitter1.addWidget(self.networkTable)
+        #self.splitter1.addWidget(self.splitter2)
+        #self.splitter2.addWidget(self.Plot24)
+        #self.splitter2.addWidget(self.Plot5)
+        
         self.setBlackoutColors()
         
         self.setMinimumWidth(800)
@@ -489,11 +607,12 @@ class mainWindow(QMainWindow):
         # return super(mainWin, self).resizeEvent(event)
         size = self.geometry()
         self.networkTable.setGeometry(10, 103, size.width()-20, size.height()/2-105)
-        # self.tabs.setGeometry(30, self.height()/2+20, self.width()-60, self.height()/2-55)
         self.Plot24.setGeometry(10, size.height()/2+10, size.width()/2-10, size.height()/2-40)
         self.Plot5.setGeometry(size.width()/2+5, size.height()/2+10,size.width()/2-15, size.height()/2-40)
         self.lblGPS.move(size.width()-90, 30)
         self.btnGPSStatus.move(size.width()-50, 34)
+        
+        # self.splitter1.setGeometry(10, 103, size.width()-20, size.height()-20)
         
         if size.width() < 850:
             self.setGeometry(size.x(), size.y(), 850, size.height())
@@ -575,6 +694,8 @@ class mainWindow(QMainWindow):
         self.networkTable.horizontalHeader().sectionClicked.connect(self.onTableHeadingClicked)
         self.networkTable.cellClicked.connect(self.onTableClicked)
         
+        self.networkTable.setSelectionMode( QAbstractItemView.SingleSelection )
+        self.networkTable.itemSelectionChanged.connect(self.onNetworkTableSelectionChanged)
         self.networkTableSortOrder = Qt.DescendingOrder
         self.networkTableSortIndex = -1
         
@@ -630,7 +751,7 @@ class mainWindow(QMainWindow):
     def setBlackoutColors(self):
         global colors
         global orange
-        colors = [Qt.white, Qt.red, Qt.yellow, Qt.green, Qt.darkGreen, orange, Qt.blue,Qt.cyan, Qt.darkCyan, Qt.magenta, Qt.darkMagenta, Qt.gray]
+        colors = [Qt.red, Qt.yellow, Qt.darkYellow, Qt.green, Qt.darkGreen, orange, Qt.blue,Qt.cyan, Qt.darkCyan, Qt.magenta, Qt.darkMagenta, Qt.gray]
 
         # return
         # self.setStyleSheet("background-color: black")
@@ -780,14 +901,32 @@ class mainWindow(QMainWindow):
         newAct.triggered.connect(self.onShowTelemetry)
         ViewMenu.addAction(newAct)
         
-        if hasFalcon:
+        if hasFalcon or self.hasBluetooth:
             # Falcon Menu Items
             ViewMenu = menubar.addMenu('&Falcon')
-            newAct = QAction('Advanced Scan', self)        
-            newAct.setStatusTip("Run a scan to find hidden SSID's and client stations")
-            newAct.triggered.connect(self.onAdvancedScan)
-            ViewMenu.addAction(newAct)
-        
+            if hasFalcon:
+                newAct = QAction('Advanced Scan', self)        
+                newAct.setStatusTip("Run a scan to find hidden SSID's and client stations")
+                newAct.triggered.connect(self.onAdvancedScan)
+                ViewMenu.addAction(newAct)
+
+            self.menuBtSpectrum = QAction('2.4 GHz Spectrum Analyzer', self)        
+            self.menuBtSpectrum.setStatusTip("Use Ubertooth for 2.4 GHz spectrum analyzer. NOTE: Wireless cards may have different gain, so results may vary.")
+            self.menuBtSpectrum.setCheckable(True)
+            self.menuBtSpectrum.triggered.connect(self.onBtSpectrumAnalyzer)
+            ViewMenu.addAction(self.menuBtSpectrum)
+
+            self.menuBtSpectrumGain = QAction('Spectrum Analyzer Gain', self)        
+            self.menuBtSpectrumGain.setStatusTip("Manually override gain to better match spectrum with wifi adapter")
+            self.menuBtSpectrumGain.triggered.connect(self.onBtSpectrumOverrideGain)
+            ViewMenu.addAction(self.menuBtSpectrumGain)
+            
+            if not self.hasBluetooth:
+                self.menuBtSpectrum.setEnabled(False)
+                self.menuBtSpectrumGain.setEnabled(False)
+            else:
+                self.bluetooth = SparrowBluetooth()
+                
         # Help Menu Items
         helpMenu = menubar.addMenu('&Help')
         newAct = QAction('About', self)        
@@ -800,9 +939,10 @@ class mainWindow(QMainWindow):
         #newMenu.addAction(actNewSqlite)
         #newMenu.addAction(actNewpostgres)
         # fileMenu.addMenu(newMenu)
-        
+    
     def createCharts(self):
         self.chart24 = QChart()
+        self.chart24.setAcceptHoverEvents(True)
         titleFont = QFont()
         titleFont.setPixelSize(18)
         titleBrush = QBrush(QColor(0, 0, 255))
@@ -834,6 +974,7 @@ class mainWindow(QMainWindow):
         self.Plot24.setRenderHint(QPainter.Antialiasing)
 
         self.chart5 = QChart()
+        self.chart5.setAcceptHoverEvents(True)
         self.chart5.setTitleFont(titleFont)
         self.chart5.setTitleBrush(titleBrush)
         self.chart5.setTitle('5 GHz')
@@ -860,6 +1001,69 @@ class mainWindow(QMainWindow):
         self.Plot5.setBackgroundBrush(chartBorder)
         self.Plot5.setRenderHint(QPainter.Antialiasing)
     
+    def onBtSpectrumOverrideGain(self):
+        text, okPressed = QInputDialog.getText(self, "Spectrum Analyzer Gain","Enter a gain to apply to the spectrum:", 
+                                    QLineEdit.Normal, str(self.btSpectrumGain))
+        if okPressed and text != '':
+            try:
+                newGain = float(text)
+                if newGain <= 0:
+                    QMessageBox.question(self, 'Error',"Invalid gain setting (gain must be greater then zero)", QMessageBox.Ok)
+                else:
+                    self.btSpectrumGain = newGain
+            except:
+                QMessageBox.question(self, 'Error',"Could not convert " + text + " to a number.", QMessageBox.Ok)
+
+    def onBtSpectrumAnalyzer(self):
+        if (self.menuBtSpectrum.isChecked() == self.btLastSpectrumState):
+            # There's an extra bounce in this for some reason.
+            return
+
+        self.btShowSpectrum = self.menuBtSpectrum.isChecked()
+        self.btLastSpectrumState = self.btShowSpectrum
+        
+        if (not self.remoteAgentUp):
+            errcode = 0
+        else:
+            if self.btShowSpectrum:
+                errcode, errmsg = startRemoteBluetoothScan(self.remoteAgentIP, self.remoteAgentPort)
+                if errcode != 0:
+                    self.statusBar().showMessage(errmsg)
+                    self.menuBtSpectrum.setChecked(False)
+                    self.btShowSpectrum = False
+                    self.btLastSpectrumState = False
+                    self.btSpectrumTimer.stop()
+                    return
+            else:
+                errcode, errmsg = stopRemoteBluetoothScan(self.remoteAgentIP, self.remoteAgentPort)
+                
+        if errcode != 0:
+            self.statusBar().showMessage(errmsg)
+            
+        if self.btShowSpectrum:
+            # Add it on the plot
+            if not self.spectrumLine:
+                # add it
+                self.spectrumLine = self.createNewSeries(Qt.white, self.chart24)
+                self.spectrumLine.setName('Spectrum')
+                
+                self.chart24.addSeries(self.spectrumLine)
+                self.spectrumLine.attachAxis(self.chart24.axisX())
+                self.spectrumLine.attachAxis(self.chart24.axisY())
+                
+            if self.bluetooth and (not self.remoteAgentUp):
+                self.bluetooth.startScanning()
+                
+            self.btSpectrumTimer.start(self.btSpectrumTimeout)
+        else:
+            self.btSpectrumTimer.stop()
+            if self.bluetooth and (not self.remoteAgentUp):
+                self.bluetooth.stopScanning()
+            # remove it from the plot
+            if self.spectrumLine:
+                self.chart24.removeSeries(self.spectrumLine)
+                self.spectrumLine = None
+            
     def onAdvancedScanClosed(self):
         self.advancedScan = None
      
@@ -883,6 +1087,8 @@ class mainWindow(QMainWindow):
                             if curData.ssid.startswith('<Unknown') and (not curNet.ssid.startswith('<Unknown')):
                                 curData.ssid = curNet.ssid
                                 self.networkTable.item(curRow, 2).setText(curData.ssid)
+                                curSeries = self.networkTable.item(curRow, 2).data(Qt.UserRole)
+                                curSeries.setName(curData.ssid)
         
     def onAdvancedScan(self):
         if not hasFalcon:
@@ -1062,6 +1268,50 @@ class mainWindow(QMainWindow):
             
         self.ntRightClickMenu.exec_(self.networkTable.mapToGlobal(pos))
  
+    def onSpectrumTimer(self):
+        if self.btShowSpectrum: #  and self.bluetooth:
+            if (not self.remoteAgentUp):
+                # Get Local data
+                channelData = self.bluetooth.spectrumToChannels()
+                errcode = 0
+            else:
+                # Get remote data
+                errcode, errmsg, channelData = getRemoteBluetoothScanSpectrum(self.remoteAgentIP, self.remoteAgentPort)
+                if errcode != 0:
+                    self.statusBar().showMessage(errmsg)
+                    channelData = {}
+                
+            # Plot it
+            if not self.spectrumLine:
+                # add it
+                self.spectrumLine = self.createNewSeries(Qt.white, self.chart24)
+                self.spectrumLine.setName('Spectrum')
+                self.chart24.addSeries(self.spectrumLine)
+                self.spectrumLine.attachAxis(self.chart24.axisX())
+                self.spectrumLine.attachAxis(self.chart24.axisY())
+
+            self.spectrumLine.clear()
+
+            if len(channelData) > 0:
+                sortedKeys = sorted(channelData.keys())
+                for curKey in sortedKeys:
+                    fCurKey = float(curKey)
+                    if self.btSpectrumGain != 1.0:
+                        # Have to do this + / - to apply the gain on the scale since the values are all negative
+                        # -90 * 1.1 is -99 (goes the wrong way)
+                        dBm = float((channelData[curKey] + 110.0)*self.btSpectrumGain - 110.0)
+                    else:
+                        dBm = float(channelData[curKey])
+                    self.spectrumLine.append(fCurKey, dBm)
+                
+                self.spectrumLine.append(12.0, -110.0)
+            
+            if not self.remoteAgentUp:
+                self.btSpectrumTimer.start(self.btSpectrumTimeout)
+            else:
+                # Slow it down just a bit for remote agents
+                self.btSpectrumTimer.start(400)
+        
     def onGPSTimer(self):
         self.onGPSStatus(False)
         self.gpsTimer.start(self.gpsTimerTimeout)
@@ -1310,7 +1560,11 @@ class mainWindow(QMainWindow):
         self.networkTableSortIndex = logical_index
         self.networkTable.sortItems(logical_index, order )
         
-    def onTableClicked(self, row, col):
+    def onNetworkTableSelectionChanged(self):
+        row = self.networkTable.currentRow()
+        if row < 0:
+            return
+            
         if (self.lastSeries is not None):
             # Change the old one back
             if (self.lastSeries):
@@ -1333,6 +1587,9 @@ class mainWindow(QMainWindow):
         else:
             selectedSeries = None
 
+    def onTableClicked(self, row, col):
+        pass
+        
     def onGPSStatusIndicatorClicked(self):
         if self.menuRemoteAgent.isChecked():
             self.onXGPSRemote()
@@ -1565,6 +1822,8 @@ class mainWindow(QMainWindow):
                 self.combo.setEnabled(True)
 
     def updateNet(self, curSeries, curNet, channelPlotStart, channelPlotEnd):
+        curSeries.setName(curNet.ssid)
+        
         for i in range(channelPlotStart, channelPlotEnd):
             graphPoint = False
             
@@ -1629,7 +1888,11 @@ class mainWindow(QMainWindow):
             else:
                     newSeries.append(i, -100)
                 
-        newSeries.setName(curNet.getKey())
+        tmpssid = curNet.ssid
+        if (len(tmpssid) == 0):
+            tmpssid = '<Unknown>'
+            
+        newSeries.setName(tmpssid)
         
         if adding5GHz:
             self.chart5.addSeries(newSeries)
@@ -1739,8 +2002,8 @@ class mainWindow(QMainWindow):
             
         return nextColor
 
-    def createNewSeries(self, nextColor):
-        newSeries = QLineSeries()
+    def createNewSeries(self, nextColor, parentChart):
+        newSeries = QHoverLineSeries(parentChart) # QLineSeries()
         pen = QPen(nextColor)
         pen.setWidth(2)
         newSeries.setPen(pen)
@@ -1765,7 +2028,6 @@ class mainWindow(QMainWindow):
             
             # ----------- Update the plots -------------------
             nextColor = self.getNextColor()
-            newSeries = self.createNewSeries(nextColor)
             
             # 3 scenarios: 
             # 20 MHz, 1 channel
@@ -1773,9 +2035,11 @@ class mainWindow(QMainWindow):
             # 80/160 MHz, Specified differently.  It's allocated as a contiguous block
             if curNet.channel < 15:
                 # 2.4 GHz
+                newSeries = self.createNewSeries(nextColor, self.chart24)
                 self.add24Net(newSeries, curNet)
             else:
                 # 5 GHz
+                newSeries = self.createNewSeries(nextColor, self.chart5)
                 self.add5Net(newSeries, curNet)
                 
             # ----------- Update the Table -------------------
@@ -1798,6 +2062,9 @@ class mainWindow(QMainWindow):
             tmpssid = curNet.ssid
             if (len(tmpssid) == 0):
                 tmpssid = '<Unknown>'
+                
+            newSeries.setName(tmpssid)
+
             newSSID = QTableWidgetItem(tmpssid)
             ssidBrush = QBrush(nextColor)
             newSSID.setForeground(ssidBrush)
@@ -2312,6 +2579,40 @@ class mainWindow(QMainWindow):
                     self.statusBar().showMessage('No wireless interfaces found.')
                     
                 self.lastRemoteState = self.menuRemoteAgent.isChecked() 
+
+                # Deal with bluetooth.
+                # If we're running local, stop it.
+                # Then reconfigure based on remote agent state
+                if self.bluetooth:
+                    self.bluetooth.stopScanning()
+                    
+                errcode, errmsg, btpresent, scanRunning =remoteHasBluetooth(self.remoteAgentIP, self.remoteAgentPort)
+                if errcode == 0:
+                    self.menuBtSpectrumGain.setEnabled(btpresent)
+                    self.menuBtSpectrum.setEnabled(btpresent)
+                    self.menuBtSpectrum.setChecked(scanRunning)
+                    self.btShowSpectrum = scanRunning
+                    self.btLastSpectrumState = scanRunning
+                    if scanRunning:
+                        self.btSpectrumTimer.start(self.btSpectrumTimeout)
+                    else:
+                        if self.spectrumLine:
+                            self.spectrumLine.clear()
+                            self.chart24.removeSeries(self.spectrumLine)
+                            self.spectrumLine = None
+                else:
+                    self.btShowSpectrum = False
+                    self.btLastSpectrumState = False
+                    if self.spectrumLine:
+                        self.spectrumLine.clear()
+                        self.chart24.removeSeries(self.spectrumLine)
+                        self.spectrumLine = None
+                        
+                    self.menuBtSpectrum.setEnabled(False)
+                    self.menuBtSpectrum.setChecked(False)
+                    self.menuBtSpectrumGain.setEnabled(False)
+                    self.btSpectrumTimer.stop()
+
                 
                 self.onGPSStatus()
             else:
@@ -2336,6 +2637,13 @@ class mainWindow(QMainWindow):
             self.lastRemoteState = self.menuRemoteAgent.isChecked() 
             self.onGPSStatus()
             
+            self.btShowSpectrum = False
+            if self.spectrumLine:
+                self.spectrumLine.clear()
+            self.menuBtSpectrum.setEnabled(self.hasBluetooth)
+            self.menuBtSpectrum.setChecked(False)
+            self.menuBtSpectrumGain.setEnabled(self.hasBluetooth)
+                    
         self.checkNotifyAdvancedScan()
 
     def onAbout(self):
@@ -2380,6 +2688,9 @@ class mainWindow(QMainWindow):
             self.gpsCoordWindow.close()
             self.gpsCoordWindow = None
             
+        if self.bluetooth:
+            self.bluetooth.stopScanning()
+            
         event.accept()
 
 # -------  Main Routine -------------------------
@@ -2397,6 +2708,13 @@ if __name__ == '__main__':
         if  os.path.isfile(pluginsdir + '/falconwifi.py'):
             from falconwifidialogs import AdvancedScanDialog
             hasFalcon = True
+        if  os.path.isfile(pluginsdir + '/sparrowbluetooth.py'):
+            from sparrowbluetooth import SparrowBluetooth
+            #SparrowBluetooth.ubertoothStopSpecan()
+            errcode, errmsg = SparrowBluetooth.hasUbertoothTools()
+            # errcode, errmsg = SparrowBluetooth.ubertoothOnline()
+            if errcode == 0:
+                hasBluetooth = True
             
     app = QApplication(sys.argv)
     mainWin = mainWindow()

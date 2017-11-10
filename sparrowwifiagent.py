@@ -51,7 +51,10 @@ useMavlink = False
 vehicle = None
 mavlinkGPSThread = None
 hasFalcon = False
+hasBluetooth = False
 falconWiFiRemoteAgent = None
+
+bluetooth = None
 
 # Lock list is a dictionary of thread locks for scanning interfaces
 lockList = {}
@@ -126,6 +129,8 @@ def getRecordingFiles():
     return retVal
 
 def restartAgent():
+    global bluetooth
+    
     if mavlinkGPSThread:
         mavlinkGPSThread.signalStop = True
         print('Waiting for mavlink GPS thread to terminate...')
@@ -136,6 +141,9 @@ def restartAgent():
         
     stopAnnounceThread()
     
+    if bluetooth:
+        bluetooth.stopScanning()
+
     if runningcfg.useRPiLEDs:
         SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_OFF)
         SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)
@@ -213,8 +221,12 @@ def stopRecord():
     if recordThread:
         recordThread.signalStop = True
         print('Waiting for record thread to terminate...')
-        while (recordThread.threadRunning):
+
+        i=0
+        maxCycles = 2 /0.2
+        while (recordThread.threadRunning) and (i<maxCycles):
             sleep(0.2)
+            i += 1
             
 def stopAnnounceThread():
     global announceThread
@@ -223,8 +235,12 @@ def stopAnnounceThread():
         announceThread.signalStop = True
         
         print('Waiting for announce thread to terminate...')
-        while (announceThread.threadRunning):
+        
+        i=0
+        maxCycles = 2 /0.2
+        while (announceThread.threadRunning) and (i<maxCycles):
             sleep(0.2)
+            i += 1
             
         announceThread = None
 
@@ -648,7 +664,12 @@ class AnnounceThread(Thread):
         
         while (not self.signalStop):
             self.sendAnnounce()
-            sleep(self.sendDelay)
+            
+            # 4 second delay, but check every second for termination signal
+            i=0
+            while i<4 and not self.signalStop:
+                sleep(1.0)
+                i += 1
                     
         self.threadRunning = False
 
@@ -714,6 +735,9 @@ class SparrowWiFiAgent(object):
             
         if hasFalcon:
             falconWiFiRemoteAgent.cleanup()
+            
+        if bluetooth:
+            bluetooth.stopScanning()
             
         curTime = datetime.datetime.now()
         print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] Sparrow-wifi agent stopped.")
@@ -1099,7 +1123,11 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                                     '/wireless/moninterfaces', 
                                     '/falcon/getscanresults',
                                     '/falcon/getalldeauths', 
-                                    '/system/getrecordings', 
+                                    '/system/getrecordings',
+                                    '/bluetooth/present', 
+                                   '/bluetooth/scanstart', 
+                                  '/bluetooth/scanstop',  
+                                  '/bluetooth/scanstatus',  
                                     '/gps/status']
                                     
         # partials that have more in the URL
@@ -1190,6 +1218,8 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
         global allowedIPs
         global runningcfg
         global falconWiFiRemoteAgent
+        global hasBluetooth
+        global bluetooth
         
         # For RPi LED's, using it during each get request wasn't completely working.  Short transactions like
         # status and interface list were so quick the light would get "confused" and stay off.  So
@@ -1376,6 +1406,46 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
         elif s.path.startswith('/system/getrecording/'):
             filename = s.path.replace('/system/getrecording/', '')
             s.sendFile(filename)
+        elif s.path == '/bluetooth/present':
+                responsedict = {}
+                responsedict['errcode'] = 0
+                responsedict['errmsg'] = ''
+                responsedict['hasbluetooth'] = hasBluetooth
+                if hasBluetooth:
+                    responsedict['scanrunning'] = bluetooth.scanRunnning()
+                else:
+                    responsedict['scanrunning'] = False
+                    
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+        elif s.path.startswith('/bluetooth/scan'):
+            if not hasBluetooth or not bluetooth:
+                responsedict = {}
+                responsedict['errcode'] = 1
+                responsedict['errmsg'] = 'Bluetooth not supported on this agent'
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            else:
+                function=s.path.replace('/bluetooth/scan', '')
+                function = function.replace('/', '')
+                
+                responsedict = {}
+                responsedict['errcode'] = 0
+                responsedict['errmsg'] = ''
+                
+                if function=='start':
+                    bluetooth.startScanning()
+                elif function == 'stop':
+                    bluetooth.stopScanning()
+                elif function == 'status':
+                    channelData = bluetooth.spectrumToChannels()
+                    responsedict['channeldata'] = channelData
+                else:
+                    responsedict['errcode'] = 1
+                    responsedict['errmsg'] = 'Unknown command'
+                    
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
         elif s.path == '/system/config':
             cfgSettings = AgentConfigSettings()
             cfgSettings.fromConfigFile('sparrowwifiagent.cfg')
@@ -1872,7 +1942,12 @@ if __name__ == '__main__':
             if not falconWiFiRemoteAgent.toolsInstalled():
                 print("ERROR: aircrack suite of tools does not appear to be installed.  Please install it.")
                 exit(4)
-
+        if  os.path.isfile(pluginsdir + '/sparrowbluetooth.py'):
+            from sparrowbluetooth import SparrowBluetooth
+            errcode, errmsg = SparrowBluetooth.ubertoothOnline()
+            if errcode == 0:
+                hasBluetooth = True
+                bluetooth = SparrowBluetooth()
 
     # See if we have a config file:
     dirname, filename = os.path.split(os.path.abspath(__file__))
