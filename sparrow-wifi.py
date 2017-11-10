@@ -30,7 +30,7 @@ import requests
 from time import sleep
 from threading import Thread, Lock
 
-from PyQt5.QtWidgets import QApplication, QMainWindow,  QDesktopWidget, QGraphicsSimpleTextItem
+from PyQt5.QtWidgets import QApplication, QMainWindow,  QDesktopWidget, QGraphicsSimpleTextItem, QFrame
 from PyQt5.QtWidgets import QMessageBox, QFileDialog, QInputDialog, QLineEdit, QAbstractItemView #, QSplitter
 from PyQt5.QtWidgets import QMenu, QAction, QComboBox, QLabel, QPushButton, QCheckBox, QTableWidget,QTableWidgetItem, QHeaderView
 #from PyQt5.QtWidgets import QTabWidget, QWidget, QVBoxLayout
@@ -271,7 +271,20 @@ def requestRemoteNetworks(remoteIP, remotePort, remoteInterface, channelList=Non
     else:
         return -1, "Error connecting to remote agent", None
 
-
+# -----------------  Divider -----------------------------------
+class Divider(QFrame):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.mainWin = parent
+        
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.LeftButton:
+            newPos = self.mapToParent(event.pos())
+            newPos.setX(1)
+            self.move(newPos)
+            
+            self.mainWin.resizeEvent(event)
+        
 # ------------------  Hover Line  ------------------------------
 class QHoverLineSeries(QLineSeries):
     def __init__(self, parentChart, color=Qt.white):
@@ -606,17 +619,37 @@ class mainWindow(QMainWindow):
         # self.statusBar().showMessage('Window resized.')
         # return super(mainWin, self).resizeEvent(event)
         size = self.geometry()
-        self.networkTable.setGeometry(10, 103, size.width()-20, size.height()/2-105)
-        self.Plot24.setGeometry(10, size.height()/2+10, size.width()/2-10, size.height()/2-40)
-        self.Plot5.setGeometry(size.width()/2+5, size.height()/2+10,size.width()/2-15, size.height()/2-40)
-        self.lblGPS.move(size.width()-90, 30)
-        self.btnGPSStatus.move(size.width()-50, 34)
+        
+        if self.initializingGUI:
+            self.horizontalDivider.setGeometry(1, size.height()/2+2, size.width()-2, 4)
+
+            self.networkTable.setGeometry(10, 103, size.width()-20, size.height()/2-105)
+            self.Plot24.setGeometry(10, size.height()/2+10, size.width()/2-10, size.height()/2-40)
+            self.Plot5.setGeometry(size.width()/2+5, size.height()/2+10,size.width()/2-15, size.height()/2-40)
+            self.lblGPS.move(size.width()-90, 30)
+            self.btnGPSStatus.move(size.width()-50, 34)
+            
+            self.initializingGUI = False
         
         # self.splitter1.setGeometry(10, 103, size.width()-20, size.height()-20)
         
-        if size.width() < 850:
-            self.setGeometry(size.x(), size.y(), 850, size.height())
+        if size.width() < 800:
+            self.setGeometry(size.x(), size.y(), 800, size.height())
 
+        size = self.geometry()
+        
+        dividerPos = self.horizontalDivider.pos()
+        if dividerPos.y() < 200:
+            dividerPos.setY(200)
+        elif dividerPos.y() > size.height()-180:
+            dividerPos.setY(size.height()-180)
+            
+        self.horizontalDivider.setGeometry(dividerPos.x(), dividerPos.y(), size.width()-2, 5)
+        self.networkTable.setGeometry(10, 103, size.width()-20, dividerPos.y()-105)
+        self.Plot24.setGeometry(10, dividerPos.y()+6, size.width()/2-10, size.height()-dividerPos.y()-30)
+        self.Plot5.setGeometry(size.width()/2+5, dividerPos.y()+6,size.width()/2-15, size.height()-dividerPos.y()-30)
+
+        
             
     def createControls(self):
         # self.statusBar().setStyleSheet("QStatusBar{background:rgba(204,229,255,255);color:black;border: 1px solid blue; border-radius: 1px;}")
@@ -698,6 +731,14 @@ class mainWindow(QMainWindow):
         self.networkTable.itemSelectionChanged.connect(self.onNetworkTableSelectionChanged)
         self.networkTableSortOrder = Qt.DescendingOrder
         self.networkTableSortIndex = -1
+        
+        # Set flag for first time
+        self.initializingGUI = True
+        
+        # Set divider
+        self.horizontalDivider = Divider(self)
+        self.horizontalDivider.setFrameShape(QFrame.HLine)
+        self.horizontalDivider.setFrameShadow(QFrame.Sunken)
         
         # Network Table right-click menu
         self.ntRightClickMenu = QMenu(self)
