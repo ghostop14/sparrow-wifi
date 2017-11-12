@@ -20,6 +20,13 @@
 from threading import Thread
 from time import sleep
 
+# ------------------  Global functions ------------------------------
+def stringtobool(instr):
+    if (instr == 'True' or instr == 'true'):
+        return True
+    else:
+        return False
+        
 # ------------------  Class Base Thread ----------------------------------
 class BaseThreadClass(Thread):
     def __init__(self):

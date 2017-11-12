@@ -31,12 +31,20 @@ sparrow-wifi uses python3, qt5, and qtchart behind the scenes.  On a standard de
 
 (if you don't already have pip3 installed, use 'apt-get install python3-pip')
 
-pip3 install QScintilla PyQtChart gps3 dronekit manuf
+pip3 install QScintilla PyQtChart gps3 dronekit manuf db-sqlite3
 
 If you're going to use the gps capabilities, you'll also need to make sure gpsd is installed and configured:
 
 sudo apt-get install gpsd
 
+## Bluetooth
+[Coming soon]
+
+If you would like to scan for bluetooth, you'll need a few things:
+1. A bluetooth adapter (test with 'hcitool dev')
+2. An Ubertooth (yes, you need both Ubertooth and a standard adapter, the tools use both)
+3. Ubertooth tools installed and functioning (you can test it with ubertooth-specan-ui)
+4. Blue Hydra installed into /opt/bluetooth/blue_hydra (mkdir /opt/bluetooth && cd /opt/bluetooth && git clone https://github.com/pwnieexpress/blue_hydra.git)  You can test it with bin/blue_hydra
 
 ## Running sparrow-wifi
 Because it needs to use iw to scan, you will need to run sparrow-wifi as root.  Simply run:
@@ -72,11 +80,13 @@ You can run the remote agent on a Raspberry pi, however the installation require
 
 You will also need to upgrade to Python 3.5.1 or higher with a process similar to this:
 
+sudo apt-get install libsqlite3-dev
+
 cd /tmp
 wget https://www.python.org/ftp/python/3.5.1/Python-3.5.1.tgz
 tar -zxvf Python-3.5.1.tgz
 cd Python-3.5.1
-./configure && make && sudo make install
+./configure && make -j3 && sudo make install
 
 Once that is done, install the necessary modules into the 3.5 build:
 sudo pip3.5 install gps3 dronekit manuf python-dateutil

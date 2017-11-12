@@ -18,7 +18,7 @@
 # Boston, MA 02110-1301, USA.
 # 
 
-from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QApplication, QLabel, QComboBox, QLineEdit, QPushButton
+from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QApplication, QLabel, QComboBox, QLineEdit, QPushButton, QAbstractItemView
 from PyQt5.QtWidgets  import QFileDialog, QSpinBox, QDesktopWidget, QMessageBox, QTableWidget, QHeaderView,QTableWidgetItem,  QMenu, QAction
 from sparrowtablewidgets import DateTableWidgetItem, FloatTableWidgetItem, IntTableWidgetItem
 from PyQt5.QtCore import Qt,QTimer
@@ -38,6 +38,7 @@ import os
 
 from sparrowmap import MapEngine
 from sparrowwifiagent import FileSystemFile
+from sparrowbluetooth import SparrowBluetooth, BluetoothDevice
 
 # ------------------  Global functions for agent HTTP requests ------------------------------
 def makeGetRequest(url):
@@ -999,6 +1000,254 @@ class GPSCoordDialog(QDialog):
         else:
             if not self.gpsTimer.isActive():
                 self.gpsTimer.start(self.gpsTimerTimeout)
+            
+# ------------------  GPS Coordinate  ------------------------------
+class BluetoothDialog(QDialog):
+    visibility = QtCore.pyqtSignal(bool)
+    
+    def __init__(self, mainWin, parent = None):
+        super().__init__()
+
+        self.visibility.connect(self.onVisibilityChanged)
+        
+        self.mainWin = mainWin
+
+        # Set up GPS check timer
+        self.btTimer = QTimer()
+        self.btTimer.timeout.connect(self.onBtTimer)
+        self.btTimer.setSingleShot(True)
+        self.btTimerTimeout = 2000
+        self.btTimer.start(10)
+        
+        self.firstUpdate = True
+        
+        self.bluetoothTable = QTableWidget(self)
+        self.bluetoothTable.setColumnCount(10)
+        self.bluetoothTable.setShowGrid(True)
+        self.bluetoothTable.setHorizontalHeaderLabels(['uuid', 'Address', 'name', 'company', 'manufacturer','type', 'RSSI','iBeacon Range','Last Seen','GPS'])
+        self.bluetoothTable.setGeometry(10, 30, 100, 30)
+        self.bluetoothTable.resizeColumnsToContents()
+        self.bluetoothTable.setRowCount(0)
+        self.bluetoothTable.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+       #  self.historyTable.horizontalHeader().sectionClicked.connect(self.onTableHeadingClicked)
+        self.bluetoothTable.horizontalHeader().sectionClicked.connect(self.onTableHeadingClicked)
+        self.bluetoothTable.setSelectionMode( QAbstractItemView.SingleSelection )
+       
+        self.ntRightClickMenu = QMenu(self)
+        newAct = QAction('Copy', self)        
+        newAct.setStatusTip('Copy data to clipboard')
+        newAct.triggered.connect(self.onCopy)
+        self.ntRightClickMenu.addAction(newAct)
+
+        self.btTableSortOrder = Qt.DescendingOrder
+        self.btTableSortIndex = -1
+ 
+        # Attach it to the table
+        self.bluetoothTable.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.bluetoothTable.customContextMenuRequested.connect(self.showNTContextMenu)
+        
+        self.setBlackoutColors()
+        
+        self.setGeometry(self.geometry().x(), self.geometry().y(), 700,500)
+        self.setWindowTitle("Bluetooth")
+        self.center()
+
+    def setBlackoutColors(self):
+        self.bluetoothTable.setStyleSheet("background-color: black;gridline-color: white;color: white")
+        headerStyle = "QHeaderView::section{background-color: white;border: 1px solid black;color: black}"
+        self.bluetoothTable.horizontalHeader().setStyleSheet(headerStyle)
+        self.bluetoothTable.verticalHeader().setStyleSheet(headerStyle)
+        
+    def center(self):
+        # Get our geometry
+        qr = self.frameGeometry()
+        # Find the desktop center point
+        cp = QDesktopWidget().availableGeometry().center()
+        # Move our center point to the desktop center point
+        qr.moveCenter(cp)
+        # Move the top-left point of the application window to the top-left point of the qr rectangle, 
+        # basically centering the window
+        self.move(qr.topLeft())
+        
+    def closeEvent(self, event):
+        self.btTimer.stop()
+        event.accept()
+            
+    def resizeEvent(self, event):
+        # self.resized.emit()
+        # self.statusBar().showMessage('Window resized.')
+        # return super(mainWin, self).resizeEvent(event)
+        size = self.geometry()
+        self.bluetoothTable.setGeometry(10, 50, size.width()-20, size.height()-60)
+
+    def showNTContextMenu(self, pos):
+        curRow = self.bluetoothTable.currentRow()
+        
+        if curRow == -1:
+            return
+            
+        self.ntRightClickMenu.exec_(self.bluetoothTable.mapToGlobal(pos))
+ 
+    def onCopy(self):
+        curRow = self.bluetoothTable.currentRow()
+        curCol = self.bluetoothTable.currentColumn()
+        
+        if curRow == -1 or curCol == -1:
+            return
+        
+        curText = self.bluetoothTable.item(curRow, curCol).text()
+            
+        clipboard = QApplication.clipboard()
+        clipboard.setText(curText)
+        
+        
+    def updateTable(self, deviceList):        
+        rowCount = self.bluetoothTable.rowCount()
+        rowCount -= 1
+        if rowCount < 0:
+            rowCount = 0
+
+        # Update existing
+        numRows = self.bluetoothTable.rowCount()
+        
+        if numRows > 0:
+            # Loop through each network in the network table, and compare it against the new networks.
+            # If we find one, then we already know the network.  Just update it.
+            
+            # Range goes to last # - 1
+            for curRow in range(0, numRows):
+                try:
+                    curData = self.bluetoothTable.item(curRow, 0).data(Qt.UserRole)
+                except:
+                    curData = None
+                    
+                if (curData):
+                    # We already have the network.  just update it
+                    for curDevice in deviceList:
+                        if curData.getKey() == curDevice.getKey():
+                            curDevice.foundInList = True
+                            
+                            curDevice.firstSeen = curData.firstSeen # This is one field to carry forward
+                            
+                            # curData is already in the table
+                            if curData.strongestRssi > curDevice.rssi or (curData.strongestRssi > (curDevice.rssi*0.9) and curData.gps.isValid and (not curDevice.strongestgps.isValid)):
+                                curDevice.strongestRssi = curData.rssi
+                                curDevice.strongestgps.latitude = curData.gps.latitude
+                                curDevice.strongestgps.longitude = curData.gps.longitude
+                                curDevice.strongestgps.altitude = curData.gps.altitude
+                                curDevice.strongestgps.speed = curData.gps.speed
+                                curDevice.strongestgps.isValid = curData.gps.isValid
+                            
+                            self.bluetoothTable.item(curRow,2).setText(curDevice.name)
+                            self.bluetoothTable.item(curRow, 6).setText(str(curDevice.rssi))
+                            
+                            if curDevice.iBeaconRange != -1:
+                                self.bluetoothTable.item(curRow, 7).setText(str(curDevice.iBeaconRange))
+                            else:
+                                self.bluetoothTable.item(curRow, 7).setText('')
+                                
+                            self.bluetoothTable.item(curRow, 8).setText(curDevice.lastSeen.strftime("%m/%d/%Y %H:%M:%S"))
+                            if (curDevice.gps.isValid):
+                                self.bluetoothTable.item(curRow,9).setText('Yes')
+                            else:
+                                self.bluetoothTable.item(curRow,9).setText('No')
+                                
+                            self.bluetoothTable.item(curRow, 0).setData(Qt.UserRole, curDevice)
+                            break
+
+        addedNetworks = 0
+        
+        for curDevice in deviceList:
+            if not curDevice.foundInList:
+                addedNetworks += 1
+                # Insert new at the top
+                self.bluetoothTable.insertRow(0)
+
+                rowPosition = 0 # Always at the first row
+                # 'uuid', 'Address', 'name', 'company', 'manufacturer','type', 'RSSI','iBeacon Range','Last Seen','GPS'
+                newDevice = QTableWidgetItem(curDevice.uuid)
+                newDevice.setData(Qt.UserRole, curDevice)
+                self.bluetoothTable.setItem(rowPosition, 0, newDevice)
+                
+                self.bluetoothTable.setItem(rowPosition,1, QTableWidgetItem(curDevice.macAddress))
+                self.bluetoothTable.setItem(rowPosition,2, QTableWidgetItem(curDevice.name))
+                self.bluetoothTable.setItem(rowPosition,3, QTableWidgetItem(curDevice.company))
+                self.bluetoothTable.setItem(rowPosition,4, QTableWidgetItem(curDevice.manufacturer))
+
+                if curDevice.btType == BluetoothDevice.BT_LE:
+                    self.bluetoothTable.setItem(rowPosition,5, QTableWidgetItem('BTLE'))
+                else:
+                    self.bluetoothTable.setItem(rowPosition,5, QTableWidgetItem('Classic'))
+
+                self.bluetoothTable.setItem(rowPosition, 6, IntTableWidgetItem(str(curDevice.rssi)))
+                if curDevice.iBeaconRange != -1:
+                    self.bluetoothTable.setItem(rowPosition, 7, IntTableWidgetItem(str(curDevice.iBeaconRange)))
+                else:
+                    self.bluetoothTable.setItem(rowPosition, 7, IntTableWidgetItem(''))
+                    
+                self.bluetoothTable.setItem(rowPosition, 8, DateTableWidgetItem(curDevice.lastSeen.strftime("%m/%d/%Y %H:%M:%S")))
+                if (curDevice.gps.isValid):
+                    self.bluetoothTable.setItem(rowPosition,9, QTableWidgetItem('Yes'))
+                else:
+                    self.bluetoothTable.setItem(rowPosition,9, QTableWidgetItem('No'))
+                
+        if addedNetworks > 0:
+            if self.btTableSortIndex >=0:
+                self.bluetoothTable.sortItems(self.btTableSortIndex, self.btTableSortOrder )
+                
+    def onBtTimer(self):
+        if not self.mainWin:
+            # We'll just take one shot coming in here for debug purposes.  Technically we don't need to come in here
+            # if there's no main win
+            return
+
+        curGPS = self.mainWin.getCurrentGPS()
+        
+        errcode, devices=SparrowBluetooth.getBlueHydraBluetoothDevices()
+        
+        if errcode == 0 and len(devices) > 0:
+            now = datetime.datetime.now()
+            for curDevice in devices:
+                elapsedTime =  now - curDevice.lastSeen
+                curDevice.manufacturer = self.mainWin.ouiLookup(curDevice.macAddress)
+                
+                if elapsedTime.total_seconds() < 3:
+                    curDevice.gps.copy(curGPS)
+                    curDevice.strongestgps.copy(curGPS)
+                
+            self.updateTable(devices)
+            
+        self.btTimer.start(self.btTimerTimeout)
+        
+    def hideEvent(self, event):
+        self.visibility.emit(False)
+        
+    def showEvent(self, event):
+        self.visibility.emit(True)
+        
+    def onVisibilityChanged(self, visible):
+        if not visible:
+            self.btTimer.stop()
+        else:
+            if not self.btTimer.isActive():
+                self.btTimer.start(self.btTimerTimeout)
+
+    def onTableHeadingClicked(self, logical_index):
+        header = self.bluetoothTable.horizontalHeader()
+        order = Qt.DescendingOrder
+        # order = Qt.DescendingOrder
+        if not header.isSortIndicatorShown():
+            header.setSortIndicatorShown( True )
+        elif header.sortIndicatorSection()==logical_index:
+            # apparently, the sort order on the header is already switched
+            # when the section was clicked, so there is no need to reverse it
+            order = header.sortIndicatorOrder()
+        header.setSortIndicator( logical_index, order )
+
+        self.btTableSortOrder = order
+        self.btTableSortIndex = logical_index
+        self.bluetoothTable.sortItems(logical_index, order )
+        
             
 # ------------------  Agent Configuration  ------------------------------
 class AgentConfigDialog(QDialog):

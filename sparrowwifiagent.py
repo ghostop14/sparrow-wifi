@@ -36,6 +36,7 @@ from wirelessengine import WirelessEngine
 from sparrowgps import GPSEngine, GPSStatus
 from sparrowdrone import SparrowDroneMavlink
 from sparrowrpi import SparrowRPi
+from sparrowbluetooth import SparrowBluetooth
 
 try:
     from manuf import manuf
@@ -1942,12 +1943,13 @@ if __name__ == '__main__':
             if not falconWiFiRemoteAgent.toolsInstalled():
                 print("ERROR: aircrack suite of tools does not appear to be installed.  Please install it.")
                 exit(4)
-        if  os.path.isfile(pluginsdir + '/sparrowbluetooth.py'):
-            from sparrowbluetooth import SparrowBluetooth
-            errcode, errmsg = SparrowBluetooth.ubertoothOnline()
-            if errcode == 0:
-                hasBluetooth = True
-                bluetooth = SparrowBluetooth()
+
+    errcode, errmsg = SparrowBluetooth.ubertoothOnline()
+    if errcode == 0:
+        hasBluetooth = SparrowBluetooth.hasBluetoothHardware()
+        
+        if hasBluetooth:
+            bluetooth = SparrowBluetooth()
 
     # See if we have a config file:
     dirname, filename = os.path.split(os.path.abspath(__file__))

@@ -49,8 +49,9 @@ from telemetry import TelemetryDialog
 from sparrowtablewidgets import IntTableWidgetItem, DateTableWidgetItem
 from sparrowmap import MapMarker, MapEngine
 from sparrowdialogs import MapSettingsDialog, TelemetryMapSettingsDialog, AgentListenerDialog, GPSCoordDialog
-from sparrowdialogs import AgentConfigDialog, RemoteFilesDialog
+from sparrowdialogs import AgentConfigDialog, RemoteFilesDialog, BluetoothDialog
 from sparrowwifiagent import AgentConfigSettings
+from sparrowbluetooth import SparrowBluetooth
 
 # There are some "plugins" that are available for addons.  Let's see if they're present
 hasFalcon = False
@@ -480,6 +481,8 @@ class mainWindow(QMainWindow):
 
         global hasBluetooth
         
+        self.bluetoothWin = None
+        
         if hasBluetooth:
             self.hasBluetooth = hasBluetooth
             self.hasRemoteBluetooth = False
@@ -626,8 +629,6 @@ class mainWindow(QMainWindow):
             self.networkTable.setGeometry(10, 103, size.width()-20, size.height()/2-105)
             self.Plot24.setGeometry(10, size.height()/2+10, size.width()/2-10, size.height()/2-40)
             self.Plot5.setGeometry(size.width()/2+5, size.height()/2+10,size.width()/2-15, size.height()/2-40)
-            self.lblGPS.move(size.width()-90, 30)
-            self.btnGPSStatus.move(size.width()-50, 34)
             
             self.initializingGUI = False
         
@@ -638,6 +639,9 @@ class mainWindow(QMainWindow):
 
         size = self.geometry()
         
+        self.lblGPS.move(size.width()-90, 30)
+        self.btnGPSStatus.move(size.width()-50, 34)
+            
         dividerPos = self.horizontalDivider.pos()
         if dividerPos.y() < 200:
             dividerPos.setY(200)
@@ -649,8 +653,6 @@ class mainWindow(QMainWindow):
         self.Plot24.setGeometry(10, dividerPos.y()+6, size.width()/2-10, size.height()-dividerPos.y()-30)
         self.Plot5.setGeometry(size.width()/2+5, dividerPos.y()+6,size.width()/2-15, size.height()-dividerPos.y()-30)
 
-        
-            
     def createControls(self):
         # self.statusBar().setStyleSheet("QStatusBar{background:rgba(204,229,255,255);color:black;border: 1px solid blue; border-radius: 1px;}")
         self.statusBar().setStyleSheet("QStatusBar{background:rgba(192,192,192,255);color:black;border: 1px solid blue; border-radius: 1px;}")
@@ -962,9 +964,15 @@ class mainWindow(QMainWindow):
             self.menuBtSpectrumGain.triggered.connect(self.onBtSpectrumOverrideGain)
             ViewMenu.addAction(self.menuBtSpectrumGain)
             
+            self.menuBtBluetooth = QAction('Bluetooth Discovery', self)        
+            self.menuBtBluetooth.setStatusTip("Find bluetooth devices")
+            self.menuBtBluetooth.triggered.connect(self.onBtBluetooth)
+            ViewMenu.addAction(self.menuBtBluetooth)
+            
             if not self.hasBluetooth:
                 self.menuBtSpectrum.setEnabled(False)
                 self.menuBtSpectrumGain.setEnabled(False)
+                self.menuBtBluetooth.setEnabled(False)
             else:
                 self.bluetooth = SparrowBluetooth()
                 
@@ -1064,6 +1072,13 @@ class mainWindow(QMainWindow):
             self.chart24.addSeries(self.spectrumLine)
             self.spectrumLine.attachAxis(self.chart24.axisX())
             self.spectrumLine.attachAxis(self.chart24.axisY())
+        
+    def onBtBluetooth(self):
+        if not self.bluetoothWin:
+            self.bluetoothWin = BluetoothDialog(self, None)  # Need to set parent to None to allow it to not always be on top
+
+        self.bluetoothWin.show()
+        self.bluetoothWin.activateWindow()
         
     def onBtSpectrumAnalyzer(self):
         if (self.menuBtSpectrum.isChecked() == self.btLastSpectrumState):
@@ -2007,7 +2022,7 @@ class mainWindow(QMainWindow):
                                 self.networkTable.item(curRow, 11).setText('No')
                                 
                             curNet.foundInList = True
-                            # self.networkTable.item(curRow, 2).setData(Qt.UserRole+1, curNet)
+                            self.networkTable.item(curRow, 2).setData(Qt.UserRole+1, curNet)
                             
                             # Update series
                             curSeries = self.networkTable.item(curRow, 2).data(Qt.UserRole)
@@ -2747,14 +2762,13 @@ if __name__ == '__main__':
         if  os.path.isfile(pluginsdir + '/falconwifi.py'):
             from falconwifidialogs import AdvancedScanDialog
             hasFalcon = True
-        if  os.path.isfile(pluginsdir + '/sparrowbluetooth.py'):
-            from sparrowbluetooth import SparrowBluetooth
-            #SparrowBluetooth.ubertoothStopSpecan()
-            errcode, errmsg = SparrowBluetooth.hasUbertoothTools()
-            # errcode, errmsg = SparrowBluetooth.ubertoothOnline()
-            if errcode == 0:
-                hasBluetooth = True
             
+    #SparrowBluetooth.ubertoothStopSpecan()
+    errcode, errmsg = SparrowBluetooth.hasUbertoothTools()
+    # errcode, errmsg = SparrowBluetooth.ubertoothOnline()
+    if errcode == 0:
+        hasBluetooth = SparrowBluetooth.hasBluetoothHardware()
+        
     app = QApplication(sys.argv)
     mainWin = mainWindow()
     sys.exit(app.exec_())

@@ -27,14 +27,7 @@ import json
 import copy
 from time import sleep
 from sparrowgps import SparrowGPS
-
-# ------------------  Global functions ------------------------------
-def stringtobool(instr):
-    if (instr == 'True' or instr == 'true'):
-        return True
-    else:
-        return False
-        
+from sparrowcommon import stringtobool
 
 # ------------------  Global channel to frequency definitions ------------------------------
 channelToFreq = {}
