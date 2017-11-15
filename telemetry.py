@@ -203,8 +203,8 @@ class TelemetryDialog(QDialog):
         self.center()
 
     def setBlackoutColors(self):
-        self.locationTable.setStyleSheet("background-color: black;gridline-color: white;color: white")
-        headerStyle = "QHeaderView::section{background-color: white;border: 1px solid black;color: black}"
+        self.locationTable.setStyleSheet("QTableView {background-color: black;gridline-color: white;color: white} QTableCornerButton::section{background-color: white;}")
+        headerStyle = "QHeaderView::section{background-color: white;border: 1px solid black;color: black;} QHeaderView::down-arrow,QHeaderView::up-arrow {background: none;}"
         self.locationTable.horizontalHeader().setStyleSheet(headerStyle)
         self.locationTable.verticalHeader().setStyleSheet(headerStyle)
         

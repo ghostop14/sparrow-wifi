@@ -53,6 +53,7 @@ vehicle = None
 mavlinkGPSThread = None
 hasFalcon = False
 hasBluetooth = False
+hasUbertooth = False
 falconWiFiRemoteAgent = None
 
 bluetooth = None
@@ -1129,6 +1130,11 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                                    '/bluetooth/scanstart', 
                                   '/bluetooth/scanstop',  
                                   '/bluetooth/scanstatus',  
+                                  '/bluetooth/running', 
+                                  '/bluetooth/discoverystartp', 
+                                  '/bluetooth/discoverystarta', 
+                                  '/bluetooth/discoverystop', 
+                                  '/bluetooth/discoverystatus', 
                                     '/gps/status']
                                     
         # partials that have more in the URL
@@ -1420,7 +1426,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 jsonstr = json.dumps(responsedict)
                 s.wfile.write(jsonstr.encode("UTF-8"))
         elif s.path.startswith('/bluetooth/scan'):
-            if not hasBluetooth or not bluetooth:
+            if not hasBluetooth:
                 responsedict = {}
                 responsedict['errcode'] = 1
                 responsedict['errmsg'] = 'Bluetooth not supported on this agent'
@@ -1445,6 +1451,70 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errcode'] = 1
                     responsedict['errmsg'] = 'Unknown command'
                     
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+        elif s.path.startswith('/bluetooth/discovery'):
+            if not hasBluetooth:
+                responsedict = {}
+                responsedict['errcode'] = 1
+                responsedict['errmsg'] = 'Bluetooth not supported on this agent'
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            else:
+                function=s.path.replace('/bluetooth/discovery', '')
+                function = function.replace('/', '')
+                
+                responsedict = {}
+                responsedict['errcode'] = 0
+                responsedict['errmsg'] = ''
+                
+                if function=='startp':
+                    # Promiscuous with ubertooth
+                    bluetooth.startDiscovery(True)
+                elif function == 'starta':
+                    # Normal with Bluetooth
+                    bluetooth.startDiscovery(False)
+                elif function == 'stop':
+                    bluetooth.stopDiscovery()
+                elif function == 'status':
+                    errcode, devices = bluetooth.getDiscoveredDevices()
+                    
+                    if errcode == 0:
+                        devdict = []
+                        for curdevice in devices:
+                            entryDict = curdevice.toJsondict()
+                            devdict.append(entryDict)
+                        responsedict['devices'] = devdict
+                    else:
+                        responsedict['errcode'] = errcode
+                        responsedict['devices'] = []
+                else:
+                    responsedict['errcode'] = 1
+                    responsedict['errmsg'] = 'Unknown command'
+                    
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+        elif s.path.startswith('/bluetooth/running'):
+            if not hasBluetooth:
+                responsedict = {}
+                responsedict['errcode'] = 1
+                responsedict['errmsg'] = 'Bluetooth not supported on this agent'
+                responsedict['hasbluetooth'] = hasBluetooth
+                responsedict['hasubertooth'] = hasUbertooth
+                responsedict['spectrumscanrunning'] = False
+                responsedict['discoveryscanrunning'] = False
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            else:
+                responsedict = {}
+                responsedict['errcode'] = 0
+                responsedict['errmsg'] = ''
+
+                responsedict['hasbluetooth'] = hasBluetooth
+                responsedict['hasubertooth'] = hasUbertooth
+                responsedict['spectrumscanrunning'] = bluetooth.scanRunning()
+                responsedict['discoveryscanrunning'] = bluetooth.discoveryRunning()
+                
                 jsonstr = json.dumps(responsedict)
                 s.wfile.write(jsonstr.encode("UTF-8"))
         elif s.path == '/system/config':
@@ -1907,6 +1977,35 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
             # Green will heartbeat when servicing requests. Turn back solid here
             SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_ON)
 
+# ----------------- Bluetooth check -----------------------------
+def checkForBluetooth():
+    global hasBluetooth
+    global hasUbertooth
+    global bluetooth
+    
+    numBtAdapters = len(SparrowBluetooth.getBluetoothInterfaces())
+    if numBtAdapters > 0:
+        hasBluetooth = True
+    
+    if SparrowBluetooth.getNumUbertoothDevices() > 0:
+        #SparrowBluetooth.ubertoothStopSpecan()
+        errcode, errmsg = SparrowBluetooth.hasUbertoothTools()
+        # errcode, errmsg = SparrowBluetooth.ubertoothOnline()
+        if errcode == 0:
+            hasUbertooth = True
+    
+    bluetooth = SparrowBluetooth()
+    
+    if hasBluetooth:
+        print("Found bluetooth hardware.  Bluetooth capabilities enabled.")
+    else:
+        print("Bluetooth hardware not found.  Bluetooth capabilities disabled.")
+        
+    if hasUbertooth:
+        print("Found ubertooth hardware and software.  Ubertooth capabilities enabled.")
+    else:
+        print("Ubertooth hardware and/or software not found.  Ubertooth capabilities disabled.")
+
 # ----------------- Main -----------------------------
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description='Sparrow-wifi agent')
@@ -1944,13 +2043,8 @@ if __name__ == '__main__':
                 print("ERROR: aircrack suite of tools does not appear to be installed.  Please install it.")
                 exit(4)
 
-    errcode, errmsg = SparrowBluetooth.ubertoothOnline()
-    if errcode == 0:
-        hasBluetooth = SparrowBluetooth.hasBluetoothHardware()
-        
-        if hasBluetooth:
-            bluetooth = SparrowBluetooth()
-
+    checkForBluetooth()
+    
     # See if we have a config file:
     dirname, filename = os.path.split(os.path.abspath(__file__))
     

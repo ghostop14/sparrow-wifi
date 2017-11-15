@@ -26,7 +26,7 @@ from PyQt5 import QtCore
 
 from socket import *
 import datetime
-from threading import Thread
+from threading import Thread, Lock
 from time import sleep
 import requests
 import json
@@ -39,6 +39,28 @@ import os
 from sparrowmap import MapEngine
 from sparrowwifiagent import FileSystemFile
 from sparrowbluetooth import SparrowBluetooth, BluetoothDevice
+
+
+# ------------------  Global File Dialogs ------------------------------
+def openFileDialog(fileSpec="CSV Files (*.csv);;All Files (*)"):    
+    options = QFileDialog.Options()
+    options |= QFileDialog.DontUseNativeDialog
+    fileName, _ = QFileDialog.getOpenFileName(None,"QFileDialog.getOpenFileName()", "",fileSpec, options=options)
+    if fileName:
+        return fileName
+    else:
+        return None
+
+
+def saveFileDialog(fileSpec="CSV Files (*.csv);;All Files (*)"):    
+    options = QFileDialog.Options()
+    options |= QFileDialog.DontUseNativeDialog
+    fileName, _ = QFileDialog.getSaveFileName(None,"QFileDialog.getSaveFileName()","",fileSpec, options=options)
+    if fileName:
+        return fileName
+    else:
+        return None
+
 
 # ------------------  Global functions for agent HTTP requests ------------------------------
 def makeGetRequest(url):
@@ -53,6 +75,86 @@ def makeGetRequest(url):
     htmlResponse=response.text
     return response.status_code, htmlResponse
 
+def getRemoteBluetoothRunningServices(agentIP, agentPort):
+    url = "http://" + agentIP + ":" + str(agentPort) + "/bluetooth/running"
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            responsedict = json.loads(responsestr)
+            errcode = responsedict['errcode']
+            errmsg = responsedict['errmsg']
+            hasBluetooth = responsedict['hasbluetooth']
+            hasUbertooth = responsedict['hasubertooth']
+            spectrumScanRunning = responsedict['spectrumscanrunning']
+            discoveryScanRunning = responsedict['discoveryscanrunning']
+            
+            return errcode, errmsg, hasBluetooth, hasUbertooth, spectrumScanRunning, discoveryScanRunning
+        except:
+            return -1, 'Error parsing response', False, False, False, False
+    else:
+            return -2, 'Bad response from agent [' + str(statusCode) + ']', False, False, False, False
+        
+def startRemoteBluetoothDiscoveryScan(agentIP, agentPort, ubertooth):
+    if ubertooth:
+        # Promiscuous
+        url = "http://" + agentIP + ":" + str(agentPort) + "/bluetooth/discoverystartp"
+    else:
+        # Advertisements only
+        url = "http://" + agentIP + ":" + str(agentPort) + "/bluetooth/discoverystarta"
+        
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            responsedict = json.loads(responsestr)
+            errcode = responsedict['errcode']
+            errmsg = responsedict['errmsg']
+            return errcode, errmsg
+        except:
+            return -1, 'Error parsing response'
+    else:
+            return -2, 'Bad response from agent [' + str(statusCode) + ']'
+        
+def stopRemoteBluetoothDiscoveryScan(agentIP, agentPort):
+    url = "http://" + agentIP + ":" + str(agentPort) + "/bluetooth/discoverystop"
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            responsedict = json.loads(responsestr)
+            errcode = responsedict['errcode']
+            errmsg = responsedict['errmsg']
+            return errcode, errmsg
+        except:
+            return -1, 'Error parsing response'
+    else:
+            return -2, 'Bad response from agent [' + str(statusCode) + ']'
+
+def getRemoteBluetoothDiscoveryStatus(agentIP, agentPort):
+    url = "http://" + agentIP + ":" + str(agentPort) + "/bluetooth/discoverystatus"
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            responsedict = json.loads(responsestr)
+            errcode = responsedict['errcode']
+            errmsg = responsedict['errmsg']
+            tmpDeviceData = responsedict['devices']
+            devices = []
+            for curDevice in tmpDeviceData:
+                newdevice = BluetoothDevice()
+                try:
+                    newdevice.fromJsondict(curDevice)
+                    devices.append(newdevice)
+                except:
+                    pass
+            return errcode, errmsg, devices
+        except:
+            return -1, 'Error parsing response', None
+    else:
+            return -2, 'Bad response from agent [' + str(statusCode) + ']', None
+        
 def getRemoteRecordingsFiles(agentIP, agentPort):
     url = "http://" + agentIP + ":" + str(agentPort) + "/system/getrecordings"
     statusCode, responsestr = makeGetRequest(url)
@@ -892,8 +994,8 @@ class GPSCoordDialog(QDialog):
             self.updateTable(curGPS)
 
     def setBlackoutColors(self):
-        self.historyTable.setStyleSheet("background-color: black;gridline-color: white;color: white")
-        headerStyle = "QHeaderView::section{background-color: white;border: 1px solid black;color: black}"
+        self.historyTable.setStyleSheet("QTableView {background-color: black;gridline-color: white;color: white} QTableCornerButton::section{background-color: white;}")
+        headerStyle = "QHeaderView::section{background-color: white;border: 1px solid black;color: black;} QHeaderView::down-arrow,QHeaderView::up-arrow {background: none;}"
         self.historyTable.horizontalHeader().setStyleSheet(headerStyle)
         self.historyTable.verticalHeader().setStyleSheet(headerStyle)
         
@@ -1005,26 +1107,59 @@ class GPSCoordDialog(QDialog):
 class BluetoothDialog(QDialog):
     visibility = QtCore.pyqtSignal(bool)
     
-    def __init__(self, mainWin, parent = None):
+    def __init__(self, mainWin, bluetooth,  useRemoteAgent=False, remoteAgentIP="",  remoteAgentPort=8020, parent = None):
         super().__init__()
-
-        self.visibility.connect(self.onVisibilityChanged)
-        
         self.mainWin = mainWin
+        self.visibility.connect(self.onVisibilityChanged)
 
-        # Set up GPS check timer
+        self.usingRemoteAgent = useRemoteAgent
+        self.remoteAgentIP = remoteAgentIP
+        self.remoteAgentPort = remoteAgentPort
+
+        self.updateWindowTitle()
+
+        self.updateLock = Lock()
+        self.telemetryWindows = {}
+        self.bluetooth = bluetooth
+        self.hasBlueHydra = True
+        self.scanPromiscuous = True
+        
+        # Set up timer
         self.btTimer = QTimer()
         self.btTimer.timeout.connect(self.onBtTimer)
         self.btTimer.setSingleShot(True)
-        self.btTimerTimeout = 2000
-        self.btTimer.start(10)
+        self.btTimerTimeout = 500
         
         self.firstUpdate = True
+
+        self.lblInterface = QLabel("Scan Type:", self)
+        self.lblInterface.setGeometry(5, 10, 70, 30)
         
+        self.comboScanType = QComboBox(self)
+        self.comboScanType.move(90, 15)
+        
+        if self.mainWin.hasUbertooth:
+            self.comboScanType.addItem('Promiscuous Discovery')
+        self.comboScanType.addItem('LE Advertisement Discovery')
+
+        # Scan Button
+        self.btnScan = QPushButton("&Scan", self)
+        self.btnScan.setCheckable(True)
+        self.btnScan.setShortcut('Ctrl+S')
+        self.btnScan.setStyleSheet("background-color: rgba(0,128,192,255); border: none;")
+        self.btnScan.setGeometry(298, 12, 120, 27)
+        self.btnScan.clicked[bool].connect(self.onScanClicked)
+
+        # Export Button
+        self.btnExport = QPushButton("&Export", self)
+        self.btnExport.setStyleSheet("background-color: rgba(0,128,192,255);")
+        self.btnExport.clicked.connect(self.onExportClicked)
+        
+        # Data table
         self.bluetoothTable = QTableWidget(self)
-        self.bluetoothTable.setColumnCount(10)
+        self.bluetoothTable.setColumnCount(11)
         self.bluetoothTable.setShowGrid(True)
-        self.bluetoothTable.setHorizontalHeaderLabels(['uuid', 'Address', 'name', 'company', 'manufacturer','type', 'RSSI','iBeacon Range','Last Seen','GPS'])
+        self.bluetoothTable.setHorizontalHeaderLabels(['uuid', 'Address', 'Name', 'Company', 'Manufacturer','Type', 'RSSI','TX Power','Est Range (m)','Last Seen','GPS'])
         self.bluetoothTable.setGeometry(10, 30, 100, 30)
         self.bluetoothTable.resizeColumnsToContents()
         self.bluetoothTable.setRowCount(0)
@@ -1048,9 +1183,110 @@ class BluetoothDialog(QDialog):
         
         self.setBlackoutColors()
         
-        self.setGeometry(self.geometry().x(), self.geometry().y(), 700,500)
-        self.setWindowTitle("Bluetooth")
+        # self.setGeometry(self.geometry().x(), self.geometry().y(), 700,500)
+        desktopSize = QApplication.desktop().screenGeometry()
+        self.mainWidth = desktopSize.width() * 2 / 3
+        self.mainHeight = desktopSize.height() / 2
+        self.resize(self.mainWidth, self.mainHeight)
+
         self.center()
+        
+        if not self.usingRemoteAgent:
+            if self.mainWin.hasUbertooth and (not os.path.isfile('/opt/bluetooth/blue_hydra/bin/blue_hydra')):
+                QMessageBox.question(self, 'Error',"Blue Hydra not found at /opt/bluetooth/blue_hydra/bin/blue_hydra.  Promiscuous scans will fail.", QMessageBox.Ok)
+
+    def setLocal(self):
+        self.usingRemoteAgent = False
+        
+        self.updateWindowTitle()
+        self.btnScan.setStyleSheet("background-color: rgba(2,128,192,255); border: none;")
+        self.btnScan.setText('&Scan')
+        self.comboScanType.setEnabled(True)
+        
+    def setRemoteAgent(self, agentIP, agentPort):
+        self.usingRemoteAgent = True
+        self.remoteAgentIP = agentIP
+        self.remoteAgentPort = agentPort
+
+        self.updateWindowTitle()
+        self.checkScanAlreadyRunning()
+
+    def scanRunning(self):
+        return 'Stop' in self.btnScan.text()
+        
+    def checkScanAlreadyRunning(self):
+        errcode, errmsg, hasBluetooth, hasUbertooth, spectrumScanRunning, discoveryScanRunning =  getRemoteBluetoothRunningServices(self.remoteAgentIP, self.remoteAgentPort)      
+        
+        if errcode == 0:
+            if discoveryScanRunning:
+                self.btnScan.setStyleSheet("background-color: rgba(255,0,0,255); border: none;")
+                self.btnScan.setText('&Stop scanning')
+                self.comboScanType.setEnabled(False)
+            else:
+                self.btnScan.setStyleSheet("background-color: rgba(2,128,192,255); border: none;")
+                self.btnScan.setText('&Scan')
+                self.comboScanType.setEnabled(True)
+        else:
+                QMessageBox.question(self, 'Error',"Error getting remote agent discovery status: " + errmsg, QMessageBox.Ok)
+
+                self.btnScan.setStyleSheet("background-color: rgba(2,128,192,255); border: none;")
+                self.btnScan.setText('&Scan')
+                self.comboScanType.setEnabled(True)
+                
+    def updateWindowTitle(self):
+        title = 'Bluetooth'
+        
+        if self.usingRemoteAgent:
+            title += " - " + self.remoteAgentIP + ":" + str(self.remoteAgentPort)
+            
+        self.setWindowTitle(title)
+        
+    def onScanClicked(self, pressed):
+        if self.btnScan.isChecked():
+            # Scanning is on.  Turn red to indicate click would stop
+            if self.comboScanType.currentText() == 'Promiscuous Discovery':
+                ubertooth = True
+                
+                if not self.usingRemoteAgent:
+                    if not self.mainWin.hasUbertooth:
+                        self.btnScan.setChecked(False)
+                        return
+                else:
+                    if not self.mainWin.hasRemoteUbertooth:
+                        self.btnScan.setChecked(False)
+                        return
+            else:
+                ubertooth = False
+                
+            self.btnScan.setStyleSheet("background-color: rgba(255,0,0,255); border: none;")
+            self.btnScan.setText('&Stop scanning')
+            self.comboScanType.setEnabled(False)
+            
+            if not self.mainWin.remoteAgentUp:
+                self.scanPromiscuous = ubertooth
+                self.bluetooth.startDiscovery(ubertooth)
+            else:
+                errcode, errmsg = startRemoteBluetoothDiscoveryScan(self.remoteAgentIP, self.remoteAgentPort, ubertooth)
+
+                if errcode != 0:
+                    QMessageBox.question(self, 'Error',"Could not start remote scan: " + errmsg, QMessageBox.Ok)
+                    self.btnScan.setChecked(False)
+                    self.btnScan.setStyleSheet("background-color: rgba(2,128,192,255); border: none;")
+                    self.btnScan.setText('&Scan')
+                    self.comboScanType.setEnabled(True)
+                    return
+                    
+            self.btTimer.start(self.btTimerTimeout)
+        else:
+            self.btTimer.stop()
+            
+            self.btnScan.setStyleSheet("background-color: rgba(2,128,192,255); border: none;")
+            self.btnScan.setText('&Scan')
+            self.comboScanType.setEnabled(True)
+            if not self.mainWin.remoteAgentUp:
+                self.bluetooth.stopDiscovery()
+            else:
+                errcode, errmsg = stopRemoteBluetoothDiscoveryScan(self.remoteAgentIP, self.remoteAgentPort)
 
     def setBlackoutColors(self):
         self.bluetoothTable.setStyleSheet("background-color: black;gridline-color: white;color: white")
@@ -1071,6 +1307,11 @@ class BluetoothDialog(QDialog):
         
     def closeEvent(self, event):
         self.btTimer.stop()
+        self.bluetooth.stopDiscovery()
+        
+        if self.mainWin:
+            self.mainWin.bluetoothDiscoveryClosed.emit()
+            
         event.accept()
             
     def resizeEvent(self, event):
@@ -1079,6 +1320,7 @@ class BluetoothDialog(QDialog):
         # return super(mainWin, self).resizeEvent(event)
         size = self.geometry()
         self.bluetoothTable.setGeometry(10, 50, size.width()-20, size.height()-60)
+        self.btnExport.setGeometry(size.width()-130, 10, 120, 25)
 
     def showNTContextMenu(self, pos):
         curRow = self.bluetoothTable.currentRow()
@@ -1101,7 +1343,21 @@ class BluetoothDialog(QDialog):
         clipboard.setText(curText)
         
         
+    def tableEntryChanged(self, device1, device2):
+        return True
+        
+        if (device1.lastSeen != device2.lastSeen) or (device1.rssi != device2.rssi):
+            if (not self.scanPromiscuous) or (device1.name != device2.name):
+                # if we're doing an advertisement scan we won't get the name
+                return True
+            else:
+                return False
+        else:
+            return False
+            
     def updateTable(self, deviceList):        
+        self.updateLock.acquire()
+        
         rowCount = self.bluetoothTable.rowCount()
         rowCount -= 1
         if rowCount < 0:
@@ -1127,8 +1383,22 @@ class BluetoothDialog(QDialog):
                         if curData.getKey() == curDevice.getKey():
                             curDevice.foundInList = True
                             
+                            if not self.tableEntryChanged(curData, curDevice):
+                                # Nothing has changed, so don't update anything
+                                continue
+                            
                             curDevice.firstSeen = curData.firstSeen # This is one field to carry forward
                             
+                            if self.scanPromiscuous:
+                                # Need the other attributes:
+                                curDevice.name = curData.name
+                                curDevice.manufacturer = curData.manufacturer
+                                curDevice.uuid = curData.uuid
+                                curDevice.bluetoothDescription = curData.bluetoothDescription
+
+                            if curDevice.txPowerValid and curDevice.iBeaconRange == -1:
+                                curDevice.calcRange()
+                                
                             # curData is already in the table
                             if curData.strongestRssi > curDevice.rssi or (curData.strongestRssi > (curDevice.rssi*0.9) and curData.gps.isValid and (not curDevice.strongestgps.isValid)):
                                 curDevice.strongestRssi = curData.rssi
@@ -1141,16 +1411,21 @@ class BluetoothDialog(QDialog):
                             self.bluetoothTable.item(curRow,2).setText(curDevice.name)
                             self.bluetoothTable.item(curRow, 6).setText(str(curDevice.rssi))
                             
-                            if curDevice.iBeaconRange != -1:
-                                self.bluetoothTable.item(curRow, 7).setText(str(curDevice.iBeaconRange))
+                            if curDevice.txPowerValid:
+                                self.bluetoothTable.item(curRow, 7).setText(str(curDevice.txPower))
                             else:
-                                self.bluetoothTable.item(curRow, 7).setText('')
+                                self.bluetoothTable.item(curRow, 7).setText('Unknown')
+                            
+                            if curDevice.iBeaconRange != -1 and curDevice.txPowerValid:
+                                self.bluetoothTable.item(curRow, 8).setText(str(curDevice.iBeaconRange))
+                            else:
+                                self.bluetoothTable.item(curRow, 8).setText('Unknown')
                                 
-                            self.bluetoothTable.item(curRow, 8).setText(curDevice.lastSeen.strftime("%m/%d/%Y %H:%M:%S"))
+                            self.bluetoothTable.item(curRow, 9).setText(curDevice.lastSeen.strftime("%m/%d/%Y %H:%M:%S"))
                             if (curDevice.gps.isValid):
-                                self.bluetoothTable.item(curRow,9).setText('Yes')
+                                self.bluetoothTable.item(curRow,10).setText('Yes')
                             else:
-                                self.bluetoothTable.item(curRow,9).setText('No')
+                                self.bluetoothTable.item(curRow,10).setText('No')
                                 
                             self.bluetoothTable.item(curRow, 0).setData(Qt.UserRole, curDevice)
                             break
@@ -1180,21 +1455,76 @@ class BluetoothDialog(QDialog):
                     self.bluetoothTable.setItem(rowPosition,5, QTableWidgetItem('Classic'))
 
                 self.bluetoothTable.setItem(rowPosition, 6, IntTableWidgetItem(str(curDevice.rssi)))
-                if curDevice.iBeaconRange != -1:
-                    self.bluetoothTable.setItem(rowPosition, 7, IntTableWidgetItem(str(curDevice.iBeaconRange)))
+                
+                if curDevice.txPowerValid:
+                    self.bluetoothTable.setItem(rowPosition, 7, IntTableWidgetItem(str(curDevice.txPower)))
                 else:
-                    self.bluetoothTable.setItem(rowPosition, 7, IntTableWidgetItem(''))
+                    self.bluetoothTable.setItem(rowPosition, 7, IntTableWidgetItem('Unknown'))
+                
+                if curDevice.iBeaconRange != -1 and curDevice.txPowerValid:
+                    self.bluetoothTable.setItem(rowPosition, 8, FloatTableWidgetItem(str(curDevice.iBeaconRange)))
+                else:
+                    self.bluetoothTable.setItem(rowPosition, 8, FloatTableWidgetItem('Unknown'))
                     
-                self.bluetoothTable.setItem(rowPosition, 8, DateTableWidgetItem(curDevice.lastSeen.strftime("%m/%d/%Y %H:%M:%S")))
+                self.bluetoothTable.setItem(rowPosition, 9, DateTableWidgetItem(curDevice.lastSeen.strftime("%m/%d/%Y %H:%M:%S")))
                 if (curDevice.gps.isValid):
                     self.bluetoothTable.setItem(rowPosition,9, QTableWidgetItem('Yes'))
                 else:
-                    self.bluetoothTable.setItem(rowPosition,9, QTableWidgetItem('No'))
+                    self.bluetoothTable.setItem(rowPosition,10, QTableWidgetItem('No'))
                 
         if addedNetworks > 0:
             if self.btTableSortIndex >=0:
                 self.bluetoothTable.sortItems(self.btTableSortIndex, self.btTableSortOrder )
+
+        self.updateLock.release()
+        
+    def onExportClicked(self):
+        fileName = saveFileDialog()
+
+        if not fileName:
+            return
+            
+        try:
+            outputFile = open(fileName, 'w')
+        except:
+            QMessageBox.question(self, 'Error',"Unable to write to " + fileName, QMessageBox.Ok)
+            return
+            
+        outputFile.write('uuid,Address,Name,Company,Manufacturer,Type,RSSI,TX Power,Strongest RSSI,Est Range (m),Last Seen,GPS Valid,Latitude,Longitude,Altitude,Speed,Strongest GPS Valid,Strongest Latitude,Strongest Longitude,Strongest Altitude,Strongest Speed\n')
+
+        self.updateLock.acquire()
+
+        numItems = self.bluetoothTable.rowCount()
+        
+        if numItems == 0:
+            outputFile.close()
+            self.updateLock.release()
+            return
+           
+        for i in range(0, numItems):
+            curData = self.bluetoothTable.item(i, 0).data(Qt.UserRole)
+
+            btType = ""
+            if curData.btType == BluetoothDevice.BT_LE:
+                btType = "BTLE"
+            else:
+                btType = "Classic"
                 
+            if curData.txPowerValid:
+                txPower = str(curData.txPower)
+            else:
+                txPower = 'Unknown'
+                
+            outputFile.write(curData.uuid  + ',' + curData.macAddress + ',"' + curData.name + '","' + curData.company + '","' + curData.manufacturer)
+            outputFile.write('","' + btType + '",' + str(curData.rssi) + ',' + str(curData.strongestRssi) + ',' + txPower + ',' + str(curData.iBeaconRange) + ',' +
+                                    curData.lastSeen.strftime("%m/%d/%Y %H:%M:%S") + ',' + 
+                                    str(curData.gps.isValid) + ',' + str(curData.gps.latitude) + ',' + str(curData.gps.longitude) + ',' + str(curData.gps.altitude) + ',' + str(curData.gps.speed) + ',' + 
+                                    str(curData.strongestgps.isValid) + ',' + str(curData.strongestgps.latitude) + ',' + str(curData.strongestgps.longitude) + ',' + str(curData.strongestgps.altitude) + ',' + str(curData.strongestgps.speed) + '\n')
+            
+        outputFile.close()
+        
+        self.updateLock.release()
+                        
     def onBtTimer(self):
         if not self.mainWin:
             # We'll just take one shot coming in here for debug purposes.  Technically we don't need to come in here
@@ -1203,15 +1533,20 @@ class BluetoothDialog(QDialog):
 
         curGPS = self.mainWin.getCurrentGPS()
         
-        errcode, devices=SparrowBluetooth.getBlueHydraBluetoothDevices()
+        if self.usingRemoteAgent:
+            errcode, errmsg, devices = getRemoteBluetoothDiscoveryStatus(self.remoteAgentIP, self.remoteAgentPort)
+        else:
+            errcode, devices= self.bluetooth.getDiscoveredDevices()
         
         if errcode == 0 and len(devices) > 0:
             now = datetime.datetime.now()
             for curDevice in devices:
                 elapsedTime =  now - curDevice.lastSeen
                 curDevice.manufacturer = self.mainWin.ouiLookup(curDevice.macAddress)
+                if curDevice.manufacturer is None:
+                    curDevice.manufacturer = ''
                 
-                if elapsedTime.total_seconds() < 3:
+                if elapsedTime.total_seconds() < 120:
                     curDevice.gps.copy(curGPS)
                     curDevice.strongestgps.copy(curGPS)
                 
@@ -1229,7 +1564,7 @@ class BluetoothDialog(QDialog):
         if not visible:
             self.btTimer.stop()
         else:
-            if not self.btTimer.isActive():
+            if self.btnScan.isChecked():
                 self.btTimer.start(self.btTimerTimeout)
 
     def onTableHeadingClicked(self, logical_index):

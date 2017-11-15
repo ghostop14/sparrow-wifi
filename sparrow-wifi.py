@@ -56,6 +56,7 @@ from sparrowbluetooth import SparrowBluetooth
 # There are some "plugins" that are available for addons.  Let's see if they're present
 hasFalcon = False
 hasBluetooth = False
+hasUbertooth = False
 
 try:
     from manuf import manuf
@@ -129,7 +130,8 @@ def remoteHasBluetooth(agentIP, agentPort):
             return -1, 'Error parsing response', False, False
     else:
             return -2, 'Bad response from agent [' + str(statusCode) + ']', False, False
-        
+
+# These scan functions are for the spectrum, not discovery        
 def startRemoteBluetoothScan(agentIP, agentPort):
     url = "http://" + agentIP + ":" + str(agentPort) + "/bluetooth/scanstart"
     statusCode, responsestr = makeGetRequest(url)
@@ -159,6 +161,27 @@ def stopRemoteBluetoothScan(agentIP, agentPort):
             return -1, 'Error parsing response'
     else:
             return -2, 'Bad response from agent [' + str(statusCode) + ']'
+
+        
+def getRemoteBluetoothRunningServices(agentIP, agentPort):
+    url = "http://" + agentIP + ":" + str(agentPort) + "/bluetooth/running"
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            responsedict = json.loads(responsestr)
+            errcode = responsedict['errcode']
+            errmsg = responsedict['errmsg']
+            hasBluetooth = responsedict['hasbluetooth']
+            hasUbertooth = responsedict['hasubertooth']
+            spectrumScanRunning = responsedict['spectrumscanrunning']
+            discoveryScanRunning = responsedict['discoveryscanrunning']
+            
+            return errcode, errmsg, hasBluetooth, hasUbertooth, spectrumScanRunning, discoveryScanRunning
+        except:
+            return -1, 'Error parsing response', False, False, False, False
+    else:
+            return -2, 'Bad response from agent [' + str(statusCode) + ']', False, False, False, False
         
 def getRemoteBluetoothScanSpectrum(agentIP, agentPort):
     url = "http://" + agentIP + ":" + str(agentPort) + "/bluetooth/scanstatus"
@@ -472,27 +495,41 @@ class mainWindow(QMainWindow):
     advScanClosed = QtCore.pyqtSignal()
     advScanUpdateSSIDs = QtCore.pyqtSignal(dict)
     agentListenerClosed = QtCore.pyqtSignal()
+    bluetoothDiscoveryClosed = QtCore.pyqtSignal()
     
     # For help with qt5 GUI's this is a great tutorial:
     # http://zetcode.com/gui/pyqt5/
-    
+
+    def checkForBluetooth(self):
+        self.hasBluetooth = False
+        self.hasUbertooth = False
+        self.hasRemoteBluetooth = False
+        self.hasRemoteUbertooth = False
+        
+        numBtAdapters = len(SparrowBluetooth.getBluetoothInterfaces())
+        if numBtAdapters > 0:
+            self.hasBluetooth = True
+        
+        if SparrowBluetooth.getNumUbertoothDevices() > 0:
+            #SparrowBluetooth.ubertoothStopSpecan()
+            errcode, errmsg = SparrowBluetooth.hasUbertoothTools()
+            # errcode, errmsg = SparrowBluetooth.ubertoothOnline()
+            if errcode == 0:
+                self.hasUbertooth = True
+        
+        if self.hasBluetooth or self.hasUbertooth:
+            self.bluetooth = SparrowBluetooth()
+        else:
+            self.bluetooth = None
+
     def __init__(self):
         super().__init__()
 
-        global hasBluetooth
+        self.checkForBluetooth()
         
         self.bluetoothWin = None
+        self.bluetoothDiscoveryClosed.connect(self.onBtDiscoveryClosed)
         
-        if hasBluetooth:
-            self.hasBluetooth = hasBluetooth
-            self.hasRemoteBluetooth = False
-            
-            self.bluetooth = SparrowBluetooth()
-        else:
-            self.hasBluetooth = hasBluetooth
-            self.hasRemoteBluetooth = False
-            self.bluetooth = None
-    
         self.btSpectrumGain = 1.0
         
         self.btShowSpectrum = False
@@ -579,6 +616,8 @@ class mainWindow(QMainWindow):
             try:
                 if self.ouiLookupEngine:
                     clientVendor = self.ouiLookupEngine.get_manuf(macAddr)
+                    if clientVendor is None:
+                        clientVendor = ''
             except:
                 clientVendor = ""
             
@@ -818,8 +857,8 @@ class mainWindow(QMainWindow):
         
         #$ self.networkTable.setStyleSheet("QTableCornerButton::section{background-color: white;}")
         # self.networkTable.cornerWidget().setStylesheet("background-color: black")
-        self.networkTable.setStyleSheet("background-color: black;gridline-color: white;color: white")
-        headerStyle = "QHeaderView::section{background-color: white;border: 1px solid black;color: black}"
+        self.networkTable.setStyleSheet("QTableView {background-color: black;gridline-color: white;color: white} QTableCornerButton::section{background-color: white;}")
+        headerStyle = "QHeaderView::section{background-color: white;border: 1px solid black;color: black;} QHeaderView::down-arrow,QHeaderView::up-arrow {background: none;}"
         self.networkTable.horizontalHeader().setStyleSheet(headerStyle)
         self.networkTable.verticalHeader().setStyleSheet(headerStyle)
         
@@ -938,13 +977,34 @@ class mainWindow(QMainWindow):
             gpsMenu.addAction(newAct)
             
         # View Menu Items
-        ViewMenu = menubar.addMenu('&View')
+        ViewMenu = menubar.addMenu('&Telemetry')
         newAct = QAction('Telemetry For Selected Network', self)        
-        newAct.setStatusTip('Show telemetry screen for selected network')
+        newAct.setStatusTip('Show screen for selected network with history, signal strength, and historical data')
         newAct.triggered.connect(self.onShowTelemetry)
         ViewMenu.addAction(newAct)
         
-        if hasFalcon or self.hasBluetooth:
+        # Bluetooth
+        ViewMenu = menubar.addMenu('&Bluetooth')
+        self.menuBtSpectrum = QAction('2.4 GHz Spectrum Analyzer via Ubertooth', self)        
+        self.menuBtSpectrum.setStatusTip("Use Ubertooth for 2.4 GHz spectrum analyzer. NOTE: Wireless cards may have different gain, so results may vary.")
+        self.menuBtSpectrum.setCheckable(True)
+        self.menuBtSpectrum.triggered.connect(self.onBtSpectrumAnalyzer)
+        ViewMenu.addAction(self.menuBtSpectrum)
+
+        self.menuBtSpectrumGain = QAction('Spectrum Analyzer Gain', self)        
+        self.menuBtSpectrumGain.setStatusTip("Manually override gain to better match spectrum with wifi adapter")
+        self.menuBtSpectrumGain.triggered.connect(self.onBtSpectrumOverrideGain)
+        ViewMenu.addAction(self.menuBtSpectrumGain)
+        
+        self.menuBtBluetooth = QAction('Bluetooth Discovery', self)        
+        self.menuBtBluetooth.setStatusTip("Find bluetooth devices.  Basic discovery or Ubertooth depending on hardware.")
+        self.menuBtBluetooth.triggered.connect(self.onBtBluetooth)
+        ViewMenu.addAction(self.menuBtBluetooth)
+
+        self.setBluetoothMenu()
+        
+        # Falcon
+        if hasFalcon:
             # Falcon Menu Items
             ViewMenu = menubar.addMenu('&Falcon')
             if hasFalcon:
@@ -953,29 +1013,6 @@ class mainWindow(QMainWindow):
                 newAct.triggered.connect(self.onAdvancedScan)
                 ViewMenu.addAction(newAct)
 
-            self.menuBtSpectrum = QAction('2.4 GHz Spectrum Analyzer', self)        
-            self.menuBtSpectrum.setStatusTip("Use Ubertooth for 2.4 GHz spectrum analyzer. NOTE: Wireless cards may have different gain, so results may vary.")
-            self.menuBtSpectrum.setCheckable(True)
-            self.menuBtSpectrum.triggered.connect(self.onBtSpectrumAnalyzer)
-            ViewMenu.addAction(self.menuBtSpectrum)
-
-            self.menuBtSpectrumGain = QAction('Spectrum Analyzer Gain', self)        
-            self.menuBtSpectrumGain.setStatusTip("Manually override gain to better match spectrum with wifi adapter")
-            self.menuBtSpectrumGain.triggered.connect(self.onBtSpectrumOverrideGain)
-            ViewMenu.addAction(self.menuBtSpectrumGain)
-            
-            self.menuBtBluetooth = QAction('Bluetooth Discovery', self)        
-            self.menuBtBluetooth.setStatusTip("Find bluetooth devices")
-            self.menuBtBluetooth.triggered.connect(self.onBtBluetooth)
-            ViewMenu.addAction(self.menuBtBluetooth)
-            
-            if not self.hasBluetooth:
-                self.menuBtSpectrum.setEnabled(False)
-                self.menuBtSpectrumGain.setEnabled(False)
-                self.menuBtBluetooth.setEnabled(False)
-            else:
-                self.bluetooth = SparrowBluetooth()
-                
         # Help Menu Items
         helpMenu = menubar.addMenu('&Help')
         newAct = QAction('About', self)        
@@ -988,7 +1025,22 @@ class mainWindow(QMainWindow):
         #newMenu.addAction(actNewSqlite)
         #newMenu.addAction(actNewpostgres)
         # fileMenu.addMenu(newMenu)
-    
+
+    def setBluetoothMenu(self):
+        if not self.remoteAgentUp:
+            # Local
+            if not self.hasUbertooth:
+                self.menuBtSpectrum.setEnabled(False)
+                self.menuBtSpectrumGain.setEnabled(False)
+            if not self.hasBluetooth:
+                self.menuBtBluetooth.setEnabled(False)
+        else:
+            if not self.hasRemoteUbertooth:
+                self.menuBtSpectrum.setEnabled(False)
+                self.menuBtSpectrumGain.setEnabled(False)
+            if not self.hasRemoteBluetooth:
+                self.menuBtBluetooth.setEnabled(False)
+            
     def createCharts(self):
         self.chart24 = QChart()
         self.chart24.setAcceptHoverEvents(True)
@@ -1075,22 +1127,79 @@ class mainWindow(QMainWindow):
         
     def onBtBluetooth(self):
         if not self.bluetoothWin:
-            self.bluetoothWin = BluetoothDialog(self, None)  # Need to set parent to None to allow it to not always be on top
+            # Check if we have other bluetooth functions running, if so give the user a chance to decide what to do
+            # since only 1 can use the card at a time
+            if not self.remoteAgentUp:
+                # Local
+                if self.bluetooth.scanRunning():
+                    reply = QMessageBox.question(self, 'Question',"Bluetooth hardware is being used for spectrum scanning.  Would you like to stop it?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+                    if reply == QMessageBox.Yes:
+                        self.bluetooth.stopScanning()
+                        self.stopSpectrumLine()
+                    else:
+                        return
+                        
+                # Handle this with a button on the bluetooth window now
+                # self.bluetooth.startDiscovery()
+            else:
+                errcode, errmsg, self.hasRemoteBluetooth, self.hasRemoteUbertooth, scanRunning, discoveryRunning = getRemoteBluetoothRunningServices(self.remoteAgentIP, self.remoteAgentPort)
+                if scanRunning:
+                    reply = QMessageBox.question(self, 'Question',"Bluetooth hardware is being used for spectrum scanning.  Would you like to stop it?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+                    if reply == QMessageBox.Yes:
+                        errcode, errmsg = stopRemoteBluetoothScan(self.remoteAgentIP, self.remoteAgentPort)
+                        self.stopSpectrumLine()
+                    else:
+                        return
+
+            # We're good so let's create the window
+            
+            # Create a window, we don't have one yet
+            self.bluetoothWin = BluetoothDialog(self, self.bluetooth, self.remoteAgentUp, self.remoteAgentIP, self.remoteAgentPort, None)  # Need to set parent to None to allow it to not always be on top
 
         self.bluetoothWin.show()
         self.bluetoothWin.activateWindow()
-        
+
+    def onBtDiscoveryClosed(self):
+        if self.bluetoothWin:
+            self.bluetoothWin = None
+            
     def onBtSpectrumAnalyzer(self):
         if (self.menuBtSpectrum.isChecked() == self.btLastSpectrumState):
             # There's an extra bounce in this for some reason.
             return
 
-        self.btShowSpectrum = self.menuBtSpectrum.isChecked()
-        self.btLastSpectrumState = self.btShowSpectrum
-        
         if (not self.remoteAgentUp):
+            # Local
+            if self.bluetooth.discoveryRunning():
+                reply = QMessageBox.question(self, 'Question',"Bluetooth hardware is being used for discovery.  Would you like to stop it?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+                if reply == QMessageBox.Yes:
+                    self.bluetooth.stopDiscovery()
+                else:
+                    self.menuBtSpectrum.setChecked(False)
+                    self.btShowSpectrum = False
+                    self.btLastSpectrumState = False
+                    return
+                    
             errcode = 0
         else:
+            errcode, errmsg, self.hasRemoteBluetooth, self.hasRemoteUbertooth, scanRunning, discoveryRunning = getRemoteBluetoothRunningServices(self.remoteAgentIP, self.remoteAgentPort)
+            
+            if errcode == 0:
+                if discoveryRunning:
+                    reply = QMessageBox.question(self, 'Question',"Bluetooth hardware is being used for discovery.  Would you like to stop it?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+                    if reply == QMessageBox.Yes:
+                        pass
+                        # Stop remote discovery here
+                    else:
+                        self.menuBtSpectrum.setChecked(False)
+                        self.btShowSpectrum = False
+                        self.btLastSpectrumState = False
+                        return
+                
             if self.btShowSpectrum:
                 errcode, errmsg = startRemoteBluetoothScan(self.remoteAgentIP, self.remoteAgentPort)
                 if errcode != 0:
@@ -1106,6 +1215,9 @@ class mainWindow(QMainWindow):
         if errcode != 0:
             self.statusBar().showMessage(errmsg)
             
+        self.btShowSpectrum = self.menuBtSpectrum.isChecked()
+        self.btLastSpectrumState = self.btShowSpectrum
+        
         if self.btShowSpectrum:
             # Add it on the plot
             self.createSpectrumLine()
@@ -1172,6 +1284,18 @@ class mainWindow(QMainWindow):
                 self.advancedScan.setRemoteAgent(self.remoteAgentIP, self.remoteAgentPort)
             else:
                 self.advancedScan.setLocal()
+        
+    def checkNotifyBluetoothDiscovery(self):
+        if not self.bluetoothWin:
+            return
+            
+        # If we've changed from local<->remote, or something about the remote end has changed, let's signal update
+        if ((self.bluetoothWin.usingRemoteAgent != self.remoteAgentUp) or 
+            (self.remoteAgentUp and (self.remoteAgentIP !=self.bluetoothWin.remoteAgentIP or self.remoteAgentPort !=self.bluetoothWin.remoteAgentPort))) :
+            if self.remoteAgentUp:
+                self.bluetoothWin.setRemoteAgent(self.remoteAgentIP, self.remoteAgentPort)
+            else:
+                self.bluetoothWin.setLocal()
         
     def onScanModeChanged(self):
         self.scanMode = str(self.scanModeCombo.currentText())
@@ -1719,6 +1843,7 @@ class mainWindow(QMainWindow):
         self.menuRemoteAgent.setChecked(False)
         self.onRemoteAgent()
         
+        self.checkNotifyBluetoothDiscovery()
         self.checkNotifyAdvancedScan()
                 
     def onRemoteScanClicked(self, pressed):
@@ -1983,6 +2108,8 @@ class mainWindow(QMainWindow):
                         if curData.getKey() == curNet.getKey():
                             # Match.  Item was already in the table.  Let's update it
                             clientVendor = self.ouiLookup(curNet.macAddr)
+                            if clientVendor is None:
+                                clientVendor = ''
                             self.networkTable.item(curRow, 1).setText(clientVendor)
                             
                             self.networkTable.item(curRow, 3).setText(curNet.security)
@@ -1992,7 +2119,8 @@ class mainWindow(QMainWindow):
                             self.networkTable.item(curRow, 7).setText(str(curNet.signal))
                             
                             if not FromAdvanced:
-                                # There are some fields that are not passed forward, so if we already have them we don't want to overwrite them
+                                # There are some fields that are not passed forward from advanced.
+                                # So we only want to overwrite them if we're not updating from the advanced window
                                 curNet.bandwidth = curData.bandwidth
                                 curNet.secondaryChannel = curData.secondaryChannel
                                 curNet.thirdChannel = curData.thirdChannel
@@ -2128,6 +2256,8 @@ class mainWindow(QMainWindow):
             newSSID.setData(Qt.UserRole+2, None)
             
             clientVendor = self.ouiLookup(curNet.macAddr)
+            if clientVendor is None:
+                clientVendor = ''
             self.networkTable.setItem(rowPosition, 1, QTableWidgetItem(clientVendor))
             self.networkTable.setItem(rowPosition, 2, newSSID)
             self.networkTable.setItem(rowPosition, 3, QTableWidgetItem(curNet.security))
@@ -2402,6 +2532,7 @@ class mainWindow(QMainWindow):
         
         if numItems == 0:
             outputFile.close()
+            self.updateLock.release()
             return
 
         # This will create a dictionary with an item named 'wifi-aps' which will contain a list of networks
@@ -2440,6 +2571,7 @@ class mainWindow(QMainWindow):
         
         if numItems == 0:
             outputFile.close()
+            self.updateLock.release()
             return
            
         for i in range(0, numItems):
@@ -2563,7 +2695,17 @@ class mainWindow(QMainWindow):
         
         configDialog = AgentConfigDialog(startupCfg, runningCfg, interfaces, agentIP, agentPort)
         configDialog.exec()
-        
+
+    def stopSpectrumLine(self):
+        if self.spectrumLine:
+            self.btSpectrumTimer.stop()
+            self.spectrumLine.clear()
+            self.chart24.removeSeries(self.spectrumLine)
+            self.spectrumLine = None
+            self.btShowSpectrum = False
+            self.btLastSpectrumState = False
+            self.menuBtSpectrum.setChecked(False)
+
     def onRemoteAgent(self):
         if (self.menuRemoteAgent.isChecked() == self.lastRemoteState):
             # There's an extra bounce in this for some reason.
@@ -2640,33 +2782,25 @@ class mainWindow(QMainWindow):
                 if self.bluetooth:
                     self.bluetooth.stopScanning()
                     
-                errcode, errmsg, btpresent, scanRunning =remoteHasBluetooth(self.remoteAgentIP, self.remoteAgentPort)
+                errcode, errmsg, self.hasRemoteBluetooth, self.hasRemoteUbertooth, scanRunning, discoveryRunning = getRemoteBluetoothRunningServices(self.remoteAgentIP, self.remoteAgentPort)
                 if errcode == 0:
-                    self.menuBtSpectrumGain.setEnabled(btpresent)
-                    self.menuBtSpectrum.setEnabled(btpresent)
+                    self.setBluetoothMenu()
                     self.menuBtSpectrum.setChecked(scanRunning)
                     self.btShowSpectrum = scanRunning
                     self.btLastSpectrumState = scanRunning
                     if scanRunning:
                         self.btSpectrumTimer.start(self.btSpectrumTimeout)
                     else:
-                        if self.spectrumLine:
-                            self.spectrumLine.clear()
-                            self.chart24.removeSeries(self.spectrumLine)
-                            self.spectrumLine = None
+                        self.stopSpectrumLine()
                 else:
                     self.btShowSpectrum = False
                     self.btLastSpectrumState = False
-                    if self.spectrumLine:
-                        self.spectrumLine.clear()
-                        self.chart24.removeSeries(self.spectrumLine)
-                        self.spectrumLine = None
+                    self.stopSpectrumLine()
                         
                     self.menuBtSpectrum.setEnabled(False)
                     self.menuBtSpectrum.setChecked(False)
                     self.menuBtSpectrumGain.setEnabled(False)
                     self.btSpectrumTimer.stop()
-
                 
                 self.onGPSStatus()
             else:
@@ -2698,6 +2832,7 @@ class mainWindow(QMainWindow):
             self.menuBtSpectrum.setChecked(False)
             self.menuBtSpectrumGain.setEnabled(self.hasBluetooth)
                     
+        self.checkNotifyBluetoothDiscovery()
         self.checkNotifyAdvancedScan()
 
     def onAbout(self):
@@ -2734,6 +2869,10 @@ class mainWindow(QMainWindow):
             self.advancedScan.close()
             self.advancedScan = None
             
+        if self.bluetoothWin:
+            self.bluetoothWin.close()
+            self.bluetoothWin = None
+        
         if self.agentListenerWindow:
             self.agentListenerWindow.close()
             self.agentListenerWindow = None
@@ -2747,8 +2886,7 @@ class mainWindow(QMainWindow):
             
         event.accept()
 
-# -------  Main Routine -------------------------
-
+# -------  Main Routine and Bluetooth Function -------------------------
 if __name__ == '__main__':
     # Code to add paths
     dirname, filename = os.path.split(os.path.abspath(__file__))
@@ -2763,12 +2901,6 @@ if __name__ == '__main__':
             from falconwifidialogs import AdvancedScanDialog
             hasFalcon = True
             
-    #SparrowBluetooth.ubertoothStopSpecan()
-    errcode, errmsg = SparrowBluetooth.hasUbertoothTools()
-    # errcode, errmsg = SparrowBluetooth.ubertoothOnline()
-    if errcode == 0:
-        hasBluetooth = SparrowBluetooth.hasBluetoothHardware()
-        
     app = QApplication(sys.argv)
     mainWin = mainWindow()
     sys.exit(app.exec_())

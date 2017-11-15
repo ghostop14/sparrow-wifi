@@ -49,7 +49,9 @@ class BaseThreadClass(Thread):
         
         self.waitTillFinished()
         
-    def waitTillFinished(self):
-        while self.threadRunning:
+    def waitTillFinished(self, maxWaitTime=2):
+        maxIterations = maxWaitTime / 0.1
+        i = 0
+        while self.threadRunning and i < maxIterations:
             sleep(0.1)
-            
+            i += 1

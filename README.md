@@ -6,8 +6,10 @@ Like so many of us who have used tools like inSSIDer on Windows in the past, I'v
 Sparrow-wifi provides a nice graphical interface with tables of discovered networks and signal plots along with a few other nice features:
 
 - Enhanced per-network telemetry display ('tracker' style signal meter, time plots, GPS log which can be exported)
-- Signal "hunt" mode.  Normal scans running across all 2.4 GHz and 5 GHz channels can take 5-10 seconds per sweep as the radio needs to retune to each frequency and listen.  If you're trying to locate a particular SSID, this can be too slow.  Hunt mode allows you to specify the channel number or center frequency and only scan that one channel for much faster hunt performance (generally less than 0.2 seconds/channel).
-- Ability to export results to CSV and import them back in to revisualize a scan
+- WiFi Signal "hunt" mode.  Normal scans running across all 2.4 GHz and 5 GHz channels can take 5-10 seconds per sweep as the radio needs to retune to each frequency and listen.  If you're trying to locate a particular SSID, this can be too slow.  Hunt mode allows you to specify the channel number or center frequency and only scan that one channel for much faster hunt performance (generally less than 0.2 seconds/channel).
+- Bluetooth support with either standard Bluetooth dongles and an Ubertooth
+- If you have an Ubertooth, you can display active spectrum on the 2.4 GHz frequency chart
+- Ability to export results to CSV or JSON and import them back in to revisualize a scan
 - Plot SSID GPS coordinates on Google maps
 - Sparrow-wifi has built-in GPS support via gpsd for network location tagging
 - Sparrow-wifi has a remotely deployable agent (sparrowwifiagent.py) that can be run on a separate system.  The GUI can then be connected to the remote agent for remote monitoring, including remote GPS.  Agent supports a --sendannounce startup parameter to allow for auto-discovery via broadcast packets.  It also supports a headless record local on start mode (see --help)
@@ -38,13 +40,15 @@ If you're going to use the gps capabilities, you'll also need to make sure gpsd 
 sudo apt-get install gpsd
 
 ## Bluetooth
-[Coming soon]
+Bluetooth support has been added.  However it's important to know that bluetooth works very differently than WiFi.  It uses frequency hopping spread spectrum in the same 2.4 GHz band as WiFi, but because of the hopping introduces challenges.  Also, Bluetooth Low Energy (BTLE) and Classic Bluetooth are different, which impacts tools to scan.
+
+With that said, enabling bluetooth, especially with an Ubertooth introduces some great functionality.  In addition to scanning for Bluetooth devices, Ubertooth can be used as a 2.4 GHz spectrum analyzer, which gives you a great overlay on your WiFi 2.4 GHz signal space.
 
 If you would like to scan for bluetooth, you'll need a few things:
-1. A bluetooth adapter (test with 'hcitool dev')
-2. An Ubertooth (yes, you need both Ubertooth and a standard adapter, the tools use both)
-3. Ubertooth tools installed and functioning (you can test it with ubertooth-specan-ui)
-4. Blue Hydra installed into /opt/bluetooth/blue_hydra (mkdir /opt/bluetooth && cd /opt/bluetooth && git clone https://github.com/pwnieexpress/blue_hydra.git)  You can test it with bin/blue_hydra
+1. A bluetooth adapter (test with 'hcitool dev' to make sure it shows up).  With an adapter you can do basic BTLE advertisement and iBeacon scans.
+2. [Optional ] An Ubertooth for promiscuous discovery scans (BTLE and Classic Bluetooth)
+	- Ubertooth tools installed and functioning (you can test it with ubertooth-specan-ui)
+	- Blue Hydra installed into /opt/bluetooth/blue_hydra (mkdir /opt/bluetooth && cd /opt/bluetooth && git clone https://github.com/pwnieexpress/blue_hydra.git).  Then make sure you've followed the blue_hydra installation instructions.  You can test it with bin/blue_hydra.  This msut be in /opt/bluetooth/blue_hydra or the app won't find it.
 
 ## Running sparrow-wifi
 Because it needs to use iw to scan, you will need to run sparrow-wifi as root.  Simply run:
@@ -52,7 +56,7 @@ Because it needs to use iw to scan, you will need to run sparrow-wifi as root.  
 sudo ./sparrow-wifi.py
 
 ## Running sparrow-wifi remote agent
-Because it needs to use iw to scan, you will need to run sparrowwifiagent as root.  Simply run:
+Because the agent needs to use iw and bluetooth tools to scan, you will need to run sparrowwifiagent as root.  Simply run:
 
 sudo ./sparrowwifiagent.py
 
