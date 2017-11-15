@@ -160,24 +160,7 @@ class TelemetryDialog(QDialog):
         self.radar = RadarWidget(self)
         self.radar.setGeometry(self.geometry().width()/2, 10, self.geometry().width()/2-20, self.geometry().width()/2-20)
         
-        # Set up location table
-        self.locationTable = QTableWidget(self)
-        self.locationTable.setColumnCount(8)
-        self.locationTable.setGeometry(10, 10, self.geometry().width()/2-20, self.geometry().height()/2)
-        self.locationTable.setShowGrid(True)
-        self.locationTable.setHorizontalHeaderLabels(['macAddr','SSID', 'Strength', 'Timestamp','GPS', 'Latitude', 'Longitude', 'Altitude'])
-        self.locationTable.resizeColumnsToContents()
-        self.locationTable.setRowCount(0)
-        self.locationTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        
-        self.ntRightClickMenu = QMenu(self)
-        newAct = QAction('Copy', self)        
-        newAct.setStatusTip('Copy data to clipboard')
-        newAct.triggered.connect(self.onCopy)
-        self.ntRightClickMenu.addAction(newAct)
-        
-        self.locationTable.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.locationTable.customContextMenuRequested.connect(self.showNTContextMenu)
+        self.createTable()
        
         self.btnExport = QPushButton("Export Table", self)
         self.btnExport.clicked[bool].connect(self.onExportClicked)
@@ -202,6 +185,26 @@ class TelemetryDialog(QDialog):
         
         self.center()
 
+    def createTable(self):
+        # Set up location table
+        self.locationTable = QTableWidget(self)
+        self.locationTable.setColumnCount(8)
+        self.locationTable.setGeometry(10, 10, self.geometry().width()/2-20, self.geometry().height()/2)
+        self.locationTable.setShowGrid(True)
+        self.locationTable.setHorizontalHeaderLabels(['macAddr','SSID', 'Strength', 'Timestamp','GPS', 'Latitude', 'Longitude', 'Altitude'])
+        self.locationTable.resizeColumnsToContents()
+        self.locationTable.setRowCount(0)
+        self.locationTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        
+        self.ntRightClickMenu = QMenu(self)
+        newAct = QAction('Copy', self)        
+        newAct.setStatusTip('Copy data to clipboard')
+        newAct.triggered.connect(self.onCopy)
+        self.ntRightClickMenu.addAction(newAct)
+        
+        self.locationTable.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.locationTable.customContextMenuRequested.connect(self.showNTContextMenu)
+        
     def setBlackoutColors(self):
         self.locationTable.setStyleSheet("QTableView {background-color: black;gridline-color: white;color: white} QTableCornerButton::section{background-color: white;}")
         headerStyle = "QHeaderView::section{background-color: white;border: 1px solid black;color: black;} QHeaderView::down-arrow,QHeaderView::up-arrow {background: none;}"
@@ -324,6 +327,8 @@ class TelemetryDialog(QDialog):
         fileName = self.saveFileDialog()
 
         if not fileName:
+            self.btnStream.setStyleSheet("background-color: rgba(2,128,192,255);")
+            self.btnStream.setChecked(False)
             return
             
         try:
@@ -333,9 +338,10 @@ class TelemetryDialog(QDialog):
             self.streamingFile = None
             self.streamingSave = False
             self.btnStream.setStyleSheet("background-color: rgba(2,128,192,255);")
+            self.btnStream.setChecked(False)
             return
             
-        self.streamingFile.write('macAddr,SSID,Strength,Timestamp,GPS,Latitude,Longitude,Altitude\n')
+        self.streamingFile.write('MAC Address,SSID,Strength,Timestamp,GPS,Latitude,Longitude,Altitude\n')
                     
     def onExportClicked(self):
         fileName = self.saveFileDialog()
@@ -349,7 +355,7 @@ class TelemetryDialog(QDialog):
             QMessageBox.question(self, 'Error',"Unable to write to " + fileName, QMessageBox.Ok)
             return
             
-        outputFile.write('macAddr,SSID,Strength,Timestamp,GPS,Latitude,Longitude,Altitude\n')
+        outputFile.write('MAC Address,SSID,Strength,Timestamp,GPS,Latitude,Longitude,Altitude\n')
 
         numItems = self.locationTable.rowCount()
         
@@ -357,10 +363,13 @@ class TelemetryDialog(QDialog):
             outputFile.close()
             return
            
+        self.updateLock.acquire()
+        
         for i in range(0, numItems):
             outputFile.write(self.locationTable.item(i, 0).text() + ',"' + self.locationTable.item(i, 1).text() + '",' + self.locationTable.item(i, 2).text() + ',' + self.locationTable.item(i, 3).text())
-            outputFile.write(',' + self.locationTable.item(i, 4).text()+ ',' + self.locationTable.item(i, 5).text()+ ',' + self.locationTable.item(i, 6).text()+ ',' + self.locationTable.item(i, 7).text() + '\n')
+            outputFile.write(',' + self.locationTable.item(i, 4).text()+ ',' + self.locationTable.item(i, 5).text()+ ',' + self.locationTable.item(i, 6).text()+ ',' + self.locationTable.item(i, 7).text()  + '\n')
             
+        self.updateLock.release()
         outputFile.close()
         
     def saveFileDialog(self):    
@@ -450,7 +459,6 @@ class TelemetryDialog(QDialog):
             if self.lastSeen != curNet.lastSeen:
                 updateChartAndTable = True
         
-            
         if updateChartAndTable:
             # Update chart
             numPoints = len(self.timeSeries.pointsVector())
@@ -463,13 +471,11 @@ class TelemetryDialog(QDialog):
                     self.timeSeries.replace(counter, counter, curPoint.y())
                     counter += 1
                     
-            if curNet.signal <= 100:
+            if curNet.signal >= -100:
                 self.timeSeries.append(numPoints,curNet.signal)
             else:
-                self.timeSeries.append(numPoints,100)
+                self.timeSeries.append(numPoints,-100)
                 
-            
-            
             # Update Table
             self.addTableData(curNet)
             
@@ -528,7 +534,6 @@ class TelemetryDialog(QDialog):
         if numRows > 1:
             self.locationTable.scrollToItem(self.locationTable.item(0, 0))
 
-
     def onTableHeadingClicked(self, logical_index):
         header = self.locationTable.horizontalHeader()
         order = Qt.DescendingOrder
@@ -549,15 +554,208 @@ class TelemetryDialog(QDialog):
         dialog = TelemetryDialog(parent)
         result = dialog.exec_()
         return (result == QDialog.Accepted)
+
+class BluetoothTelemetry(TelemetryDialog):
+    def __init__(self, winTitle = "Bluetooth Telemetry", parent = None):
+        super().__init__(winTitle, parent)
+
+    def createTable(self):
+        # Set up location table
+        self.locationTable = QTableWidget(self)
+        self.locationTable.setColumnCount(10)
+        self.locationTable.setGeometry(10, 10, self.geometry().width()/2-20, self.geometry().height()/2)
+        self.locationTable.setShowGrid(True)
+        self.locationTable.setHorizontalHeaderLabels(['macAddr','Name', 'RSSI', 'TX Power', 'Est Range (m)', 'Timestamp','GPS', 'Latitude', 'Longitude', 'Altitude'])
+        self.locationTable.resizeColumnsToContents()
+        self.locationTable.setRowCount(0)
+        self.locationTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         
+        self.ntRightClickMenu = QMenu(self)
+        newAct = QAction('Copy', self)        
+        newAct.setStatusTip('Copy data to clipboard')
+        newAct.triggered.connect(self.onCopy)
+        self.ntRightClickMenu.addAction(newAct)
+        
+        self.locationTable.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.locationTable.customContextMenuRequested.connect(self.showNTContextMenu)
+                
+    def onStreamClicked(self, pressed):
+        if not self.btnStream.isChecked():
+            # We're coming out of streaming
+            self.streamingSave = False
+            self.btnStream.setStyleSheet("background-color: rgba(2,128,192,255);")
+            if (self.streamingFile):
+                self.streamingFile.close()
+                self.streamingFile = None
+            return
+            
+        self.btnStream.setStyleSheet("background-color: rgba(255,0,0,255);")
+        self.streamingSave = True
+        
+        fileName = self.saveFileDialog()
+
+        if not fileName:
+            self.btnStream.setStyleSheet("background-color: rgba(2,128,192,255);")
+            self.btnStream.setChecked(False)
+            return
+            
+        try:
+            self.streamingFile = open(fileName, 'w', 1)  # 1 says use line buffering, otherwise it fully buffers and doesn't write
+        except:
+            QMessageBox.question(self, 'Error',"Unable to write to " + fileName, QMessageBox.Ok)
+            self.streamingFile = None
+            self.streamingSave = False
+            self.btnStream.setStyleSheet("background-color: rgba(2,128,192,255);")
+            self.btnStream.setChecked(False)
+            return
+            
+        self.streamingFile.write('MAC Address,Name,RSSI,TX Power,Est Range (m),Timestamp,GPS,Latitude,Longitude,Altitude\n')
+                    
+    def onExportClicked(self):
+        fileName = self.saveFileDialog()
+
+        if not fileName:
+            return
+            
+        try:
+            outputFile = open(fileName, 'w')
+        except:
+            QMessageBox.question(self, 'Error',"Unable to write to " + fileName, QMessageBox.Ok)
+            return
+            
+        outputFile.write('MAC Address,Name,RSSI,TX Power,Est Range (m),Timestamp,GPS,Latitude,Longitude,Altitude\n')
+
+        numItems = self.locationTable.rowCount()
+        
+        if numItems == 0:
+            outputFile.close()
+            return
+           
+        self.updateLock.acquire()
+        
+        for i in range(0, numItems):
+            outputFile.write(self.locationTable.item(i, 0).text() + ',"' + self.locationTable.item(i, 1).text() + '",' + self.locationTable.item(i, 2).text() + ',' + self.locationTable.item(i, 3).text())
+            outputFile.write(',' + self.locationTable.item(i, 4).text()+ ',' + self.locationTable.item(i, 5).text()+ ',' + self.locationTable.item(i, 6).text()+ ',' + self.locationTable.item(i, 7).text() + 
+            ',' + self.locationTable.item(i, 8).text()+ ',' + self.locationTable.item(i, 9).text()  + '\n')
+            
+        self.updateLock.release()
+        outputFile.close()
+        
+    def updateNetworkData(self, curDevice):
+        if not self.isVisible():
+            return
+            
+        # Signal is -NN dBm.  Need to make it positive for the plot
+        self.radar.updateData(curDevice.rssi*-1)
+
+        if len(curDevice.name) > 0:
+            self.setWindowTitle(self.winTitle + " - " + curDevice.name)
+        else:
+            self.setWindowTitle(self.winTitle + " - " + curDevice.macAddress)
+            
+        self.radar.draw()
+        
+        #  Network changed.  Clear our table and time data
+        updateChartAndTable = False
+        
+        self.updateLock.acquire()
+        
+        if self.lastSeen != curDevice.lastSeen:
+            updateChartAndTable = True
+        
+        if updateChartAndTable:
+            # Update chart
+            numPoints = len(self.timeSeries.pointsVector())
+            
+            if numPoints >= self.maxPoints:
+                self.timeSeries.remove(0)
+                # Now we need to reset the x data to pull the series back
+                counter = 0
+                for curPoint in self.timeSeries.pointsVector():
+                    self.timeSeries.replace(counter, counter, curPoint.y())
+                    counter += 1
+                    
+            if curDevice.rssi >= -100:
+                self.timeSeries.append(numPoints,curDevice.rssi)
+            else:
+                self.timeSeries.append(numPoints,-100)
+                
+            # Update Table
+            self.addTableData(curDevice)
+            
+            # Limit points in each
+            if self.locationTable.rowCount() > self.maxRowPoints:
+                self.locationTable.setRowCount(self.maxRowPoints)
+            
+        self.updateLock.release()
+        
+    def addTableData(self, curDevice):
+        if self.paused:
+            return
+
+        # rowPosition = self.locationTable.rowCount()
+        # Always insert at row(0)
+        rowPosition = 0
+            
+        self.locationTable.insertRow(rowPosition)
+        
+        #if (addedFirstRow):
+        #    self.locationTable.setRowCount(1)
+            
+        # ['macAddr','name', 'rssi','tx power','est range (m)', 'Timestamp','GPS', 'Latitude', 'Longitude', 'Altitude']
+        self.locationTable.setItem(rowPosition, 0, QTableWidgetItem(curDevice.macAddress))
+        self.locationTable.setItem(rowPosition, 1, QTableWidgetItem(curDevice.name))
+        self.locationTable.setItem(rowPosition, 2,  IntTableWidgetItem(str(curDevice.rssi)))
+        
+        if curDevice.txPowerValid:
+            self.locationTable.setItem(rowPosition, 3,  IntTableWidgetItem(str(curDevice.txPower)))
+        else:
+            self.locationTable.setItem(rowPosition, 3,  IntTableWidgetItem('Unknown'))
+            
+        if curDevice.iBeaconRange != -1 and curDevice.txPowerValid:
+            self.locationTable.setItem(rowPosition, 4,  IntTableWidgetItem(str(curDevice.iBeaconRange)))
+        else:
+            self.locationTable.setItem(rowPosition, 4,  IntTableWidgetItem(str('Unknown')))
+            
+        self.locationTable.setItem(rowPosition, 5, DateTableWidgetItem(curDevice.lastSeen.strftime("%m/%d/%Y %H:%M:%S")))
+        if curDevice.gps.isValid:
+            self.locationTable.setItem(rowPosition, 6, QTableWidgetItem('Yes'))
+        else:
+            self.locationTable.setItem(rowPosition, 6, QTableWidgetItem('No'))
+
+        self.locationTable.setItem(rowPosition, 7,  FloatTableWidgetItem(str(curDevice.gps.latitude)))
+        self.locationTable.setItem(rowPosition, 8,  FloatTableWidgetItem(str(curDevice.gps.longitude)))
+        self.locationTable.setItem(rowPosition, 9,  FloatTableWidgetItem(str(curDevice.gps.altitude)))
+        #order = Qt.DescendingOrder
+        #self.locationTable.sortItems(3, order )
+                    
+
+        # If we're in streaming mode, write the data out to disk as well
+        if self.streamingFile:
+            self.streamingFile.write(self.locationTable.item(rowPosition, 0).text() + ',"' + self.locationTable.item(rowPosition, 1).text() + '",' + self.locationTable.item(rowPosition, 2).text() + ',' + 
+            self.locationTable.item(rowPosition, 3).text() + ',' + self.locationTable.item(rowPosition, 4).text()+ ',' + self.locationTable.item(rowPosition, 5).text()+ ',' +
+            self.locationTable.item(rowPosition, 6).text()+ ',' + self.locationTable.item(rowPosition, 7).text() + 
+            + ',' + self.locationTable.item(rowPosition, 8).text()+ ',' + self.locationTable.item(rowPosition, 9).text() + '\n')
+
+            if (self.currentLine > self.linesBeforeFlush):
+                self.streamingFile.flush()
+                self.currentLine += 1
+                    
+        numRows = self.locationTable.rowCount()
+        
+        if numRows > 1:
+            self.locationTable.scrollToItem(self.locationTable.item(0, 0))
+            
 # -------  Main Routine For Debugging-------------------------
 
 if __name__ == '__main__':
     app = QApplication([])
     # date, time, ok = DB2Dialog.getDateTime()
     # ok = TelemetryDialog.showTelemetry()
-    dialog = TelemetryDialog()
+    # dialog = TelemetryDialog()
+    dialog = BluetoothTelemetry()
     dialog.show()
     dialog.updateData(50)
     #print("{} {} {}".format(date, time, ok))
     app.exec_()
+

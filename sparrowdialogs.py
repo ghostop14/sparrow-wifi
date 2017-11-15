@@ -39,7 +39,7 @@ import os
 from sparrowmap import MapEngine
 from sparrowwifiagent import FileSystemFile
 from sparrowbluetooth import SparrowBluetooth, BluetoothDevice
-
+from telemetry import BluetoothTelemetry
 
 # ------------------  Global File Dialogs ------------------------------
 def openFileDialog(fileSpec="CSV Files (*.csv);;All Files (*)"):    
@@ -1118,6 +1118,8 @@ class BluetoothDialog(QDialog):
 
         self.updateWindowTitle()
 
+        self.telemetryWindows = {}
+        
         self.updateLock = Lock()
         self.telemetryWindows = {}
         self.bluetooth = bluetooth
@@ -1174,6 +1176,12 @@ class BluetoothDialog(QDialog):
         newAct.triggered.connect(self.onCopy)
         self.ntRightClickMenu.addAction(newAct)
 
+        self.ntRightClickMenu.addSeparator()
+        newAct = QAction('Telemetry', self)        
+        newAct.setStatusTip('View network telemetry data')
+        newAct.triggered.connect(self.onShowTelemetry)
+        self.ntRightClickMenu.addAction(newAct)
+
         self.btTableSortOrder = Qt.DescendingOrder
         self.btTableSortIndex = -1
  
@@ -1195,6 +1203,38 @@ class BluetoothDialog(QDialog):
             if self.mainWin.hasUbertooth and (not os.path.isfile('/opt/bluetooth/blue_hydra/bin/blue_hydra')):
                 QMessageBox.question(self, 'Error',"Blue Hydra not found at /opt/bluetooth/blue_hydra/bin/blue_hydra.  Promiscuous scans will fail.", QMessageBox.Ok)
 
+    def onShowTelemetry(self):
+        self.updateLock.acquire()
+        
+        curRow = self.bluetoothTable.currentRow()
+        
+        if curRow == -1:
+            self.updateLock.release()
+            return
+        
+        curNet = self.bluetoothTable.item(curRow, 0).data(Qt.UserRole)
+        
+        if curNet == None:
+            self.updateLock.release()
+            return
+       
+        if curNet.getKey() not in self.telemetryWindows.keys():
+            telemetryWindow = BluetoothTelemetry()
+            telemetryWindow.show()
+            self.telemetryWindows[curNet.getKey()] = telemetryWindow
+        else:
+            telemetryWindow = self.telemetryWindows[curNet.getKey()]
+        
+        # Can also key off of self.telemetryWindow.isVisible()
+        telemetryWindow.show()
+        telemetryWindow.activateWindow()
+        
+        # Can do telemetry window updates after release
+        self.updateLock.release()
+        
+        # User could have selected a different network.
+        telemetryWindow.updateNetworkData(curNet)            
+        
     def setLocal(self):
         self.usingRemoteAgent = False
         
@@ -1307,7 +1347,17 @@ class BluetoothDialog(QDialog):
         
     def closeEvent(self, event):
         self.btTimer.stop()
-        self.bluetooth.stopDiscovery()
+        
+        if not self.usingRemoteAgent:
+            self.bluetooth.stopDiscovery()
+
+        for curKey in self.telemetryWindows.keys():
+            curWindow = self.telemetryWindows[curKey]
+            try:
+                curWindow.close()
+                self.telemetryWindows[curKey] = None
+            except:
+                pass
         
         if self.mainWin:
             self.mainWin.bluetoothDiscoveryClosed.emit()
@@ -1428,6 +1478,11 @@ class BluetoothDialog(QDialog):
                                 self.bluetoothTable.item(curRow,10).setText('No')
                                 
                             self.bluetoothTable.item(curRow, 0).setData(Qt.UserRole, curDevice)
+
+                            # Check if we have a telemetry window
+                            if curDevice.getKey() in self.telemetryWindows.keys():
+                                telemetryWindow = self.telemetryWindows[curDevice.getKey()]
+                                telemetryWindow.updateNetworkData(curDevice)            
                             break
 
         addedNetworks = 0
