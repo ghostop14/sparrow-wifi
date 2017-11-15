@@ -36,6 +36,14 @@ if '..' not in sys.path:
 from sparrowcommon import BaseThreadClass, stringtobool
 from sparrowgps import SparrowGPS
 
+# ------------------ Global Functions --------------------------------------
+def toHex(val):
+    return format(val, "04x").upper()
+
+def hexSplit(string):
+    retVal = ' '
+    return retVal.join([string[i:i+2] for i in range(0, len(string), 2)])
+  
 # ------------------  Bluetooth Device Descriptor Class  ----------------------------------
 class BluetoothDevice(object):
     BT_CLASSIC = 1
@@ -573,6 +581,52 @@ class SparrowBluetooth(object):
             retVal += "Scan Running: No"+ '\n'
             
         return retVal
+   
+    def startBeacon(self, uuidOverride=""):
+      # The UUID below is the same as the iOS "Beacon Toolkit" app uses
+      # Can pass it any UUID as a parameter
+      
+        if len(uuidOverride) > 0:
+            uuid = uuidOverride
+        else:
+            uuid = 'E20A39F473F54BC4A12F17D1AD07A961'
+
+        # First reset
+        subprocess.run(['hciconfig', 'hci0', 'down'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        subprocess.run(['hciconfig', 'hci0', 'up'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        
+        # Turn on LE advertising
+        subprocess.run(['hciconfig', 'hci0', 'leadv'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        
+        # Turn off scanning
+        subprocess.run(['hciconfig', 'hci0', 'noscan'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        
+        # Issue command
+        majorhex = toHex(0)
+        minorhex = toHex(0)
+        powerhex = toHex(200)
+        
+        uuid_bytes = hexSplit(uuid).split(' ')
+        params = ['hcitool', '-i','hci0', 'cmd', '0x08','0x0008', '1E', '02', '01', '1A', '1A', 'FF', '4C', '00', '02', '15']
+        params = params + uuid_bytes
+        params.append(majorhex)
+        params.append(minorhex)
+        params.append(powerhex)
+        params.append('00')
+        
+        subprocess.run(params, stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        
+    
+    def stopBeacon(self):
+        # Stop LE advertisement
+        subprocess.run(['hciconfig', 'hci0', 'noleadv'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        
+        # Re-enable scan
+        subprocess.run(['hciconfig', 'hci0', 'piscan'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        
+        # Reset device
+        subprocess.run(['hciconfig', 'hci0', 'down'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        subprocess.run(['hciconfig', 'hci0', 'up'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         
     def discoveryRunning(self):
         if self.blueHydraProc:
@@ -992,5 +1046,8 @@ if __name__ == '__main__':
     bt=SparrowBluetooth()
 
     print(bt)
-    
+
+    bt.startBeacon()
+    sleep(5)
+    bt.stopBeacon()
     # testSpectrum()

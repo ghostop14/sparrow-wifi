@@ -534,6 +534,8 @@ class mainWindow(QMainWindow):
         
         self.btShowSpectrum = False
         self.btLastSpectrumState = False
+        self.btLastBeaconState = False
+        self.btBeacon = False
         self.btSpectrumTimer = QTimer()
         self.btSpectrumTimeout = 200
         self.btSpectrumTimer.timeout.connect(self.onSpectrumTimer)
@@ -985,16 +987,25 @@ class mainWindow(QMainWindow):
         
         # Bluetooth
         ViewMenu = menubar.addMenu('&Bluetooth')
+        self.menuBtSpectrumGain = QAction('Spectrum Analyzer Gain', self)        
+        self.menuBtSpectrumGain.setStatusTip("Manually override gain to better match spectrum with wifi adapter")
+        self.menuBtSpectrumGain.triggered.connect(self.onBtSpectrumOverrideGain)
+        ViewMenu.addAction(self.menuBtSpectrumGain)
+        
         self.menuBtSpectrum = QAction('2.4 GHz Spectrum Analyzer via Ubertooth', self)        
         self.menuBtSpectrum.setStatusTip("Use Ubertooth for 2.4 GHz spectrum analyzer. NOTE: Wireless cards may have different gain, so results may vary.")
         self.menuBtSpectrum.setCheckable(True)
         self.menuBtSpectrum.triggered.connect(self.onBtSpectrumAnalyzer)
         ViewMenu.addAction(self.menuBtSpectrum)
+        
+        ViewMenu.addSeparator()
+        self.menuBtBeacon = QAction('iBeacon Mode', self)        
+        self.menuBtBeacon.setStatusTip("Become an iBeacon")
+        self.menuBtBeacon.setCheckable(True)
+        self.menuBtBeacon.triggered.connect(self.onBtBeacon)
+        ViewMenu.addAction(self.menuBtBeacon)
 
-        self.menuBtSpectrumGain = QAction('Spectrum Analyzer Gain', self)        
-        self.menuBtSpectrumGain.setStatusTip("Manually override gain to better match spectrum with wifi adapter")
-        self.menuBtSpectrumGain.triggered.connect(self.onBtSpectrumOverrideGain)
-        ViewMenu.addAction(self.menuBtSpectrumGain)
+        ViewMenu.addSeparator()
         
         self.menuBtBluetooth = QAction('Bluetooth Discovery', self)        
         self.menuBtBluetooth.setStatusTip("Find bluetooth devices.  Basic discovery or Ubertooth depending on hardware.")
@@ -1124,7 +1135,88 @@ class mainWindow(QMainWindow):
             self.chart24.addSeries(self.spectrumLine)
             self.spectrumLine.attachAxis(self.chart24.axisX())
             self.spectrumLine.attachAxis(self.chart24.axisY())
-        
+
+    def onBtBeacon(self):
+        if (self.menuBtBeacon.isChecked() == self.btLastBeaconState):
+            # There's an extra bounce in this for some reason.
+            return
+
+        if (not self.remoteAgentUp):
+            # Local
+            if self.bluetooth.discoveryRunning():
+                reply = QMessageBox.question(self, 'Question',"Bluetooth hardware is being used for discovery.  Would you like to stop it?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+                if reply == QMessageBox.Yes:
+                    self.bluetooth.stopDiscovery()
+                else:
+                    self.menuBtBeacon.setChecked(False)
+                    self.btBeacon = False
+                    self.btLastBeaconState = False
+                    return
+            
+            if self.btShowSpectrum:
+                reply = QMessageBox.question(self, 'Question',"Bluetooth hardware is being used for spectrum.  Would you like to stop it?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+                if reply == QMessageBox.Yes:
+                    self.stopSpectrumLine()
+                else:
+                    self.menuBtBeacon.setChecked(False)
+                    self.btBeacon = False
+                    self.btLastBeaconState = False
+                    return
+                    
+            self.btBeacon = self.menuBtBeacon.isChecked()
+            self.btLastBeaconState = self.btBeacon
+            
+            if self.btBeacon:
+                self.bluetooth.startBeacon()
+            else:
+                self.bluetooth.stopBeacon()
+        else:
+            # Remote
+            errcode, errmsg, self.hasRemoteBluetooth, self.hasRemoteUbertooth, scanRunning, discoveryRunning = getRemoteBluetoothRunningServices(self.remoteAgentIP, self.remoteAgentPort)
+            
+            if errcode == 0:
+                if discoveryRunning:
+                    reply = QMessageBox.question(self, 'Question',"Bluetooth hardware is being used for discovery.  Would you like to stop it?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+                    if reply == QMessageBox.Yes:
+                        pass
+                        # Stop remote discovery here
+                    else:
+                        self.menuBtSpectrum.setChecked(False)
+                        self.btShowSpectrum = False
+                        self.btLastSpectrumState = False
+                        return
+
+            if self.btShowSpectrum:
+                reply = QMessageBox.question(self, 'Question',"Bluetooth hardware is being used for spectrum.  Would you like to stop it?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if reply == QMessageBox.Yes:
+                    self.stopSpectrumLine()
+                    errcode, errmsg = stopRemoteBluetoothScan(self.remoteAgentIP, self.remoteAgentPort)
+                    if errcode != 0:
+                        self.statusBar().showMessage(errmsg)
+                        self.menuBtSpectrum.setChecked(False)
+                        self.btShowSpectrum = False
+                        self.btLastSpectrumState = False
+                        self.btSpectrumTimer.stop()
+                        return
+                else:
+                    self.menuBtBeacon.setChecked(False)
+                    self.btBeacon = False
+                    self.btLastBeaconState = False
+                    return
+                
+            self.btBeacon = self.menuBtBeacon.isChecked()
+            self.btLastBeaconState = self.btBeacon
+
+            if self.btBeacon:
+                # Call agent here
+                pass
+            else:
+                # Call agent here
+                pass
+                
     def onBtBluetooth(self):
         if not self.bluetoothWin:
             # Check if we have other bluetooth functions running, if so give the user a chance to decide what to do
@@ -1140,8 +1232,13 @@ class mainWindow(QMainWindow):
                     else:
                         return
                         
-                # Handle this with a button on the bluetooth window now
-                # self.bluetooth.startDiscovery()
+                if self.btBeacon:
+                    reply = QMessageBox.question(self, 'Question',"Bluetooth hardware is being used for beaconing.  Would you like to stop it?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+                    if reply == QMessageBox.Yes:
+                        self.bluetooth.stopBeacon()
+                    else:
+                        return
             else:
                 errcode, errmsg, self.hasRemoteBluetooth, self.hasRemoteUbertooth, scanRunning, discoveryRunning = getRemoteBluetoothRunningServices(self.remoteAgentIP, self.remoteAgentPort)
                 if scanRunning:
@@ -1177,6 +1274,17 @@ class mainWindow(QMainWindow):
 
                 if reply == QMessageBox.Yes:
                     self.bluetooth.stopDiscovery()
+                else:
+                    self.menuBtSpectrum.setChecked(False)
+                    self.btShowSpectrum = False
+                    self.btLastSpectrumState = False
+                    return
+                    
+            if self.btBeacon:
+                reply = QMessageBox.question(self, 'Question',"Bluetooth hardware is being used for beaconing.  Would you like to stop it?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+                if reply == QMessageBox.Yes:
+                    self.bluetooth.stopBeacon()
                 else:
                     self.menuBtSpectrum.setChecked(False)
                     self.btShowSpectrum = False
@@ -2873,6 +2981,9 @@ class mainWindow(QMainWindow):
             self.bluetoothWin.close()
             self.bluetoothWin = None
         
+        if self.btBeacon:
+            self.bluetooth.stopBeacon()
+                
         if self.agentListenerWindow:
             self.agentListenerWindow.close()
             self.agentListenerWindow = None
