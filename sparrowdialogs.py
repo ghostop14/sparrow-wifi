@@ -40,6 +40,8 @@ from sparrowmap import MapEngine
 from sparrowwifiagent import FileSystemFile
 from sparrowbluetooth import SparrowBluetooth, BluetoothDevice
 from telemetry import BluetoothTelemetry
+from sparrowmap import MapMarker
+from wirelessengine import WirelessEngine
 
 # ------------------  Global File Dialogs ------------------------------
 def openFileDialog(fileSpec="CSV Files (*.csv);;All Files (*)"):    
@@ -1151,6 +1153,11 @@ class BluetoothDialog(QDialog):
         self.btnScan.setGeometry(298, 12, 120, 27)
         self.btnScan.clicked[bool].connect(self.onScanClicked)
 
+        # Map Button
+        self.btnMap = QPushButton("&Map", self)
+        self.btnMap.setStyleSheet("background-color: rgba(0,128,192,255);")
+        self.btnMap.clicked.connect(self.onMap)
+        
         # Export Button
         self.btnExport = QPushButton("&Export", self)
         self.btnExport.setStyleSheet("background-color: rgba(0,128,192,255);")
@@ -1390,8 +1397,16 @@ class BluetoothDialog(QDialog):
         # self.statusBar().showMessage('Window resized.')
         # return super(mainWin, self).resizeEvent(event)
         size = self.geometry()
+
+        if size.width() < 500:
+            self.setGeometry(size.x(), size.y(), 800, size.height())
+        
+        size = self.geometry()
+        
         self.bluetoothTable.setGeometry(10, 50, size.width()-20, size.height()-60)
+        
         self.btnExport.setGeometry(size.width()-130, 10, 120, 25)
+        self.btnMap.setGeometry(size.width()-280, 10, 120, 25)
 
     def showNTContextMenu(self, pos):
         curRow = self.bluetoothTable.currentRow()
@@ -1544,7 +1559,7 @@ class BluetoothDialog(QDialog):
                     
                 self.bluetoothTable.setItem(rowPosition, 9, DateTableWidgetItem(curDevice.lastSeen.strftime("%m/%d/%Y %H:%M:%S")))
                 if (curDevice.gps.isValid):
-                    self.bluetoothTable.setItem(rowPosition,9, QTableWidgetItem('Yes'))
+                    self.bluetoothTable.setItem(rowPosition,10, QTableWidgetItem('Yes'))
                 else:
                     self.bluetoothTable.setItem(rowPosition,10, QTableWidgetItem('No'))
                 
@@ -1553,6 +1568,87 @@ class BluetoothDialog(QDialog):
                 self.bluetoothTable.sortItems(self.btTableSortIndex, self.btTableSortOrder )
 
         self.updateLock.release()
+        
+    def onMap(self):
+        rowPosition = self.bluetoothTable.rowCount()
+
+        if rowPosition <= 0:
+            QMessageBox.question(self, 'Error',"There's no devices in the table.  Please run a scan first.", QMessageBox.Ok)
+            return
+            
+        mapSettings, ok = MapSettingsDialog.getSettings()
+
+        if not ok:
+            return
+            
+        if len(mapSettings.outputfile) == 0:
+            QMessageBox.question(self, 'Error',"Please provide an output file.", QMessageBox.Ok)
+            return
+            
+        markerDict = {}
+        markers = []
+        
+        # Range goes to last # - 1
+        for curRow in range(0, rowPosition):
+            try:
+                curData = self.bluetoothTable.item(curRow, 0).data(Qt.UserRole)
+            except:
+                curData = None
+            
+            if (curData):
+                newMarker = MapMarker()
+                
+                if len(curData.name) > 0:
+                    newMarker.label = curData.name
+                else:
+                    newMarker.label = curData.macAddress
+                    
+                newMarker.label = newMarker.label[:mapSettings.maxLabelLength]
+                
+                if mapSettings.plotstrongest:
+                    if curData.strongestgps.isValid:
+                        newMarker.gpsValid = True
+                        newMarker.latitude = curData.strongestgps.latitude
+                        newMarker.longitude = curData.strongestgps.longitude
+                    else:
+                        newMarker.gpsValid = False
+                        newMarker.latitude = 0.0
+                        newMarker.longitude = 0.0
+                        
+                    newMarker.barCount = WirelessEngine.getSignalQualityFromDB0To5(curData.strongestRssi)
+                else:
+                    if curData.gps.isValid:
+                        newMarker.gpsValid = True
+                        newMarker.latitude = curData.gps.latitude
+                        newMarker.longitude = curData.gps.longitude
+                    else:
+                        newMarker.gpsValid = False
+                        newMarker.latitude = 0.0
+                        newMarker.longitude = 0.0
+                        
+                    newMarker.barCount = WirelessEngine.getSignalQualityFromDB0To5(curData.rssi)
+                
+                markerKey = newMarker.getKey()
+                if markerKey in markerDict:
+                    curMarker = markerDict[markerKey]
+                    curMarker.addLabel(newMarker.label)
+                    if curMarker.barCount > newMarker.barCount:
+                        curMarker.barCount = newMarker.barCount
+                else:
+                    # Move label to list
+                    newMarker.addLabel(newMarker.label)
+                    newMarker.label = ''
+                    markerDict[markerKey] = newMarker
+
+        # Now send consolidated list
+        for curKey in markerDict.keys():
+            markers.append(markerDict[curKey])
+        
+        if len(markers) > 0:
+            retVal = MapEngine.createMap(mapSettings.outputfile,mapSettings.title,markers, connectMarkers=False, openWhenDone=True, mapType=mapSettings.mapType)
+            
+            if not retVal:
+                QMessageBox.question(self, 'Error',"Unable to generate map to " + mapSettings.outputfile, QMessageBox.Ok)
         
     def onExportClicked(self):
         fileName = saveFileDialog()

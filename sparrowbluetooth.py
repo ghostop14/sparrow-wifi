@@ -428,13 +428,17 @@ class BtmonThread(BaseThreadClass):
             # Event Type
             # eventType = self.getFieldValue(p_eventType, curLine)
                 
+            # TX Power
             fieldValue = self.getFieldValue(p_txpower, curLine)
                 
             if (len(fieldValue) > 0):
-                # This will start a new bluetooth device
+                # This will start a new bluetooth
                 try:
                     tmpPower = int(fieldValue)
-                    if tmpPower != 0:
+                    
+                    # If there's an error in the data or pattern rec,
+                    # There's no way "Low Energy" would transmit with 0+ dBm.  That's not LE.
+                    if tmpPower < 0:
                         curDevice.txPower = tmpPower
                         curDevice.txPowerValid = True
                 except:
@@ -447,6 +451,7 @@ class BtmonThread(BaseThreadClass):
                 # This will start a new bluetooth device
                 try:
                     curDevice.rssi = int(fieldValue)
+                    curDevice.strongestRssi = curDevice.rssi
                     curDevice.calcRange()
                 except:
                     pass

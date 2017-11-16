@@ -1686,7 +1686,6 @@ class mainWindow(QMainWindow):
                 curData = None
             
             if (curData):
-                gpsValid = False
                 newMarker = MapMarker()
                 
                 newMarker.label = WirelessEngine.convertUnknownToString(curData.ssid)
@@ -1694,7 +1693,6 @@ class mainWindow(QMainWindow):
                 
                 if mapSettings.plotstrongest:
                     if curData.strongestgps.isValid:
-                        gpsValid = True
                         newMarker.gpsValid = True
                         newMarker.latitude = curData.strongestgps.latitude
                         newMarker.longitude = curData.strongestgps.longitude
@@ -1706,7 +1704,6 @@ class mainWindow(QMainWindow):
                     newMarker.barCount = WirelessEngine.getSignalQualityFromDB0To5(curData.strongestsignal)
                 else:
                     if curData.gps.isValid:
-                        gpsValid = True
                         newMarker.gpsValid = True
                         newMarker.latitude = curData.gps.latitude
                         newMarker.longitude = curData.gps.longitude
