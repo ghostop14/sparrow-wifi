@@ -30,6 +30,7 @@ from dateutil import parser
 import json
 import math # sqrt
 import sqlite3
+import uuid
 
 if '..' not in sys.path:
     sys.path.insert(0, '..')
@@ -590,13 +591,16 @@ class SparrowBluetooth(object):
         return retVal
    
     def startBeacon(self, uuidOverride=""):
-      # The UUID below is the same as the iOS "Beacon Toolkit" app uses
-      # Can pass it any UUID as a parameter
-      
+        # Can gen a uuid with uuid.uuid4().hex
+        
         if len(uuidOverride) > 0:
-            uuid = uuidOverride
+            struuid = uuidOverride
         else:
-            uuid = 'E20A39F473F54BC4A12F17D1AD07A961'
+          # The UUID below is the same as the iOS "Beacon Toolkit" app uses
+          # Can pass it any UUID as a parameter
+          
+            # uuid = 'E20A39F473F54BC4A12F17D1AD07A961'
+            struuid = uuid.uuid4().hex
 
         # First reset
         subprocess.run(['hciconfig', 'hci0', 'down'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -613,7 +617,7 @@ class SparrowBluetooth(object):
         minorhex = toHex(0)
         powerhex = toHex(200)
         
-        uuid_bytes = hexSplit(uuid).split(' ')
+        uuid_bytes = hexSplit(struuid).split(' ')
         params = ['hcitool', '-i','hci0', 'cmd', '0x08','0x0008', '1E', '02', '01', '1A', '1A', 'FF', '4C', '00', '02', '15']
         params = params + uuid_bytes
         params.append(majorhex)
@@ -1060,8 +1064,6 @@ if __name__ == '__main__':
         for curProc in specanProcesses:
             print(curProc)
             
-        exit(0)
-        
     bt=SparrowBluetooth()
 
     print(bt)
