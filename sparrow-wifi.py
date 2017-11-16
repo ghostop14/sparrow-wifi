@@ -337,6 +337,9 @@ class Divider(QFrame):
         super().__init__(parent)
         self.mainWin = parent
         
+    def enterEvent(self, event):
+        self.setCursor(Qt.SplitVCursor)
+        
     def mouseMoveEvent(self, event):
         if event.buttons() == Qt.LeftButton:
             newPos = self.mapToParent(event.pos())
