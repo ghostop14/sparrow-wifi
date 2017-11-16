@@ -550,6 +550,8 @@ class SparrowBluetooth(object):
         self.devices = {}
         self.scanType = SparrowBluetooth.SCANTYPE_BLUEHYDRA
         
+        self.beaconActive = False
+        
         self.hasBluetooth = False
         self.hasUbertooth = False
         self.hasBlueHydra = False
@@ -614,7 +616,14 @@ class SparrowBluetooth(object):
         params.append(powerhex)
         params.append('00')
         
-        subprocess.run(params, stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        result = subprocess.run(params, stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        
+        if result.returncode == 0:
+            self.beaconActive = True
+        else:
+            self.beaconActive = False
+            
+        return self.beaconActive
         
     
     def stopBeacon(self):
@@ -627,6 +636,11 @@ class SparrowBluetooth(object):
         # Reset device
         subprocess.run(['hciconfig', 'hci0', 'down'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         subprocess.run(['hciconfig', 'hci0', 'up'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        
+        self.beaconActive = False
+     
+    def beaconRunning(self):
+        return self.beaconActive
         
     def discoveryRunning(self):
         if self.blueHydraProc:

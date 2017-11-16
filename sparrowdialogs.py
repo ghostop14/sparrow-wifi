@@ -65,7 +65,8 @@ def saveFileDialog(fileSpec="CSV Files (*.csv);;All Files (*)"):
 # ------------------  Global functions for agent HTTP requests ------------------------------
 def makeGetRequest(url):
     try:
-        response = requests.get(url)
+        # Not using a timeout can cause the request to hang indefinitely
+        response = requests.get(url, timeout=2)
     except:
         return -1, ""
         
@@ -254,7 +255,7 @@ def stopRecord(agentIP, agentPort):
 def makePostRequest(url, jsonstr):
         # use something like jsonstr = json.dumps(somestring) to get the right format
         try:
-            response = requests.post(url, data=jsonstr)
+            response = requests.post(url, data=jsonstr, timeout=2)
         except:
             return -1, ""
         
@@ -1139,10 +1140,8 @@ class BluetoothDialog(QDialog):
         
         self.comboScanType = QComboBox(self)
         self.comboScanType.move(90, 15)
-        
-        if self.mainWin.hasUbertooth:
-            self.comboScanType.addItem('Promiscuous Discovery')
-        self.comboScanType.addItem('LE Advertisement Discovery')
+
+        self.fillScanTypes()
 
         # Scan Button
         self.btnScan = QPushButton("&Scan", self)
@@ -1203,6 +1202,21 @@ class BluetoothDialog(QDialog):
             if self.mainWin.hasUbertooth and (not os.path.isfile('/opt/bluetooth/blue_hydra/bin/blue_hydra')):
                 QMessageBox.question(self, 'Error',"Blue Hydra not found at /opt/bluetooth/blue_hydra/bin/blue_hydra.  Promiscuous scans will fail.", QMessageBox.Ok)
 
+    def fillScanTypes(self):
+        self.comboScanType.clear()
+        
+        if not self.usingRemoteAgent:
+            # Local
+            if self.mainWin.hasUbertooth:
+                self.comboScanType.addItem('Promiscuous Discovery')
+                
+            self.comboScanType.addItem('LE Advertisement Discovery')
+        else:
+            if self.mainWin.hasRemoteUbertooth:
+                self.comboScanType.addItem('Promiscuous Discovery')
+                
+            self.comboScanType.addItem('LE Advertisement Discovery')
+            
     def onShowTelemetry(self):
         self.updateLock.acquire()
         
@@ -1242,12 +1256,19 @@ class BluetoothDialog(QDialog):
         self.btnScan.setStyleSheet("background-color: rgba(2,128,192,255); border: none;")
         self.btnScan.setText('&Scan')
         self.comboScanType.setEnabled(True)
+        self.fillScanTypes()
         
     def setRemoteAgent(self, agentIP, agentPort):
         self.usingRemoteAgent = True
         self.remoteAgentIP = agentIP
         self.remoteAgentPort = agentPort
 
+        # Check if we're running local.  If so stop it
+        if self.bluetooth.discoveryRunning():
+            self.bluetooth.stopDiscovery()
+
+        self.fillScanTypes()
+        
         self.updateWindowTitle()
         self.checkScanAlreadyRunning()
 

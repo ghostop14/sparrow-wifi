@@ -1131,6 +1131,8 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                                   '/bluetooth/scanstop',  
                                   '/bluetooth/scanstatus',  
                                   '/bluetooth/running', 
+                                  '/bluetooth/beaconstart', 
+                                  '/bluetooth/beaconstop', 
                                   '/bluetooth/discoverystartp', 
                                   '/bluetooth/discoverystarta', 
                                   '/bluetooth/discoverystop', 
@@ -1425,6 +1427,38 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     
                 jsonstr = json.dumps(responsedict)
                 s.wfile.write(jsonstr.encode("UTF-8"))
+        elif s.path.startswith('/bluetooth/beacon'):
+            if not hasBluetooth:
+                responsedict = {}
+                responsedict['errcode'] = 1
+                responsedict['errmsg'] = 'Bluetooth not supported on this agent'
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            else:
+                function=s.path.replace('/bluetooth/beacon', '')
+                function = function.replace('/', '')
+                
+                responsedict = {}
+                responsedict['errcode'] = 0
+                responsedict['errmsg'] = ''
+                
+                if function=='start':
+                    if bluetooth.discoveryRunning():
+                        bluetooth.stopDiscovery()
+
+                    retVal = bluetooth.startBeacon()
+                    
+                    if not retVal:
+                        responsedict['errcode'] = 1
+                        responsedict['errmsg'] = 'Unable to start beacon.'
+                elif function == 'stop':
+                    bluetooth.stopBeacon()
+                else:
+                    responsedict['errcode'] = 1
+                    responsedict['errmsg'] = 'Unknown command'
+                    
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
         elif s.path.startswith('/bluetooth/scan'):
             if not hasBluetooth:
                 responsedict = {}
@@ -1494,7 +1528,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     
                 jsonstr = json.dumps(responsedict)
                 s.wfile.write(jsonstr.encode("UTF-8"))
-        elif s.path.startswith('/bluetooth/running'):
+        elif s.path == '/bluetooth/running':
             if not hasBluetooth:
                 responsedict = {}
                 responsedict['errcode'] = 1
@@ -1503,6 +1537,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 responsedict['hasubertooth'] = hasUbertooth
                 responsedict['spectrumscanrunning'] = False
                 responsedict['discoveryscanrunning'] = False
+                responsedict['beaconrunning'] = False
                 jsonstr = json.dumps(responsedict)
                 s.wfile.write(jsonstr.encode("UTF-8"))
             else:
@@ -1514,6 +1549,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 responsedict['hasubertooth'] = hasUbertooth
                 responsedict['spectrumscanrunning'] = bluetooth.scanRunning()
                 responsedict['discoveryscanrunning'] = bluetooth.discoveryRunning()
+                responsedict['beaconrunning'] = bluetooth.beaconRunning()
                 
                 jsonstr = json.dumps(responsedict)
                 s.wfile.write(jsonstr.encode("UTF-8"))

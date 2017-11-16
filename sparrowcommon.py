@@ -19,6 +19,7 @@
 # 
 from threading import Thread
 from time import sleep
+import socket
 
 # ------------------  Global functions ------------------------------
 def stringtobool(instr):
@@ -27,6 +28,37 @@ def stringtobool(instr):
     else:
         return False
         
+def portOpen(host, port):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(1) 
+    try:
+        result = sock.connect_ex((host,port))
+        if result == 0:
+                return True
+        else:
+                return False
+    except:
+        return False
+        
+def ping(host):
+    # Returns True if host responds to a ping request
+
+    # Ping parameters as function of OS
+    ping_str = "-n 1" if  platform.system().lower()=="windows" else "-c 1"
+    args = "ping " + " " + ping_str + " " + host
+    need_sh = False if  platform.system().lower()=="windows" else True
+
+    # Ping
+    retVal = False
+    
+    # Note: Python automatically calls close at the end of the block.
+    try:
+        with open("/dev/null","a") as f:
+            retVal = subprocess.call(args, shell=need_sh, stdout=f) == 0
+    except:
+        pass
+
+    return retVal
 # ------------------  Class Base Thread ----------------------------------
 class BaseThreadClass(Thread):
     def __init__(self):
@@ -55,3 +87,10 @@ class BaseThreadClass(Thread):
         while self.threadRunning and i < maxIterations:
             sleep(0.1)
             i += 1
+
+if __name__ == '__main__':
+    pass
+    if portOpen('127.0.0.1', 80):
+        print('Port open.')
+    else:
+        print('Port closed.')

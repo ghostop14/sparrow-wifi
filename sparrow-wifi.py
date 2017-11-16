@@ -43,7 +43,7 @@ from PyQt5 import QtCore
 
 # from PyQt5.QtCore import QCoreApplication # programatic quit
 from wirelessengine import WirelessEngine, WirelessNetwork
-from sparrowcommon import BaseThreadClass
+from sparrowcommon import BaseThreadClass, portOpen
 from sparrowgps import GPSEngine, GPSStatus, SparrowGPS
 from telemetry import TelemetryDialog
 from sparrowtablewidgets import IntTableWidgetItem, DateTableWidgetItem
@@ -101,9 +101,10 @@ def stringtobool(instr):
         return False
 
 # ------------------  Global functions for agent HTTP requests ------------------------------
-def makeGetRequest(url):
+def makeGetRequest(url, waitTimeout=2):
     try:
-        response = requests.get(url)
+        # Not using a timeout can cause the request to hang indefinitely
+        response = requests.get(url, timeout=waitTimeout)
     except:
         return -1, ""
         
@@ -130,6 +131,39 @@ def remoteHasBluetooth(agentIP, agentPort):
             return -1, 'Error parsing response', False, False
     else:
             return -2, 'Bad response from agent [' + str(statusCode) + ']', False, False
+
+# Beacon calls
+def startRemoteBluetoothBeacon(agentIP, agentPort):
+    url = "http://" + agentIP + ":" + str(agentPort) + "/bluetooth/beaconstart"
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            responsedict = json.loads(responsestr)
+            errcode = responsedict['errcode']
+            errmsg = responsedict['errmsg']
+            return errcode, errmsg
+        except:
+            return -1, 'Error parsing response'
+    else:
+            return -2, 'Bad response from agent [' + str(statusCode) + ']'
+        
+def stopRemoteBluetoothBeacon(agentIP, agentPort):
+    url = "http://" + agentIP + ":" + str(agentPort) + "/bluetooth/beaconstop"
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            responsedict = json.loads(responsestr)
+            errcode = responsedict['errcode']
+            errmsg = responsedict['errmsg']
+            return errcode, errmsg
+        except:
+            return -1, 'Error parsing response'
+    else:
+            return -2, 'Bad response from agent [' + str(statusCode) + ']'
+
+        
 
 # These scan functions are for the spectrum, not discovery        
 def startRemoteBluetoothScan(agentIP, agentPort):
@@ -176,12 +210,13 @@ def getRemoteBluetoothRunningServices(agentIP, agentPort):
             hasUbertooth = responsedict['hasubertooth']
             spectrumScanRunning = responsedict['spectrumscanrunning']
             discoveryScanRunning = responsedict['discoveryscanrunning']
+            beaconRunning = responsedict['beaconrunning']
             
-            return errcode, errmsg, hasBluetooth, hasUbertooth, spectrumScanRunning, discoveryScanRunning
+            return errcode, errmsg, hasBluetooth, hasUbertooth, spectrumScanRunning, discoveryScanRunning, beaconRunning
         except:
-            return -1, 'Error parsing response', False, False, False, False
+            return -1, 'Error parsing response', False, False, False, False, False
     else:
-            return -2, 'Bad response from agent [' + str(statusCode) + ']', False, False, False, False
+            return -2, 'Bad response from agent [' + str(statusCode) + ']', False, False, False, False, False
         
 def getRemoteBluetoothScanSpectrum(agentIP, agentPort):
     url = "http://" + agentIP + ":" + str(agentPort) + "/bluetooth/scanstatus"
@@ -278,7 +313,8 @@ def requestRemoteNetworks(remoteIP, remotePort, remoteInterface, channelList=Non
     if url.endswith(','):
         url = url[:-1]
         
-    statusCode, responsestr = makeGetRequest(url)
+    # Pass a higher timeout since the scan may take a bit
+    statusCode, responsestr = makeGetRequest(url, 20)
     
     if statusCode == 200:
         try:
@@ -1030,14 +1066,12 @@ class mainWindow(QMainWindow):
         newAct.setStatusTip('About')
         newAct.triggered.connect(self.onAbout)
         helpMenu.addAction(newAct)
-        #newMenu = QMenu('New', self)
-        #actNewSqlite = QAction('New SQLite', self) 
-        #actNewPostgres = QAction('New Postgres', self) 
-        #newMenu.addAction(actNewSqlite)
-        #newMenu.addAction(actNewpostgres)
-        # fileMenu.addMenu(newMenu)
 
     def setBluetoothMenu(self):
+        self.menuBtBeacon.setEnabled(True)
+        self.menuBtSpectrum.setEnabled(True)
+        self.menuBtSpectrumGain.setEnabled(True)
+        
         if not self.remoteAgentUp:
             # Local
             if not self.hasUbertooth:
@@ -1045,12 +1079,14 @@ class mainWindow(QMainWindow):
                 self.menuBtSpectrumGain.setEnabled(False)
             if not self.hasBluetooth:
                 self.menuBtBluetooth.setEnabled(False)
+                self.menuBtBeacon.setEnabled(False)
         else:
             if not self.hasRemoteUbertooth:
                 self.menuBtSpectrum.setEnabled(False)
                 self.menuBtSpectrumGain.setEnabled(False)
             if not self.hasRemoteBluetooth:
                 self.menuBtBluetooth.setEnabled(False)
+                self.menuBtBeacon.setEnabled(False)
             
     def createCharts(self):
         self.chart24 = QChart()
@@ -1174,7 +1210,7 @@ class mainWindow(QMainWindow):
                 self.bluetooth.stopBeacon()
         else:
             # Remote
-            errcode, errmsg, self.hasRemoteBluetooth, self.hasRemoteUbertooth, scanRunning, discoveryRunning = getRemoteBluetoothRunningServices(self.remoteAgentIP, self.remoteAgentPort)
+            errcode, errmsg, self.hasRemoteBluetooth, self.hasRemoteUbertooth, scanRunning, discoveryRunning, beaconRunning = getRemoteBluetoothRunningServices(self.remoteAgentIP, self.remoteAgentPort)
             
             if errcode == 0:
                 if discoveryRunning:
@@ -1184,9 +1220,9 @@ class mainWindow(QMainWindow):
                         pass
                         # Stop remote discovery here
                     else:
-                        self.menuBtSpectrum.setChecked(False)
-                        self.btShowSpectrum = False
-                        self.btLastSpectrumState = False
+                        self.menuBtBeacon.setChecked(False)
+                        self.btBeacon = False
+                        self.btLastBeaconState = False
                         return
 
             if self.btShowSpectrum:
@@ -1212,10 +1248,20 @@ class mainWindow(QMainWindow):
 
             if self.btBeacon:
                 # Call agent here
-                pass
+                errcode, errmsg = startRemoteBluetoothBeacon(self.remoteAgentIP, self.remoteAgentPort)
+                if errcode != 0:
+                    self.statusBar().showMessage(errmsg)
+                    self.menuBtBeacon.setChecked(False)
+                    self.btBeacon = False
+                    self.btLastBeaconState = False
             else:
                 # Call agent here
-                pass
+                errcode, errmsg = stopRemoteBluetoothBeacon(self.remoteAgentIP, self.remoteAgentPort)
+                if errcode != 0:
+                    self.statusBar().showMessage(errmsg)
+                    self.menuBtBeacon.setChecked(False)
+                    self.btBeacon = False
+                    self.btLastBeaconState = False
                 
     def onBtBluetooth(self):
         if not self.bluetoothWin:
@@ -1240,7 +1286,7 @@ class mainWindow(QMainWindow):
                     else:
                         return
             else:
-                errcode, errmsg, self.hasRemoteBluetooth, self.hasRemoteUbertooth, scanRunning, discoveryRunning = getRemoteBluetoothRunningServices(self.remoteAgentIP, self.remoteAgentPort)
+                errcode, errmsg, self.hasRemoteBluetooth, self.hasRemoteUbertooth, scanRunning, discoveryRunning, beaconRunning = getRemoteBluetoothRunningServices(self.remoteAgentIP, self.remoteAgentPort)
                 if scanRunning:
                     reply = QMessageBox.question(self, 'Question',"Bluetooth hardware is being used for spectrum scanning.  Would you like to stop it?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
 
@@ -1293,7 +1339,8 @@ class mainWindow(QMainWindow):
                     
             errcode = 0
         else:
-            errcode, errmsg, self.hasRemoteBluetooth, self.hasRemoteUbertooth, scanRunning, discoveryRunning = getRemoteBluetoothRunningServices(self.remoteAgentIP, self.remoteAgentPort)
+            # Remote
+            errcode, errmsg, self.hasRemoteBluetooth, self.hasRemoteUbertooth, scanRunning, discoveryRunning, beaconRunning = getRemoteBluetoothRunningServices(self.remoteAgentIP, self.remoteAgentPort)
             
             if errcode == 0:
                 if discoveryRunning:
@@ -1308,6 +1355,17 @@ class mainWindow(QMainWindow):
                         self.btLastSpectrumState = False
                         return
                 
+            if beaconRunning:
+                reply = QMessageBox.question(self, 'Question',"Bluetooth hardware is being used for beaconing.  Would you like to stop it?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+                if reply == QMessageBox.Yes:
+                    errcode, errmsg = stopRemoteBluetoothBeacon(self.remoteAgentIP, self.remoteAgentPort)
+                else:
+                    self.menuBtSpectrum.setChecked(False)
+                    self.btShowSpectrum = False
+                    self.btLastSpectrumState = False
+                    return
+                    
             if self.btShowSpectrum:
                 errcode, errmsg = startRemoteBluetoothScan(self.remoteAgentIP, self.remoteAgentPort)
                 if errcode != 0:
@@ -1951,6 +2009,7 @@ class mainWindow(QMainWindow):
         self.menuRemoteAgent.setChecked(False)
         self.onRemoteAgent()
         
+        self.setBluetoothMenu()
         self.checkNotifyBluetoothDiscovery()
         self.checkNotifyAdvancedScan()
                 
@@ -2850,7 +2909,15 @@ class mainWindow(QMainWindow):
                         specIsGood = False
                     
                 if not specIsGood:
+                    self.menuRemoteAgent.setChecked(False)
                     self.remoteAgentUp = False
+                    return
+                    
+                # Check that the agent is actually online:
+                if not portOpen(self.remoteAgentIP, self.remoteAgentPort):
+                    QMessageBox.question(self, 'Error',"The agent does not appear to be up or is unreachable.", QMessageBox.Ok)
+                    self.remoteAgentUp = False
+                    self.menuRemoteAgent.setChecked(False)
                     return
                     
                 self.remoteAgentUp = True
@@ -2885,12 +2952,16 @@ class mainWindow(QMainWindow):
                 self.lastRemoteState = self.menuRemoteAgent.isChecked() 
 
                 # Deal with bluetooth.
-                # If we're running local, stop it.
+                # If we're running local spectrum or discovery, stop it.
                 # Then reconfigure based on remote agent state
+                
+                # Local Spectrum
                 if self.bluetooth:
                     self.bluetooth.stopScanning()
                     
-                errcode, errmsg, self.hasRemoteBluetooth, self.hasRemoteUbertooth, scanRunning, discoveryRunning = getRemoteBluetoothRunningServices(self.remoteAgentIP, self.remoteAgentPort)
+                # Local discovery:
+                
+                errcode, errmsg, self.hasRemoteBluetooth, self.hasRemoteUbertooth, scanRunning, discoveryRunning, beaconRunning = getRemoteBluetoothRunningServices(self.remoteAgentIP, self.remoteAgentPort)
                 if errcode == 0:
                     self.setBluetoothMenu()
                     self.menuBtSpectrum.setChecked(scanRunning)
@@ -2900,22 +2971,34 @@ class mainWindow(QMainWindow):
                         self.btSpectrumTimer.start(self.btSpectrumTimeout)
                     else:
                         self.stopSpectrumLine()
+                        
+                    self.btBeacon = beaconRunning
+                    self.menuBtBeacon.setChecked(beaconRunning)
+                    self.btLastBeaconState = self.btBeacon
+
+                    self.setBluetoothMenu()
                 else:
+                    # Error state
                     self.btShowSpectrum = False
                     self.btLastSpectrumState = False
                     self.stopSpectrumLine()
                         
-                    self.menuBtSpectrum.setEnabled(False)
                     self.menuBtSpectrum.setChecked(False)
-                    self.menuBtSpectrumGain.setEnabled(False)
                     self.btSpectrumTimer.stop()
                 
+                    self.btBeacon = False
+                    self.btLastBeaconState = self.btBeacon
+                    
+                    self.menuBtBeacon.setEnabled(False)
+                    self.menuBtSpectrum.setEnabled(False)
+                    self.menuBtSpectrumGain.setEnabled(False)
+                    
                 self.onGPSStatus()
             else:
                 # Stay local.
                 self.menuRemoteAgent.setChecked(False)
                 self.remoteAgentUp = False
-
+                self.setBluetoothMenu()
         else:
             # We're transitioning local
             self.lblInterface.setText("Local Interface")
@@ -2935,11 +3018,16 @@ class mainWindow(QMainWindow):
             
             self.btShowSpectrum = False
             if self.spectrumLine:
-                self.spectrumLine.clear()
-            self.menuBtSpectrum.setEnabled(self.hasBluetooth)
+                self.stopSpectrumLine()
+                
             self.menuBtSpectrum.setChecked(False)
-            self.menuBtSpectrumGain.setEnabled(self.hasBluetooth)
                     
+            self.btBeacon = self.bluetooth.beaconRunning()
+            self.menuBtBeacon.setChecked(self.btBeacon)
+            self.btLastBeaconState = self.btBeacon
+
+            self.setBluetoothMenu()
+            
         self.checkNotifyBluetoothDiscovery()
         self.checkNotifyAdvancedScan()
 
