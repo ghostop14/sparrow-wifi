@@ -606,8 +606,8 @@ class SparrowBluetooth(object):
         subprocess.run(['hciconfig', 'hci0', 'down'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         subprocess.run(['hciconfig', 'hci0', 'up'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         
-        # Turn on LE advertising
-        subprocess.run(['hciconfig', 'hci0', 'leadv'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        # Turn on LE advertising.  3 says we're not connectable, just like a true iBeacon
+        subprocess.run(['hciconfig', 'hci0', 'leadv', '3'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         
         # Turn off scanning
         subprocess.run(['hciconfig', 'hci0', 'noscan'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
