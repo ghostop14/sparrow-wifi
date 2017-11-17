@@ -545,6 +545,9 @@ class SparrowBluetooth(object):
     
     def __init__(self):
         self.spectrum = {}
+        for i in range(2402, 2495):
+            self.spectrum[i] = -100
+            
         self.spectrumLock = Lock()
         self.deviceLock = Lock()
     
@@ -864,21 +867,28 @@ class SparrowBluetooth(object):
         
     def fFreqToChannel(frequency):
         # Note: This function returns a float for partial channels
+
+        # ch1 center freq is 2412.  +- 1 channel is 5 MHz
+        # 2402 = Ch -1
+        
         
         # Map bluetooth frequency to 2.4 GHz wifi channel
         # ch 1 starts at 2401 MHz and ch 14 tops out at 2495
         if frequency < 2402:
-            return float(0.0)
+            return float(-1.0)
         elif  frequency > 2494:
             return float(16.0)
             
-        # Frequency range of 2.4 GHz channels 1 (low end 2402) to 14 (high end 2494)
-        frange = 2494.0 - 2402.0
-        # The top end of 14 is 2494 but that would map to 16 on the chart
-        crange = 16.0
-        channel = float((float(frequency) - 2402.0) / frange * crange)
-        
+        channel = -1.0 + (float(frequency) - 2402)/5
         return channel
+        
+        # Frequency range of 2.4 GHz channels 1 (low end 2402) to 14 (high end 2494)
+        #frange = 2494.0 - 2402.0
+        # The top end of 14 is 2494 but that would map to 16 on the chart
+        #crange = 16.0
+        #channel = float((float(frequency) - 2402.0) / frange * crange)
+        
+        #return channel
         
     def startScanning(self):
         if self.spectrumScanThread:

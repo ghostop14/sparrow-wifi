@@ -1105,13 +1105,13 @@ class mainWindow(QMainWindow):
         self.chart24.legend().hide()
         
         # Axis examples: https://doc.qt.io/qt-5/qtcharts-multiaxis-example.html
-        newAxis = QValueAxis()
-        newAxis.setMin(0)
-        newAxis.setMax(16)
-        newAxis.setTickCount(16)
-        newAxis.setLabelFormat("%d")
-        newAxis.setTitleText("Channel")
-        self.chart24.addAxis(newAxis, Qt.AlignBottom)
+        self.chart24axisx = QValueAxis()
+        self.chart24axisx.setMin(0)
+        self.chart24axisx.setMax(16)
+        self.chart24axisx.setTickCount(16)
+        self.chart24axisx.setLabelFormat("%d")
+        self.chart24axisx.setTitleText("Channel")
+        self.chart24.addAxis(self.chart24axisx, Qt.AlignBottom)
         
         self.chart24yAxis = QValueAxis()
         self.chart24yAxis.setMin(-100)
@@ -1134,13 +1134,13 @@ class mainWindow(QMainWindow):
         self.chart5.createDefaultAxes()
         self.chart5.legend().hide()
         
-        newAxis = QValueAxis()
-        newAxis.setMin(30)
-        newAxis.setMax(170)
-        newAxis.setTickCount(14)
-        newAxis.setLabelFormat("%d")
-        newAxis.setTitleText("Channel")
-        self.chart5.addAxis(newAxis, Qt.AlignBottom)
+        self.chart5axisx = QValueAxis()
+        self.chart5axisx .setMin(30)
+        self.chart5axisx .setMax(170)
+        self.chart5axisx .setTickCount(14)
+        self.chart5axisx .setLabelFormat("%d")
+        self.chart5axisx .setTitleText("Channel")
+        self.chart5.addAxis(self.chart5axisx , Qt.AlignBottom)
         
         newAxis = QValueAxis()
         newAxis.setMin(-100)
@@ -2248,11 +2248,11 @@ class mainWindow(QMainWindow):
         
         if adding5GHz:
             self.chart5.addSeries(newSeries)
-            newSeries.attachAxis(self.chart5.axisX())
+            newSeries.attachAxis(self.chart5axisx )
             newSeries.attachAxis(self.chart5.axisY())
         else:
             self.chart24.addSeries(newSeries)
-            newSeries.attachAxis(self.chart24.axisX())
+            newSeries.attachAxis(self.chart24axisx)
             newSeries.attachAxis(self.chart24.axisY())
             
     def add5Net(self, newSeries, curNet):
