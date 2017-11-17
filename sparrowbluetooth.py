@@ -852,16 +852,13 @@ class SparrowBluetooth(object):
     def spectrumToChannels(self):
         retVal = {}
         
-        frange = 2495.0 - 2401.0
-        crange = 14.0
-        
         for curKey in self.spectrum.keys():
-            if curKey >= 2401.0:
-                channel = (curKey - 2401.0) / frange * crange
-                rssi = self.spectrum[curKey]
-                if rssi > -10.0:
-                    rssi = -10.0
-                retVal[channel] = rssi
+            # curKey is frequency
+            channel = SparrowBluetooth.fFreqToChannel(curKey)
+            rssi = self.spectrum[curKey]
+            if rssi > -10.0:
+                rssi = -10.0
+            retVal[channel] = rssi
             
         return retVal
         
@@ -870,12 +867,16 @@ class SparrowBluetooth(object):
         
         # Map bluetooth frequency to 2.4 GHz wifi channel
         # ch 1 starts at 2401 MHz and ch 14 tops out at 2495
-        if frequency < 2401 or frequency > 2495:
+        if frequency < 2402:
             return float(0.0)
+        elif  frequency > 2494:
+            return float(16.0)
             
-        frange = 2495.0 - 2401.0
-        crange = 14.0
-        channel = float((float(frequency) - 2401.0) / frange * crange)
+        # Frequency range of 2.4 GHz channels 1 (low end 2402) to 14 (high end 2494)
+        frange = 2494.0 - 2402.0
+        # The top end of 14 is 2494 but that would map to 16 on the chart
+        crange = 16.0
+        channel = float((float(frequency) - 2402.0) / frange * crange)
         
         return channel
         

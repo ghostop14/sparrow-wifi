@@ -388,6 +388,7 @@ class Callout(QGraphicsSimpleTextItem):
     # Has setText() and text() methods
     def setTextAndPos(self, displayText, point):
         self.setText(displayText)
+        # self.setText(displayText + " (" + str(round(point.x(), 1)) + "," + str(round(point.y(), 1))+")")
         bR = self.sceneBoundingRect()
         localCoord = self.chartParent.mapToPosition(point)
         # self.setPos(point.x() - bR.width()/2, point.y() - bR.height()/2)
@@ -576,7 +577,8 @@ class mainWindow(QMainWindow):
         self.btLastBeaconState = False
         self.btBeacon = False
         self.btSpectrumTimer = QTimer()
-        self.btSpectrumTimeout = 200
+        self.btSpectrumTimeoutLocal = 100
+        self.btSpectrumTimeoutRemote = 200
         self.btSpectrumTimer.timeout.connect(self.onSpectrumTimer)
         self.btSpectrumTimer.setSingleShot(True)
         self.spectrumLine = None
@@ -1394,7 +1396,10 @@ class mainWindow(QMainWindow):
             if self.bluetooth and (not self.remoteAgentUp):
                 self.bluetooth.startScanning()
                 
-            self.btSpectrumTimer.start(self.btSpectrumTimeout)
+            if not self.remoteAgentUp:
+                self.btSpectrumTimer.start(self.btSpectrumTimeoutLocal)
+            else:
+                self.btSpectrumTimer.start(self.btSpectrumTimeoutRemote)
         else:
             self.btSpectrumTimer.stop()
             if self.bluetooth and (not self.remoteAgentUp):
@@ -1650,13 +1655,13 @@ class mainWindow(QMainWindow):
                         dBm = float(channelData[curKey])
                     self.spectrumLine.append(fCurKey, dBm)
                 
-                self.spectrumLine.append(12.0, -110.0)
+                # self.spectrumLine.append(12.0, -110.0)
             
             if not self.remoteAgentUp:
-                self.btSpectrumTimer.start(self.btSpectrumTimeout)
+                self.btSpectrumTimer.start(self.btSpectrumTimeoutLocal)
             else:
                 # Slow it down just a bit for remote agents
-                self.btSpectrumTimer.start(400)
+                self.btSpectrumTimer.start(self.btSpectrumTimeoutRemote)
         
     def onGPSTimer(self):
         self.onGPSStatus(False)
@@ -1867,10 +1872,12 @@ class mainWindow(QMainWindow):
                     self.statusBar().showMessage("Remote GPS service is not running.")
                     self.btnGPSStatus.setStyleSheet("background-color: red; border: 1px;")
             else:
-                if errCode == -1:
+                agentUp = portOpen(self.remoteAgentIP, self.remoteAgentPort)
+                # Agent may be up but just taking a while to respond.
+                if (not agentUp) or errCode == -1:
                     self.missedAgentCycles += 1
                     
-                    if self.missedAgentCycles > self.allowedMissedAgentCycles:
+                    if (not agentUp) or (self.missedAgentCycles > self.allowedMissedAgentCycles):
                         # We may let it miss a cycle or two just as a good practice
                         
                         # Agent disconnected.
@@ -2968,7 +2975,7 @@ class mainWindow(QMainWindow):
                     self.btShowSpectrum = scanRunning
                     self.btLastSpectrumState = scanRunning
                     if scanRunning:
-                        self.btSpectrumTimer.start(self.btSpectrumTimeout)
+                        self.btSpectrumTimer.start(self.btSpectrumTimeoutRemote)
                     else:
                         self.stopSpectrumLine()
                         
