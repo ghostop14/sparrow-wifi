@@ -32,8 +32,6 @@ import math # sqrt
 import sqlite3
 import uuid
 
-if '..' not in sys.path:
-    sys.path.insert(0, '..')
 from sparrowcommon import BaseThreadClass, stringtobool
 from sparrowgps import SparrowGPS
 
@@ -921,7 +919,7 @@ class SparrowBluetooth(object):
         return result.returncode
         
     def getNumUbertoothDevices():
-        result = subprocess.run(['lsusb', '-d', '1d50:'], stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+        result = subprocess.run(['lsusb', '-d', '1d50:6002'], stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
         if result.returncode != 0:
             return 0
             
