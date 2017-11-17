@@ -387,8 +387,8 @@ class Callout(QGraphicsSimpleTextItem):
         
     # Has setText() and text() methods
     def setTextAndPos(self, displayText, point):
-        self.setText(displayText)
-        # self.setText(displayText + " (" + str(round(point.x(), 1)) + "," + str(round(point.y(), 1))+")")
+        # self.setText(displayText)
+        self.setText(displayText + " (" + str(round(point.x(), 1)) + "," + str(round(point.y(), 1))+")")
         bR = self.sceneBoundingRect()
         localCoord = self.chartParent.mapToPosition(point)
         # self.setPos(point.x() - bR.width()/2, point.y() - bR.height()/2)
@@ -1108,7 +1108,7 @@ class mainWindow(QMainWindow):
         self.chart24axisx = QValueAxis()
         self.chart24axisx.setMin(0)
         self.chart24axisx.setMax(16)
-        self.chart24axisx.setTickCount(16)
+        self.chart24axisx.setTickCount(17) # Axis count +1 (at 0 crossing)
         self.chart24axisx.setLabelFormat("%d")
         self.chart24axisx.setTitleText("Channel")
         self.chart24.addAxis(self.chart24axisx, Qt.AlignBottom)
@@ -1137,7 +1137,7 @@ class mainWindow(QMainWindow):
         self.chart5axisx = QValueAxis()
         self.chart5axisx .setMin(30)
         self.chart5axisx .setMax(170)
-        self.chart5axisx .setTickCount(14)
+        self.chart5axisx .setTickCount(15)
         self.chart5axisx .setLabelFormat("%d")
         self.chart5axisx .setTitleText("Channel")
         self.chart5.addAxis(self.chart5axisx , Qt.AlignBottom)
