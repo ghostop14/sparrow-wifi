@@ -387,8 +387,8 @@ class Callout(QGraphicsSimpleTextItem):
         
     # Has setText() and text() methods
     def setTextAndPos(self, displayText, point):
-        # self.setText(displayText)
-        self.setText(displayText + " (" + str(round(point.x(), 1)) + "," + str(round(point.y(), 1))+")")
+        self.setText(displayText)
+        # self.setText(displayText + " (" + str(round(point.x(), 1)) + "," + str(round(point.y(), 1))+")")
         bR = self.sceneBoundingRect()
         localCoord = self.chartParent.mapToPosition(point)
         # self.setPos(point.x() - bR.width()/2, point.y() - bR.height()/2)
@@ -2183,17 +2183,22 @@ class mainWindow(QMainWindow):
                 if i >= (curNet.channel - 1) and i <=(curNet.channel +1):
                     graphPoint = True
             elif (curNet.bandwidth== 40):
-                if curNet.secondaryChannelLocation == 'above':
-                    if i >= (curNet.channel - 1) and i <=(curNet.channel +5):
-                        graphPoint = True
+                if curNet.channel <= 16:
+                    if curNet.secondaryChannelLocation == 'above':
+                        if i >= (curNet.channel - 1) and i <=(curNet.channel +5):
+                            graphPoint = True
+                    else:
+                        if i >= (curNet.channel - 5) and i <=(curNet.channel +1):
+                            graphPoint = True
                 else:
-                    if i >= (curNet.channel - 5) and i <=(curNet.channel +1):
+                    # 5 GHz channels for these bandwidths center up.
+                    if i >= (curNet.channel - 3) and i <=(curNet.channel +3):
                         graphPoint = True
             elif (curNet.bandwidth == 80):
-                    if i >= (curNet.channel - 1) and i <=(curNet.channel +15):
+                    if i >= (curNet.channel - 8) and i <=(curNet.channel +8):
                         graphPoint = True
             elif (curNet.bandwidth == 160):
-                    if i >= (curNet.channel - 1) and i <=(curNet.channel +29):
+                    if i >= (curNet.channel - 15) and i <=(curNet.channel +15):
                         graphPoint = True
                     
             if graphPoint:
@@ -2219,17 +2224,23 @@ class mainWindow(QMainWindow):
                 if i >= (curNet.channel - 1) and i <=(curNet.channel +1):
                     graphPoint = True
             elif (curNet.bandwidth== 40):
-                if curNet.secondaryChannelLocation == 'above':
-                    if i >= (curNet.channel - 1) and i <=(curNet.channel +5):
-                        graphPoint = True
+                if curNet.channel <= 16:
+                    if curNet.secondaryChannelLocation == 'above':
+                        if i >= (curNet.channel - 1) and i <=(curNet.channel +5):
+                            graphPoint = True
+                    else:
+                        if i >= (curNet.channel - 5) and i <=(curNet.channel +1):
+                            graphPoint = True
                 else:
-                    if i >= (curNet.channel - 5) and i <=(curNet.channel +1):
+                    # 5 GHz channels for these bandwidths center up.
+                    if i >= (curNet.channel - 3) and i <=(curNet.channel +3):
                         graphPoint = True
             elif (curNet.bandwidth == 80):
-                    if i >= (curNet.channel - 1) and i <=(curNet.channel +15):
+                    # 5 GHz channels for these bandwidths center up.
+                    if i >= (curNet.channel - 8) and i <=(curNet.channel +8):
                         graphPoint = True
             elif (curNet.bandwidth == 160):
-                    if i >= (curNet.channel - 1) and i <=(curNet.channel +29):
+                    if i >= (curNet.channel - 15) and i <=(curNet.channel +15):
                         graphPoint = True
                     
             if graphPoint:
