@@ -59,7 +59,9 @@ class RadarWidget(FigureCanvas):
             
         self.fig = Figure(figsize=(width, height), dpi=dpi)
         self.fig.patch.set_facecolor(self.backgroundColor)
-        self.axes = self.fig.add_subplot(111, polar=True, axisbg=self.backgroundColor)
+        # "axisbg was deprecated, use facecolor instead"
+        # self.axes = self.fig.add_subplot(111, polar=True, axisbg=self.backgroundColor)
+        self.axes = self.fig.add_subplot(111, polar=True, facecolor=self.backgroundColor)
         # Angle: np.linspace(0, 2*np.pi, 100)
         # Radius: np.ones(100)*5
         # ax.plot(np.linspace(0, 2*np.pi, 100), np.ones(100)*5, color='r', linestyle='-')
