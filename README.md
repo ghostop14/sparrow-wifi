@@ -9,6 +9,7 @@ Sparrow-wifi provides a nice graphical interface with tables of discovered netwo
 - WiFi Signal "hunt" mode.  Normal scans running across all 2.4 GHz and 5 GHz channels can take 5-10 seconds per sweep as the radio needs to retune to each frequency and listen.  If you're trying to locate a particular SSID, this can be too slow.  Hunt mode allows you to specify the channel number or center frequency and only scan that one channel for much faster hunt performance (generally less than 0.2 seconds/channel).
 - Bluetooth support with either standard Bluetooth dongles and an Ubertooth
 - If you have an Ubertooth, you can display active spectrum on the 2.4 GHz frequency chart
+- HackRF support!  If you have a HackRF you can use it to display spectrum for either 2.4 GHz or 5 GHz using hackrf_sweep (you can use Ubertooth in 2.4 GHz and a HackRF in 5 GHz to cover both)
 - Ability to export results to CSV or JSON and import them back in to revisualize a scan
 - Plot SSID GPS coordinates on Google maps
 - Sparrow-wifi has built-in GPS support via gpsd for network location tagging
@@ -39,6 +40,11 @@ If you're going to use the gps capabilities, you'll also need to make sure gpsd 
 
 sudo apt-get install gpsd
 
+## Running sparrow-wifi
+Because it needs to use iw to scan, you will need to run sparrow-wifi as root.  Simply run:
+
+sudo ./sparrow-wifi.py
+
 ## Bluetooth
 Bluetooth support has been added.  However it's important to know that bluetooth works very differently than WiFi.  It uses frequency hopping spread spectrum in the same 2.4 GHz band as WiFi, but because of the hopping introduces challenges.  Also, Bluetooth Low Energy (BTLE) and Classic Bluetooth are different, which impacts tools to scan.
 
@@ -50,10 +56,10 @@ If you would like to scan for bluetooth, you'll need a few things:
 	- Ubertooth tools installed and functioning (you can test it with ubertooth-specan-ui)
 	- Blue Hydra installed into /opt/bluetooth/blue_hydra (mkdir /opt/bluetooth && cd /opt/bluetooth && git clone https://github.com/pwnieexpress/blue_hydra.git).  Then make sure you've followed the blue_hydra installation instructions.  You can test it with bin/blue_hydra.  This msut be in /opt/bluetooth/blue_hydra or the app won't find it.
 
-## Running sparrow-wifi
-Because it needs to use iw to scan, you will need to run sparrow-wifi as root.  Simply run:
+## Spectrum / HackRF
+HackRF support has been added to take advantage of the hackrf_sweep capabilities added to the firmware.  With a HackRF you can sweep the entire range for a view of the spectrum.  While hackrf_sweep can sweep from 2.4 GHz through 5 GHz, the frame rate was too slow (like 1 frame every 2 seconds), so you can use it for only one band at a time.  With that said, if you have both an Ubertooth and a HackRF, you could use the Ubertooth to display the 2.4 GHz band and the HackRF to display the 5 GHz band simultaneously.
 
-sudo ./sparrow-wifi.py
+With that said, standard RF and and antenna rules apply.  If you want to monitor either band, make sure you have an antenna capable of receiving in that band.  And if you do want to grab an external dual-band antenna used on wireless cards, just note that the connector polarity is typically reversed (rp-sma) so you'll need to grab an adapter to connect it to the HackRF.  An RP-SMA will screw on to the SMA connector but the center pin isn't there so you won't actually receive anything.  Just a word of caution.
 
 ## Running sparrow-wifi remote agent
 Because the agent needs to use iw and bluetooth tools to scan, you will need to run sparrowwifiagent as root.  Simply run:

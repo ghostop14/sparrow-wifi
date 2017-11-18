@@ -37,6 +37,7 @@ from sparrowgps import GPSEngine, GPSStatus
 from sparrowdrone import SparrowDroneMavlink
 from sparrowrpi import SparrowRPi
 from sparrowbluetooth import SparrowBluetooth
+from sparrowhackrf import SparrowHackrf
 
 try:
     from manuf import manuf
@@ -57,6 +58,7 @@ hasUbertooth = False
 falconWiFiRemoteAgent = None
 
 bluetooth = None
+hackrf = SparrowHackrf()
 
 # Lock list is a dictionary of thread locks for scanning interfaces
 lockList = {}
@@ -1137,6 +1139,11 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                                   '/bluetooth/discoverystarta', 
                                   '/bluetooth/discoverystop', 
                                   '/bluetooth/discoverystatus', 
+                                  '/spectrum/scanstart24', 
+                                  '/spectrum/scanstart5', 
+                                  '/spectrum/scanstop', 
+                                  '/spectrum/scanstatus', 
+                                  '/spectrum/hackrfstatus', 
                                     '/gps/status']
                                     
         # partials that have more in the URL
@@ -1551,6 +1558,55 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 responsedict['discoveryscanrunning'] = bluetooth.discoveryRunning()
                 responsedict['beaconrunning'] = bluetooth.beaconRunning()
                 
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+        elif s.path == '/spectrum/hackrfstatus':
+                responsedict = {}
+                responsedict['errcode'] = 0
+                responsedict['errmsg'] = ''
+                responsedict['hashackrf'] = hackrf.hasHackrf
+                responsedict['scan24running'] = hackrf.scanRunning24()
+                responsedict['scan5running'] = hackrf.scanRunning5()
+                    
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+        elif s.path.startswith('/spectrum/scan'):
+            if not hackrf.hasHackrf:
+                responsedict = {}
+                responsedict['errcode'] = 1
+                responsedict['errmsg'] = 'HackRF is not supported on this agent'
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            else:
+                function=s.path.replace('/spectrum/scan', '')
+                function = function.replace('/', '')
+                
+                responsedict = {}
+                responsedict['errcode'] = 0
+                responsedict['errmsg'] = ''
+                
+                if function=='start24':
+                    hackrf.startScanning24()
+                elif function == 'start5':
+                    hackrf.startScanning5()
+                elif function == 'stop':
+                    hackrf.stopScanning()
+                elif function == 'status':
+                    if hackrf.scanRunning24():
+                        channelData = hackrf.spectrum24ToChannels()
+                        responsedict['scanrunning'] = hackrf.scanRunning24()
+                    elif hackrf.scanRunning5():
+                        channelData = hackrf.spectrum5ToChannels()
+                        responsedict['scanrunning'] = hackrf.scanRunning24()
+                    else:
+                        channelData = {}  # Shouldn't be here but just in case.
+                        responsedict['scanrunning'] = False
+                        
+                    responsedict['channeldata'] = channelData
+                else:
+                    responsedict['errcode'] = 1
+                    responsedict['errmsg'] = 'Unknown command'
+                    
                 jsonstr = json.dumps(responsedict)
                 s.wfile.write(jsonstr.encode("UTF-8"))
         elif s.path == '/system/config':

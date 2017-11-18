@@ -43,7 +43,7 @@ from PyQt5 import QtCore
 
 # from PyQt5.QtCore import QCoreApplication # programatic quit
 from wirelessengine import WirelessEngine, WirelessNetwork
-from sparrowcommon import BaseThreadClass, portOpen
+from sparrowcommon import BaseThreadClass, portOpen, stringtobool
 from sparrowgps import GPSEngine, GPSStatus, SparrowGPS
 from telemetry import TelemetryDialog
 from sparrowtablewidgets import IntTableWidgetItem, DateTableWidgetItem
@@ -52,6 +52,7 @@ from sparrowdialogs import MapSettingsDialog, TelemetryMapSettingsDialog, AgentL
 from sparrowdialogs import AgentConfigDialog, RemoteFilesDialog, BluetoothDialog
 from sparrowwifiagent import AgentConfigSettings
 from sparrowbluetooth import SparrowBluetooth
+from sparrowhackrf import SparrowHackrf
 
 # There are some "plugins" that are available for addons.  Let's see if they're present
 hasFalcon = False
@@ -93,15 +94,8 @@ def getOUIDB():
         
     return ouidb
     
-# ------------------  Global functions ------------------------------
-def stringtobool(instr):
-    if (instr == 'True' or instr == 'true'):
-        return True
-    else:
-        return False
-
 # ------------------  Global functions for agent HTTP requests ------------------------------
-def makeGetRequest(url, waitTimeout=2):
+def makeGetRequest(url, waitTimeout=4):
     try:
         # Not using a timeout can cause the request to hang indefinitely
         response = requests.get(url, timeout=waitTimeout)
@@ -114,6 +108,136 @@ def makeGetRequest(url, waitTimeout=2):
     htmlResponse=response.text
     return response.status_code, htmlResponse
 
+# ------------------  GPS requests ------------------------------
+def requestRemoteGPS(remoteIP, remotePort):
+    url = "http://" + remoteIP + ":" + str(remotePort) + "/gps/status"
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            gpsjson = json.loads(responsestr)
+            gpsStatus = GPSStatus()
+            
+            gpsStatus.gpsInstalled = stringtobool(gpsjson['gpsinstalled'])
+            gpsStatus.gpsRunning = stringtobool(gpsjson['gpsrunning'])
+            gpsStatus.isValid = stringtobool(gpsjson['gpssynch'])
+            
+            if gpsStatus.isValid:
+                # These won't be there if it's not synchronized
+                gpsStatus.latitude = float(gpsjson['gpspos']['latitude'])
+                gpsStatus.longitude = float(gpsjson['gpspos']['longitude'])
+                gpsStatus.altitude = float(gpsjson['gpspos']['altitude'])
+                gpsStatus.speed = float(gpsjson['gpspos']['speed'])
+                
+            return 0, "", gpsStatus
+        except:
+            return -2, "Error parsing remote agent response", None
+    else:
+        return -1, "Error connecting to remote agent", None
+
+# ------------------  WiFi scan requests ------------------------------
+def requestRemoteNetworks(remoteIP, remotePort, remoteInterface, channelList=None):
+    url = "http://" + remoteIP + ":" + str(remotePort) + "/wireless/networks/" + remoteInterface
+    
+    if (channelList is not None) and (len(channelList) > 0):
+        url += "?frequencies="
+        for curChannel in channelList:
+            url += str(curChannel) + ','
+            
+    if url.endswith(','):
+        url = url[:-1]
+        
+    # Pass a higher timeout since the scan may take a bit
+    statusCode, responsestr = makeGetRequest(url, 20)
+    
+    if statusCode == 200:
+        try:
+            networkjson = json.loads(responsestr)
+            wirelessNetworks = {}
+            
+            for curNetDict in networkjson['networks']:
+                newNet = WirelessNetwork.createFromJsonDict(curNetDict)
+                wirelessNetworks[newNet.getKey()] = newNet
+                
+            return networkjson['errCode'], networkjson['errString'], wirelessNetworks
+        except:
+            return -2, "Error parsing remote agent response", None
+    else:
+        return -1, "Error connecting to remote agent", None
+
+# ------------------  HackRF requests ------------------------------
+def remoteHackrfStatus(agentIP, agentPort):
+    url = "http://" + agentIP + ":" + str(agentPort) + "/spectrum/hackrfstatus"
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            responsedict = json.loads(responsestr)
+            errcode = responsedict['errcode']
+            errmsg = responsedict['errmsg']
+            hashackrf = responsedict['hashackrf']
+            scan24Running = responsedict['scan24running']
+            scan5Running = responsedict['scan5running']
+            
+            return errcode, errmsg, hashackrf, scan24Running, scan5Running
+        except:
+            return -1, 'Error parsing response', False, False,  False
+    else:
+            return -2, 'Bad response from agent [' + str(statusCode) + ']', False, False,  False
+
+def startRemoteSpectrumScan(agentIP, agentPort, scan5):
+    if scan5:
+        url = "http://" + agentIP + ":" + str(agentPort) + "/spectrum/scanstart5"
+    else:
+        url = "http://" + agentIP + ":" + str(agentPort) + "/spectrum/scanstart24"
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            responsedict = json.loads(responsestr)
+            errcode = responsedict['errcode']
+            errmsg = responsedict['errmsg']
+            return errcode, errmsg
+        except:
+            return -1, 'Error parsing response'
+    else:
+            return -2, 'Bad response from agent [' + str(statusCode) + ']'
+        
+def stopRemoteSpectrumScan(agentIP, agentPort):
+    url = "http://" + agentIP + ":" + str(agentPort) + "/spectrum/scanstop"
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            responsedict = json.loads(responsestr)
+            errcode = responsedict['errcode']
+            errmsg = responsedict['errmsg']
+            return errcode, errmsg
+        except:
+            return -1, 'Error parsing response'
+    else:
+            return -2, 'Bad response from agent [' + str(statusCode) + ']'
+            
+def getRemoteSpectrumScan(agentIP, agentPort):
+    url = "http://" + agentIP + ":" + str(agentPort) + "/spectrum/scanstatus"
+    statusCode, responsestr = makeGetRequest(url)
+    
+    if statusCode == 200:
+        try:
+            responsedict = json.loads(responsestr)
+            errcode = responsedict['errcode']
+            errmsg = responsedict['errmsg']
+            tmpChannelData = responsedict['channeldata']
+            channelData = {}
+            for curKey in tmpChannelData.keys():
+                channelData[float(curKey)] = float(tmpChannelData[curKey])
+            return errcode, errmsg, channelData
+        except:
+            return -1, 'Error parsing response', None
+    else:
+            return -2, 'Bad response from agent [' + str(statusCode) + ']', None
+        
+# ------------------  Bluetooth requests ------------------------------
 def remoteHasBluetooth(agentIP, agentPort):
     url = "http://" + agentIP + ":" + str(agentPort) + "/bluetooth/present"
     statusCode, responsestr = makeGetRequest(url)
@@ -132,7 +256,7 @@ def remoteHasBluetooth(agentIP, agentPort):
     else:
             return -2, 'Bad response from agent [' + str(statusCode) + ']', False, False
 
-# Beacon calls
+# Bluetooth Beacon calls
 def startRemoteBluetoothBeacon(agentIP, agentPort):
     url = "http://" + agentIP + ":" + str(agentPort) + "/bluetooth/beaconstart"
     statusCode, responsestr = makeGetRequest(url)
@@ -163,8 +287,6 @@ def stopRemoteBluetoothBeacon(agentIP, agentPort):
     else:
             return -2, 'Bad response from agent [' + str(statusCode) + ']'
 
-        
-
 # These scan functions are for the spectrum, not discovery        
 def startRemoteBluetoothScan(agentIP, agentPort):
     url = "http://" + agentIP + ":" + str(agentPort) + "/bluetooth/scanstart"
@@ -183,7 +305,7 @@ def startRemoteBluetoothScan(agentIP, agentPort):
         
 def stopRemoteBluetoothScan(agentIP, agentPort):
     url = "http://" + agentIP + ":" + str(agentPort) + "/bluetooth/scanstop"
-    statusCode, responsestr = makeGetRequest(url)
+    statusCode, responsestr = makeGetRequest(url, 6)
     
     if statusCode == 200:
         try:
@@ -195,7 +317,6 @@ def stopRemoteBluetoothScan(agentIP, agentPort):
             return -1, 'Error parsing response'
     else:
             return -2, 'Bad response from agent [' + str(statusCode) + ']'
-
         
 def getRemoteBluetoothRunningServices(agentIP, agentPort):
     url = "http://" + agentIP + ":" + str(agentPort) + "/bluetooth/running"
@@ -237,6 +358,7 @@ def getRemoteBluetoothScanSpectrum(agentIP, agentPort):
     else:
             return -2, 'Bad response from agent [' + str(statusCode) + ']', None
         
+# ------------------  System interface and config requests ------------------------------
 def requestRemoteInterfaces(agentIP, agentPort):
     url = "http://" + agentIP + ":" + str(agentPort) + "/wireless/interfaces"
     statusCode, responsestr = makeGetRequest(url)
@@ -275,61 +397,7 @@ def requestRemoteConfig(remoteIP, remotePort):
     else:
         return -1, "Error connecting to remote agent", None, None
 
-def requestRemoteGPS(remoteIP, remotePort):
-    url = "http://" + remoteIP + ":" + str(remotePort) + "/gps/status"
-    statusCode, responsestr = makeGetRequest(url)
-    
-    if statusCode == 200:
-        try:
-            gpsjson = json.loads(responsestr)
-            gpsStatus = GPSStatus()
-            
-            gpsStatus.gpsInstalled = stringtobool(gpsjson['gpsinstalled'])
-            gpsStatus.gpsRunning = stringtobool(gpsjson['gpsrunning'])
-            gpsStatus.isValid = stringtobool(gpsjson['gpssynch'])
-            
-            if gpsStatus.isValid:
-                # These won't be there if it's not synchronized
-                gpsStatus.latitude = float(gpsjson['gpspos']['latitude'])
-                gpsStatus.longitude = float(gpsjson['gpspos']['longitude'])
-                gpsStatus.altitude = float(gpsjson['gpspos']['altitude'])
-                gpsStatus.speed = float(gpsjson['gpspos']['speed'])
-                
-            return 0, "", gpsStatus
-        except:
-            return -2, "Error parsing remote agent response", None
-    else:
-        return -1, "Error connecting to remote agent", None
-
-
-def requestRemoteNetworks(remoteIP, remotePort, remoteInterface, channelList=None):
-    url = "http://" + remoteIP + ":" + str(remotePort) + "/wireless/networks/" + remoteInterface
-    
-    if (channelList is not None) and (len(channelList) > 0):
-        url += "?frequencies="
-        for curChannel in channelList:
-            url += str(curChannel) + ','
-            
-    if url.endswith(','):
-        url = url[:-1]
-        
-    # Pass a higher timeout since the scan may take a bit
-    statusCode, responsestr = makeGetRequest(url, 20)
-    
-    if statusCode == 200:
-        try:
-            networkjson = json.loads(responsestr)
-            wirelessNetworks = {}
-            
-            for curNetDict in networkjson['networks']:
-                newNet = WirelessNetwork.createFromJsonDict(curNetDict)
-                wirelessNetworks[newNet.getKey()] = newNet
-                
-            return networkjson['errCode'], networkjson['errString'], wirelessNetworks
-        except:
-            return -2, "Error parsing remote agent response", None
-    else:
-        return -1, "Error connecting to remote agent", None
+# ------------------  GUI Classes ------------------------------
 
 # -----------------  Divider -----------------------------------
 class Divider(QFrame):
@@ -565,6 +633,20 @@ class mainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        self.hackrf = SparrowHackrf()
+        self.hackrfShowSpectrum24 = False
+        self.hackrfLastSpectrumState24 = False
+        self.hackrfShowSpectrum5 = False
+        self.hackrfLastSpectrumState5 = False
+        self.hackrfSpectrumTimer = QTimer()
+        self.hackrfSpectrumTimeoutLocal = 100
+        self.hackrfSpectrumTimeoutRemote = 200
+        self.hackrfSpectrumTimer.timeout.connect(self.onHackrfSpectrumTimer)
+        self.hackrfSpectrumTimer.setSingleShot(True)
+
+        self.spectrum24Line = None
+        self.spectrum5Line = None
+        
         self.checkForBluetooth()
         
         self.bluetoothWin = None
@@ -581,7 +663,6 @@ class mainWindow(QMainWindow):
         self.btSpectrumTimeoutRemote = 200
         self.btSpectrumTimer.timeout.connect(self.onSpectrumTimer)
         self.btSpectrumTimer.setSingleShot(True)
-        self.spectrumLine = None
         
         self.ouiLookupEngine = getOUIDB()
             
@@ -631,6 +712,8 @@ class mainWindow(QMainWindow):
         self.remoteScanDelay = 0.5
         self.lastRemoteState = False
         self.remoteAgentUp = False
+        self.remoteHasHackrf = False
+        
         self.missedAgentCycles = 0
         self.allowedMissedAgentCycles = 1
         
@@ -1028,18 +1111,6 @@ class mainWindow(QMainWindow):
         
         # Bluetooth
         ViewMenu = menubar.addMenu('&Bluetooth')
-        self.menuBtSpectrumGain = QAction('Spectrum Analyzer Gain', self)        
-        self.menuBtSpectrumGain.setStatusTip("Manually override gain to better match spectrum with wifi adapter")
-        self.menuBtSpectrumGain.triggered.connect(self.onBtSpectrumOverrideGain)
-        ViewMenu.addAction(self.menuBtSpectrumGain)
-        
-        self.menuBtSpectrum = QAction('2.4 GHz Spectrum Analyzer via Ubertooth', self)        
-        self.menuBtSpectrum.setStatusTip("Use Ubertooth for 2.4 GHz spectrum analyzer. NOTE: Wireless cards may have different gain, so results may vary.")
-        self.menuBtSpectrum.setCheckable(True)
-        self.menuBtSpectrum.triggered.connect(self.onBtSpectrumAnalyzer)
-        ViewMenu.addAction(self.menuBtSpectrum)
-        
-        ViewMenu.addSeparator()
         self.menuBtBeacon = QAction('iBeacon Mode', self)        
         self.menuBtBeacon.setStatusTip("Become an iBeacon")
         self.menuBtBeacon.setCheckable(True)
@@ -1053,6 +1124,39 @@ class mainWindow(QMainWindow):
         self.menuBtBluetooth.triggered.connect(self.onBtBluetooth)
         ViewMenu.addAction(self.menuBtBluetooth)
 
+        # Spectrum
+        SpectrumMenu = menubar.addMenu('&Spectrum')
+        self.menuBtSpectrumGain = QAction('Spectrum Analyzer Gain', self)        
+        self.menuBtSpectrumGain.setStatusTip("Manually override gain to better match spectrum with wifi adapter")
+        self.menuBtSpectrumGain.triggered.connect(self.onBtSpectrumOverrideGain)
+        SpectrumMenu.addAction(self.menuBtSpectrumGain)
+        
+        SpectrumMenu.addSeparator()
+        
+        self.menuBtSpectrum = QAction('2.4 GHz Spectrum Analyzer via Ubertooth', self)        
+        self.menuBtSpectrum.setStatusTip("Use Ubertooth for 2.4 GHz spectrum analyzer. NOTE: Wireless cards may have different gain, so results may vary.")
+        self.menuBtSpectrum.setCheckable(True)
+        self.menuBtSpectrum.triggered.connect(self.onBtSpectrumAnalyzer)
+        SpectrumMenu.addAction(self.menuBtSpectrum)
+        
+        self.menuHackrfSpectrum24 = QAction('2.4 GHz Spectrum Analyzer via HackRF', self)        
+        self.menuHackrfSpectrum24.setStatusTip("Use HackRF for 2.4 GHz spectrum analyzer. NOTE: Wireless cards may have different gain, so results may vary.")
+        self.menuHackrfSpectrum24.setCheckable(True)
+        self.menuHackrfSpectrum24.triggered.connect(self.onHackrfSpectrumAnalyzer24)
+        SpectrumMenu.addAction(self.menuHackrfSpectrum24)
+        
+        SpectrumMenu.addSeparator()
+        
+        self.menuHackrfSpectrum5 = QAction('5 GHz Spectrum Analyzer via HackRF', self)        
+        self.menuHackrfSpectrum5.setStatusTip("Use HackRF for 5 GHz spectrum analyzer. NOTE: Wireless cards may have different gain, so results may vary.")
+        self.menuHackrfSpectrum5.setCheckable(True)
+        self.menuHackrfSpectrum5.triggered.connect(self.onHackrfSpectrumAnalyzer5)
+        SpectrumMenu.addAction(self.menuHackrfSpectrum5)
+        
+        if not self.hackrf.hasHackrf:
+            self.menuHackrfSpectrum24.setEnabled(False)
+            self.menuHackrfSpectrum5.setEnabled(False)
+            
         self.setBluetoothMenu()
         
         # Falcon
@@ -1168,15 +1272,26 @@ class mainWindow(QMainWindow):
                 QMessageBox.question(self, 'Error',"Could not convert " + text + " to a number.", QMessageBox.Ok)
 
     def createSpectrumLine(self):
-        if not self.spectrumLine:
+        if not self.spectrum24Line:
             # add it
-            self.spectrumLine = self.createNewSeries(Qt.white, self.chart24)
-            self.spectrumLine.setName('Spectrum')
             
-            self.chart24.addSeries(self.spectrumLine)
-            self.spectrumLine.attachAxis(self.chart24.axisX())
-            self.spectrumLine.attachAxis(self.chart24.axisY())
+            # 2.4 GHz
+            self.spectrum24Line = self.createNewSeries(Qt.white, self.chart24)
+            self.spectrum24Line.setName('Spectrum')
+            
+            self.chart24.addSeries(self.spectrum24Line)
+            self.spectrum24Line.attachAxis(self.chart24.axisX())
+            self.spectrum24Line.attachAxis(self.chart24.axisY())
 
+        if not self.spectrum5Line:
+            # 5 GHz
+            self.spectrum5Line = self.createNewSeries(Qt.white, self.chart5)
+            self.spectrum5Line.setName('Spectrum')
+            
+            self.chart5.addSeries(self.spectrum5Line)
+            self.spectrum5Line.attachAxis(self.chart5.axisX())
+            self.spectrum5Line.attachAxis(self.chart5.axisY())
+            
     def onBtBeacon(self):
         if (self.menuBtBeacon.isChecked() == self.btLastBeaconState):
             # There's an extra bounce in this for some reason.
@@ -1199,7 +1314,7 @@ class mainWindow(QMainWindow):
                 reply = QMessageBox.question(self, 'Question',"Bluetooth hardware is being used for spectrum.  Would you like to stop it?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
 
                 if reply == QMessageBox.Yes:
-                    self.stopSpectrumLine()
+                    self.stopSpectrum24Line()
                 else:
                     self.menuBtBeacon.setChecked(False)
                     self.btBeacon = False
@@ -1233,7 +1348,7 @@ class mainWindow(QMainWindow):
             if self.btShowSpectrum:
                 reply = QMessageBox.question(self, 'Question',"Bluetooth hardware is being used for spectrum.  Would you like to stop it?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
                 if reply == QMessageBox.Yes:
-                    self.stopSpectrumLine()
+                    self.stopSpectrum24Line()
                     errcode, errmsg = stopRemoteBluetoothScan(self.remoteAgentIP, self.remoteAgentPort)
                     if errcode != 0:
                         self.statusBar().showMessage(errmsg)
@@ -1279,7 +1394,7 @@ class mainWindow(QMainWindow):
 
                     if reply == QMessageBox.Yes:
                         self.bluetooth.stopScanning()
-                        self.stopSpectrumLine()
+                        self.stopSpectrum24Line()
                     else:
                         return
                         
@@ -1297,7 +1412,7 @@ class mainWindow(QMainWindow):
 
                     if reply == QMessageBox.Yes:
                         errcode, errmsg = stopRemoteBluetoothScan(self.remoteAgentIP, self.remoteAgentPort)
-                        self.stopSpectrumLine()
+                        self.stopSpectrum24Line()
                     else:
                         return
 
@@ -1313,6 +1428,114 @@ class mainWindow(QMainWindow):
         if self.bluetoothWin:
             self.bluetoothWin = None
             
+    def onHackrfSpectrumAnalyzer24(self):
+        if (self.menuHackrfSpectrum24.isChecked() == self.hackrfLastSpectrumState24):
+            # There's an extra bounce in this for some reason.
+            return
+
+        self.hackrfShowSpectrum24 = self.menuHackrfSpectrum24.isChecked()
+        self.hackrfLastSpectrumState24 = self.hackrfShowSpectrum24
+        
+        if self.hackrfShowSpectrum24:
+            # Enable it
+            # Add it on the plot
+            self.createSpectrumLine()
+
+            if not self.remoteAgentUp:
+                if self.hackrf.hasHackrf:
+                    self.hackrf.startScanning24()
+                    self.menuHackrfSpectrum5.setEnabled(False)                
+            else:
+                if self.remoteHasHackrf:
+                    errcode, errmsg = startRemoteSpectrumScan(self.remoteAgentIP, self.remoteAgentPort, False)
+                    self.menuHackrfSpectrum5.setEnabled(False)                
+                
+                    if errcode != 0:
+                        self.statusBar().showMessage(errmsg)
+                        
+            # Disable Ubertooth 2.4 GHz scan since we're using the HackRF
+            self.menuBtSpectrum.setEnabled(False)
+            
+            if not self.remoteAgentUp:
+                self.hackrfSpectrumTimer.start(self.hackrfSpectrumTimeoutLocal)
+            else:
+                self.hackrfSpectrumTimer.start(self.hackrfSpectrumTimeoutRemote)
+        else:
+            # Disable it
+            self.menuHackrfSpectrum5.setEnabled(True)                
+            self.hackrfSpectrumTimer.stop()
+            
+            if (not self.remoteAgentUp):
+                # Local
+                if self.hackrf.hasHackrf:
+                    self.hackrf.stopScanning()
+
+                # If we have bluetooth let's re-enable it.
+                if self.hasBluetooth:
+                    self.menuBtSpectrum.setEnabled(True)
+            else:
+                # Remote
+                errcode, errmsg = stopRemoteSpectrumScan(self.remoteAgentIP, self.remoteAgentPort)
+            
+                if errcode != 0:
+                    self.statusBar().showMessage(errmsg)
+
+                # If we have bluetooth let's re-enable it.
+                if self.hasRemoteBluetooth:
+                    self.menuBtSpectrum.setEnabled(True)
+                
+            # remove it from the plot
+            self.stopSpectrum24Line()
+            
+    def onHackrfSpectrumAnalyzer5(self):
+        if (self.menuHackrfSpectrum5.isChecked() == self.hackrfLastSpectrumState5):
+            # There's an extra bounce in this for some reason.
+            return
+
+        self.hackrfShowSpectrum5 = self.menuHackrfSpectrum5.isChecked()
+        self.hackrfLastSpectrumState5 = self.hackrfShowSpectrum5
+        
+        if self.hackrfShowSpectrum5:
+            # Add it on the plot
+            self.createSpectrumLine()
+
+            if not self.remoteAgentUp:
+                # Local
+                if self.hackrf.hasHackrf:
+                    self.hackrf.startScanning5()
+            else:
+                # Remote 
+                if self.remoteHasHackrf:
+                    errcode, errmsg = startRemoteSpectrumScan(self.remoteAgentIP, self.remoteAgentPort, True)
+                
+                    if errcode != 0:
+                        self.statusBar().showMessage(errmsg)
+                
+            self.menuHackrfSpectrum24.setEnabled(False)                
+                
+            if not self.remoteAgentUp:
+                self.hackrfSpectrumTimer.start(self.hackrfSpectrumTimeoutLocal)
+            else:
+                self.hackrfSpectrumTimer.start(self.hackrfSpectrumTimeoutRemote)
+        else:
+            # Disable it
+            self.hackrfSpectrumTimer.stop()
+            
+            if not self.remoteAgentUp:
+                if self.hackrf.hasHackrf:
+                    self.hackrf.stopScanning()
+            else:
+                errcode, errmsg = stopRemoteSpectrumScan(self.remoteAgentIP, self.remoteAgentPort)
+            
+                if errcode != 0:
+                    self.statusBar().showMessage(errmsg)
+                    
+            # remove it from the plot
+            self.stopSpectrum5Line()
+            
+            if not self.btShowSpectrum:
+                self.menuHackrfSpectrum24.setEnabled(True)                
+        
     def onBtSpectrumAnalyzer(self):
         if (self.menuBtSpectrum.isChecked() == self.btLastSpectrumState):
             # There's an extra bounce in this for some reason.
@@ -1343,6 +1566,7 @@ class mainWindow(QMainWindow):
                     return
                     
             errcode = 0
+            errmsg = ""
         else:
             # Remote
             errcode, errmsg, self.hasRemoteBluetooth, self.hasRemoteUbertooth, scanRunning, discoveryRunning, beaconRunning = getRemoteBluetoothRunningServices(self.remoteAgentIP, self.remoteAgentPort)
@@ -1371,21 +1595,6 @@ class mainWindow(QMainWindow):
                     self.btLastSpectrumState = False
                     return
                     
-            if self.btShowSpectrum:
-                errcode, errmsg = startRemoteBluetoothScan(self.remoteAgentIP, self.remoteAgentPort)
-                if errcode != 0:
-                    self.statusBar().showMessage(errmsg)
-                    self.menuBtSpectrum.setChecked(False)
-                    self.btShowSpectrum = False
-                    self.btLastSpectrumState = False
-                    self.btSpectrumTimer.stop()
-                    return
-            else:
-                errcode, errmsg = stopRemoteBluetoothScan(self.remoteAgentIP, self.remoteAgentPort)
-                
-        if errcode != 0:
-            self.statusBar().showMessage(errmsg)
-            
         self.btShowSpectrum = self.menuBtSpectrum.isChecked()
         self.btLastSpectrumState = self.btShowSpectrum
         
@@ -1395,7 +1604,18 @@ class mainWindow(QMainWindow):
             
             if self.bluetooth and (not self.remoteAgentUp):
                 self.bluetooth.startScanning()
+            elif self.remoteAgentUp:
+                errcode, errmsg = startRemoteBluetoothScan(self.remoteAgentIP, self.remoteAgentPort)
+                if errcode != 0:
+                    self.statusBar().showMessage(errmsg)
+                    self.menuBtSpectrum.setChecked(False)
+                    self.btShowSpectrum = False
+                    self.btLastSpectrumState = False
+                    self.btSpectrumTimer.stop()
+                    return
                 
+            self.menuHackrfSpectrum24.setEnabled(False)
+            
             if not self.remoteAgentUp:
                 self.btSpectrumTimer.start(self.btSpectrumTimeoutLocal)
             else:
@@ -1404,10 +1624,25 @@ class mainWindow(QMainWindow):
             self.btSpectrumTimer.stop()
             if self.bluetooth and (not self.remoteAgentUp):
                 self.bluetooth.stopScanning()
+            elif self.remoteAgentUp:
+                errcode, errmsg = stopRemoteBluetoothScan(self.remoteAgentIP, self.remoteAgentPort)
+                if errcode != 0:
+                    self.statusBar().showMessage(errmsg)
+                    
+                
+            # If we're local:
+            if not self.remoteAgentUp:
+                hackrfsetting = self.hackrf.hasHackrf
+            else:
+                hackrfsetting = self.remoteHasHackrf
+                
+            if hackrfsetting and (not self.hackrfShowSpectrum5):
+                self.menuHackrfSpectrum24.setEnabled(True)
+            
             # remove it from the plot
-            if self.spectrumLine:
-                self.chart24.removeSeries(self.spectrumLine)
-                self.spectrumLine = None
+            if self.spectrum24Line:
+                self.chart24.removeSeries(self.spectrum24Line)
+                self.spectrum24Line = None
             
     def onAdvancedScanClosed(self):
         self.advancedScan = None
@@ -1641,7 +1876,7 @@ class mainWindow(QMainWindow):
             # Plot it
             self.createSpectrumLine()
 
-            self.spectrumLine.clear()
+            self.spectrum24Line.clear()
 
             if len(channelData) > 0:
                 sortedKeys = sorted(channelData.keys())
@@ -1653,15 +1888,72 @@ class mainWindow(QMainWindow):
                         dBm = float((channelData[curKey] + 110.0)*self.btSpectrumGain - 110.0)
                     else:
                         dBm = float(channelData[curKey])
-                    self.spectrumLine.append(fCurKey, dBm)
+                    self.spectrum24Line.append(fCurKey, dBm)
                 
-                # self.spectrumLine.append(12.0, -110.0)
+                # self.spectrum24Line.append(12.0, -110.0)
             
             if not self.remoteAgentUp:
                 self.btSpectrumTimer.start(self.btSpectrumTimeoutLocal)
             else:
                 # Slow it down just a bit for remote agents
                 self.btSpectrumTimer.start(self.btSpectrumTimeoutRemote)
+        
+    def onHackrfSpectrumTimer(self):
+        if self.hackrfShowSpectrum24 or self.hackrfShowSpectrum5: #  and self.bluetooth:
+            if (not self.remoteAgentUp):
+                # Get Local data
+                if self.hackrfShowSpectrum5:
+                    channelData = self.hackrf.spectrum5ToChannels()
+                else:
+                    channelData = self.hackrf.spectrum24ToChannels()
+                    
+                errcode = 0
+            else:
+                # Get remote data
+                errcode, errmsg, channelData = getRemoteSpectrumScan(self.remoteAgentIP, self.remoteAgentPort)
+
+                if errcode != 0:
+                    self.statusBar().showMessage(errmsg)
+                    channelData = {}
+                        
+            # Plot it
+            self.createSpectrumLine()
+
+            # Only clear the oen we're working with, just in case btSpectrum is active
+            if self.hackrfShowSpectrum24:
+                self.spectrum24Line.clear()
+            elif self.hackrfShowSpectrum5:
+                self.spectrum5Line.clear()
+
+            if len(channelData) > 0 and self.hackrfShowSpectrum24:
+                sortedKeys = sorted(channelData.keys())
+                for curKey in sortedKeys:
+                    fCurKey = float(curKey)
+                    if self.btSpectrumGain != 1.0:
+                        # Have to do this + / - to apply the gain on the scale since the values are all negative
+                        # -90 * 1.1 is -99 (goes the wrong way)
+                        dBm = float((channelData[curKey] + 110.0)*self.btSpectrumGain - 110.0)
+                    else:
+                        dBm = float(channelData[curKey])
+                    self.spectrum24Line.append(fCurKey, dBm)
+                
+            if len(channelData) > 0 and self.hackrfShowSpectrum5:
+                sortedKeys = sorted(channelData.keys())
+                for curKey in sortedKeys:
+                    fCurKey = float(curKey)
+                    if self.btSpectrumGain != 1.0:
+                        # Have to do this + / - to apply the gain on the scale since the values are all negative
+                        # -90 * 1.1 is -99 (goes the wrong way)
+                        dBm = float((channelData[curKey] + 110.0)*self.btSpectrumGain - 110.0)
+                    else:
+                        dBm = float(channelData[curKey])
+                    self.spectrum5Line.append(fCurKey, dBm)
+                
+            if not self.remoteAgentUp:
+                self.hackrfSpectrumTimer.start(self.hackrfSpectrumTimeoutLocal)
+            else:
+                # Slow it down just a bit for remote agents
+                self.hackrfSpectrumTimer.start(self.hackrfSpectrumTimeoutRemote)
         
     def onGPSTimer(self):
         self.onGPSStatus(False)
@@ -2015,6 +2307,15 @@ class mainWindow(QMainWindow):
         # Signal disconnect agent internally
         self.menuRemoteAgent.setChecked(False)
         self.onRemoteAgent()
+        
+        self.menuHackrfSpectrum24.setChecked(False)
+        self.menuHackrfSpectrum5.setChecked(False)
+        if self.hackrf.hasHackrf:
+            self.menuHackrfSpectrum24.setEnabled(True)
+            self.menuHackrfSpectrum5.setEnabled(True)
+        else:
+            self.menuHackrfSpectrum24.setEnabled(False)
+            self.menuHackrfSpectrum5.setEnabled(False)
         
         self.setBluetoothMenu()
         self.checkNotifyBluetoothDiscovery()
@@ -2542,7 +2843,7 @@ class mainWindow(QMainWindow):
     def onClearData(self):
         self.networkTable.setRowCount(0)
         self.chart24.removeAllSeries()
-        self.spectrumLine = None
+        self.spectrum24Line = None
         self.chart5.removeAllSeries()
         
         
@@ -2881,16 +3182,33 @@ class mainWindow(QMainWindow):
         configDialog = AgentConfigDialog(startupCfg, runningCfg, interfaces, agentIP, agentPort)
         configDialog.exec()
 
-    def stopSpectrumLine(self):
-        if self.spectrumLine:
-            self.btSpectrumTimer.stop()
-            self.spectrumLine.clear()
-            self.chart24.removeSeries(self.spectrumLine)
-            self.spectrumLine = None
+    def stopSpectrum24Line(self):
+        if self.spectrum24Line:
+            if self.btShowSpectrum:
+                self.btSpectrumTimer.stop()
+            elif self.hackrfShowSpectrum24:
+                self.hackrfSpectrumTimer.stop()
+                
+            self.spectrum24Line.clear()
+            self.chart24.removeSeries(self.spectrum24Line)
+            self.spectrum24Line = None
             self.btShowSpectrum = False
             self.btLastSpectrumState = False
             self.menuBtSpectrum.setChecked(False)
+            self.menuHackrfSpectrum24.setChecked(False)
+            self.hackrftShowSpectrum24 = False
+            self.hackrfLastSpectrumState24 = False
 
+    def stopSpectrum5Line(self):
+        if self.spectrum5Line:
+            self.hackrfSpectrumTimer.stop()
+            self.spectrum5Line.clear()
+            self.chart5.removeSeries(self.spectrum5Line)
+            self.spectrum5Line = None
+            self.hackrfShowSpectrum5 = False
+            self.hackrfLastSpectrumState5 = False
+            self.menuHackrfSpectrum5.setChecked(False)
+            
     def onRemoteAgent(self):
         if (self.menuRemoteAgent.isChecked() == self.lastRemoteState):
             # There's an extra bounce in this for some reason.
@@ -2938,10 +3256,7 @@ class mainWindow(QMainWindow):
                     self.menuRemoteAgent.setChecked(False)
                     return
                     
-                self.remoteAgentUp = True
-                self.missedAgentCycles = 0
-                
-                # If we're here we're good.
+                # If we're here we're probably good.
                 reply = QMessageBox.question(self, 'Question',"Would you like to just do 1 scan pass when pressing scan?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
 
                 if reply == QMessageBox.Yes:
@@ -2957,6 +3272,7 @@ class mainWindow(QMainWindow):
                     QMessageBox.question(self, 'Error',"An error occurred getting the remote interfaces.  Please check that the agent is running.", QMessageBox.Ok)
                     self.menuRemoteAgent.setChecked(False)
                     self.lblInterface.setText("Local Interface")
+                    self.statusBar().showMessage('An error occurred getting the remote interfaces')
                     return
                     
                 # Okay, we have interfaces.  Let's load them
@@ -2966,9 +3282,38 @@ class mainWindow(QMainWindow):
                         self.combo.addItem(curInterface)
                 else:
                     self.statusBar().showMessage('No wireless interfaces found.')
-                    
+
+                # Now we can signal that the remote agent is up.
+                
+                self.remoteAgentUp = True
+                self.missedAgentCycles = 0
+                
                 self.lastRemoteState = self.menuRemoteAgent.isChecked() 
 
+                # HackRF spectrum
+                errcode, errmsg, hashackrf, scan24running, scan5running = remoteHackrfStatus(self.remoteAgentIP, self.remoteAgentPort)
+                if errcode != 0:
+                    self.statusBar().showMessage('An error occurred getting hackrf status')
+                    hashackrf = False
+                    scan24running = False
+                    scan5running = False
+                
+                self.remoteHasHackrf = hashackrf
+                
+                self.menuHackrfSpectrum24.setEnabled(self.remoteHasHackrf)
+                self.menuHackrfSpectrum5.setEnabled(self.remoteHasHackrf)
+                self.menuHackrfSpectrum24.setChecked(scan24running)
+                self.menuHackrfSpectrum5.setChecked(scan5running)
+
+                if scan24running:
+                    # disable bluetooth spectrum and 5 spectrum
+                    self.menuHackrfSpectrum5.setEnabled(False)
+                    self.menuBtSpectrum.setEnabled(False)
+                    self.menuBtSpectrum.setChecked(False)
+                elif scan5running:
+                    # disable 24 hackrf spectrum
+                    self.menuHackrfSpectrum24.setEnabled(False)
+                    
                 # Deal with bluetooth.
                 # If we're running local spectrum or discovery, stop it.
                 # Then reconfigure based on remote agent state
@@ -2977,8 +3322,6 @@ class mainWindow(QMainWindow):
                 if self.bluetooth:
                     self.bluetooth.stopScanning()
                     
-                # Local discovery:
-                
                 errcode, errmsg, self.hasRemoteBluetooth, self.hasRemoteUbertooth, scanRunning, discoveryRunning, beaconRunning = getRemoteBluetoothRunningServices(self.remoteAgentIP, self.remoteAgentPort)
                 if errcode == 0:
                     self.setBluetoothMenu()
@@ -2988,7 +3331,7 @@ class mainWindow(QMainWindow):
                     if scanRunning:
                         self.btSpectrumTimer.start(self.btSpectrumTimeoutRemote)
                     else:
-                        self.stopSpectrumLine()
+                        self.stopSpectrum24Line()
                         
                     self.btBeacon = beaconRunning
                     self.menuBtBeacon.setChecked(beaconRunning)
@@ -2999,7 +3342,7 @@ class mainWindow(QMainWindow):
                     # Error state
                     self.btShowSpectrum = False
                     self.btLastSpectrumState = False
-                    self.stopSpectrumLine()
+                    self.stopSpectrum24Line()
                         
                     self.menuBtSpectrum.setChecked(False)
                     self.btSpectrumTimer.stop()
@@ -3019,6 +3362,8 @@ class mainWindow(QMainWindow):
                 self.setBluetoothMenu()
         else:
             # We're transitioning local
+            self.remoteAgentUp = False
+
             self.lblInterface.setText("Local Interface")
             self.combo.clear()
             interfaces=WirelessEngine.getInterfaces()
@@ -3029,16 +3374,18 @@ class mainWindow(QMainWindow):
             else:
                 self.statusBar().showMessage('No wireless interfaces found.')
 
-            self.remoteAgentUp = False
-
             self.lastRemoteState = self.menuRemoteAgent.isChecked() 
             self.onGPSStatus()
             
             self.btShowSpectrum = False
-            if self.spectrumLine:
-                self.stopSpectrumLine()
+            if self.spectrum24Line:
+                self.stopSpectrum24Line()
                 
             self.menuBtSpectrum.setChecked(False)
+            self.menuHackrfSpectrum24.setChecked(False)
+            self.menuHackrfSpectrum5.setChecked(False)
+            self.menuHackrfSpectrum24.setEnabled(self.hackrf.hasHackrf)
+            self.menuHackrfSpectrum5.setEnabled(self.hackrf.hasHackrf)
                     
             self.btBeacon = self.bluetooth.beaconRunning()
             self.menuBtBeacon.setChecked(self.btBeacon)
@@ -3101,6 +3448,8 @@ class mainWindow(QMainWindow):
         if self.bluetooth:
             self.bluetooth.stopScanning()
             
+        self.hackrf.stopScanning()
+        
         event.accept()
 
 # -------  Main Routine and Bluetooth Function -------------------------
