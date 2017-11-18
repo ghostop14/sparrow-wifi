@@ -95,7 +95,7 @@ def getOUIDB():
     return ouidb
     
 # ------------------  Global functions for agent HTTP requests ------------------------------
-def makeGetRequest(url, waitTimeout=4):
+def makeGetRequest(url, waitTimeout=6):
     try:
         # Not using a timeout can cause the request to hang indefinitely
         response = requests.get(url, timeout=waitTimeout)
@@ -205,7 +205,7 @@ def startRemoteSpectrumScan(agentIP, agentPort, scan5):
         
 def stopRemoteSpectrumScan(agentIP, agentPort):
     url = "http://" + agentIP + ":" + str(agentPort) + "/spectrum/scanstop"
-    statusCode, responsestr = makeGetRequest(url)
+    statusCode, responsestr = makeGetRequest(url, 10)
     
     if statusCode == 200:
         try:
@@ -220,7 +220,7 @@ def stopRemoteSpectrumScan(agentIP, agentPort):
             
 def getRemoteSpectrumScan(agentIP, agentPort):
     url = "http://" + agentIP + ":" + str(agentPort) + "/spectrum/scanstatus"
-    statusCode, responsestr = makeGetRequest(url)
+    statusCode, responsestr = makeGetRequest(url, 10)
     
     if statusCode == 200:
         try:
