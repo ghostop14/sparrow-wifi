@@ -2383,7 +2383,7 @@ class mainWindow(QMainWindow):
             # Want to stop a running scan (self.scanRunning represents the NEW pressed state)
             if self.scanThread:
                 self.scanThread.signalStop = True
-                
+
                 while (self.scanThread.threadRunning):
                     self.statusBar().showMessage('Waiting for active scan to terminate...')
                     sleep(0.2)
@@ -3414,17 +3414,19 @@ class mainWindow(QMainWindow):
             # event.ignore()       
         
         if self.scanRunning:
-            QMessageBox.question(self, 'Error',"Please stop the running scan first.", QMessageBox.Ok)
-            event.ignore()
-            return
-        else:
-            for curKey in self.telemetryWindows.keys():
-                curWindow = self.telemetryWindows[curKey]
-                try:
-                    curWindow.close()
-                    self.telemetryWindows[curKey] = None
-                except:
-                    pass
+            if not self.remoteAgentUp:
+                self.scanThread.signalStop = True
+            else:
+                if self.remoteScanThread:
+                    self.remoteScanThread.signalStop = True
+
+        for curKey in self.telemetryWindows.keys():
+            curWindow = self.telemetryWindows[curKey]
+            try:
+                curWindow.close()
+                self.telemetryWindows[curKey] = None
+            except:
+                pass
                     
         if self.advancedScan:
             self.advancedScan.close()
