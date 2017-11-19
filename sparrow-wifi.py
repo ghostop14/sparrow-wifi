@@ -1299,6 +1299,7 @@ class mainWindow(QMainWindow):
             self.chart5.addSeries(self.spectrum5Line)
             self.spectrum5Line.attachAxis(self.chart5.axisX())
             self.spectrum5Line.attachAxis(self.chart5.axisY())
+            # self.spectrum5Line.setUseOpenGL(True) # This causes the entire window to go blank
             
     def onBtBeacon(self):
         if (self.menuBtBeacon.isChecked() == self.btLastBeaconState):

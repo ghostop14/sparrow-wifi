@@ -65,7 +65,7 @@ HackRF support has been added to take advantage of the hackrf_sweep capabilities
 
 With that said, standard RF and and antenna rules apply.  If you want to monitor either band, make sure you have an antenna capable of receiving in that band.  And if you do want to grab an external dual-band antenna used on wireless cards, just note that the connector polarity is typically reversed (rp-sma) so you'll need to grab an adapter to connect it to the HackRF.  An RP-SMA will screw on to the SMA connector but the center pin isn't there so you won't actually receive anything.  Just a word of caution.
 
-Note: The 5 GHz spectrum, even with a dual-band antenna can be difficult to see signals in the same way as in 2.4 GHz.  Sometimes the band shows better in a waterfall plot, but if that's what you need try qspectrumanalyzer.
+Notes: The 5 GHz spectrum, even with a dual-band antenna can be difficult to see signals in the same way as in 2.4 GHz.  Sometimes the band shows better in a waterfall plot, but if that's what you need try qspectrumanalyzer.  One thing that does seem to help is on the Spectrum menu, increase the gain to about 1.4 for 5 GHz.
 
 Troubleshooting tips:
 - If you don't see any spectrum at all try running hackrf_sweep from the command-line.  If you get any errors, address them there.
