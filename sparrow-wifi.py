@@ -1080,17 +1080,19 @@ class mainWindow(QMainWindow):
         
         gpsMenu.addSeparator()
         
+        # This has been hidden for now.  Really didn't do anything new since this is covered with the timer now
         newAct = QAction('GPS Status', self)        
         newAct.setStatusTip('Show GPS Status')
         newAct.triggered.connect(self.onGPSStatus)
+        newAct.setVisible(False) 
         gpsMenu.addAction(newAct)
-        
+            
         newAct = QAction('GPS Coordinate Monitoring', self)        
         newAct.setStatusTip('Show GPS Coordinates')
         newAct.triggered.connect(self.onGPSCoordinates)
         gpsMenu.addAction(newAct)
         
-        if (os.path.isfile('/usr/bin/xgps') or os.path.isfile('/usr/local/bin/xgps')):
+        if self.hasXGPS():
             gpsMenu.addSeparator()
             newAct = QAction('Launch XGPS - Local', self)        
             newAct.setStatusTip('Show GPS GUI against local gpsd')
@@ -1176,6 +1178,12 @@ class mainWindow(QMainWindow):
         newAct.triggered.connect(self.onAbout)
         helpMenu.addAction(newAct)
 
+    def hasXGPS(self):
+        if (os.path.isfile('/usr/bin/xgps') or os.path.isfile('/usr/local/bin/xgps')):
+            return True
+        else:
+            return False
+        
     def setBluetoothMenu(self):
         self.menuBtBeacon.setEnabled(True)
         self.menuBtSpectrum.setEnabled(True)
@@ -1622,14 +1630,15 @@ class mainWindow(QMainWindow):
                 self.btSpectrumTimer.start(self.btSpectrumTimeoutRemote)
         else:
             self.btSpectrumTimer.stop()
+            self.setWaitCursor()
             if self.bluetooth and (not self.remoteAgentUp):
                 self.bluetooth.stopScanning()
             elif self.remoteAgentUp:
                 errcode, errmsg = stopRemoteBluetoothScan(self.remoteAgentIP, self.remoteAgentPort)
                 if errcode != 0:
                     self.statusBar().showMessage(errmsg)
+            self.setArrowCursor()
                     
-                
             # If we're local:
             if not self.remoteAgentUp:
                 hackrfsetting = self.hackrf.hasHackrf
@@ -1644,6 +1653,12 @@ class mainWindow(QMainWindow):
                 self.chart24.removeSeries(self.spectrum24Line)
                 self.spectrum24Line = None
             
+    def setWaitCursor(self):
+        self.setCursor(Qt.WaitCursor)
+        
+    def setArrowCursor(self):
+        self.setCursor(Qt.ArrowCursor)
+        
     def onAdvancedScanClosed(self):
         self.advancedScan = None
      
@@ -2240,11 +2255,12 @@ class mainWindow(QMainWindow):
         pass
         
     def onGPSStatusIndicatorClicked(self):
-        if self.menuRemoteAgent.isChecked():
-            self.onXGPSRemote()
-        else:
-            if GPSEngine.GPSDRunning():
-                self.onXGPSLocal()
+        if self.hasXGPS():
+            if self.menuRemoteAgent.isChecked():
+                self.onXGPSRemote()
+            else:
+                if GPSEngine.GPSDRunning():
+                    self.onXGPSLocal()
 
     def onSingleShotScanResults(self, wirelessNetworks, retCode, errString):
         # Change the GUI controls back
@@ -2389,6 +2405,8 @@ class mainWindow(QMainWindow):
         if not self.scanRunning:
             # Want to stop a running scan (self.scanRunning represents the NEW pressed state)
             if self.scanThread:
+                self.setWaitCursor()
+                
                 self.scanThread.signalStop = True
 
                 while (self.scanThread.threadRunning):
@@ -2396,6 +2414,8 @@ class mainWindow(QMainWindow):
                     sleep(0.2)
                     
                 self.scanThread = None
+                
+                self.setArrowCursor()
                 
             self.statusBar().showMessage('Ready')
         else:
@@ -2691,6 +2711,7 @@ class mainWindow(QMainWindow):
         self.populateUpdateExisting(wirelessNetworks, FromAdvanced)
 
         addedNetworks = 0
+        firstTableLoad = False
         
         for curKey in wirelessNetworks.keys():
             # Don't add duplicate
@@ -2725,6 +2746,7 @@ class mainWindow(QMainWindow):
             if rowPosition < 0:
                 addedFirstRow = True
                 rowPosition = 0
+                firstTableLoad = True
                 
             self.networkTable.insertRow(rowPosition)
             
@@ -2768,6 +2790,9 @@ class mainWindow(QMainWindow):
 
         self.ageOut()
 
+        if firstTableLoad:
+            self.networkTable.resizeColumnsToContents()
+            
         if addedNetworks > 0:
             if self.networkTableSortIndex >=0:
                 self.networkTable.sortItems(self.networkTableSortIndex, self.networkTableSortOrder )
@@ -2775,8 +2800,8 @@ class mainWindow(QMainWindow):
         self.checkTelemetryWindows()
         
         # Last formatting tweaks on network table
-        self.networkTable.resizeColumnsToContents()
-        self.networkTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        # self.networkTable.resizeColumnsToContents()
+        # self.networkTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         
         self.updateLock.release()
 
@@ -2887,6 +2912,8 @@ class mainWindow(QMainWindow):
             return
         
         # this will be a list
+        self.setWaitCursor()
+        
         fileLines = f.readlines()
         f.close()
         
@@ -2895,7 +2922,9 @@ class mainWindow(QMainWindow):
         
         if len(wirelessNetworks) > 0:
             self.populateTable(wirelessNetworks)
-                
+        
+        self.setArrowCursor()
+        
     def onImportJSON(self):
         fileName = self.openFileDialog("JSON Files (*.json);;All Files (*)")
 
@@ -2905,7 +2934,9 @@ class mainWindow(QMainWindow):
         if not os.path.isfile(fileName):
             QMessageBox.question(self, 'Error','File ' + fileName + " doesn't exist.", QMessageBox.Ok)
             return
-            
+        
+        self.setWaitCursor()
+        
         wirelessNetworks = {}
         json_data = ""
         
@@ -2915,10 +2946,12 @@ class mainWindow(QMainWindow):
         try:
             netDict = json.loads(json_data)
         except:
+            self.setArrowCursor()
             QMessageBox.question(self, 'Error',"Unable to parse JSON data.", QMessageBox.Ok)
             return
         
         if not 'wifi-aps' in netDict:
+            self.setArrowCursor()
             QMessageBox.question(self, 'Error',"JSON appears to be the wrong format (no wifi-aps tag).", QMessageBox.Ok)
             return
             
@@ -2931,6 +2964,8 @@ class mainWindow(QMainWindow):
         if len(wirelessNetworks) > 0:
             self.onClearData()
             self.populateTable(wirelessNetworks)
+
+        self.setArrowCursor()
             
     def onImportCSV(self):
         fileName = self.openFileDialog()
@@ -2945,6 +2980,7 @@ class mainWindow(QMainWindow):
         wirelessNetworks = {}
         
         with open(fileName, 'r') as f:
+            self.setWaitCursor()
             reader = csv.reader(f)
             raw_list = list(reader)
             
@@ -2955,57 +2991,63 @@ class mainWindow(QMainWindow):
             if len(raw_list) > 1:
                 # Check header row looks okay
                 if raw_list[0][0] != 'macAddr' or (len(raw_list[0]) < 22):
+                    self.setArrowCursor()
                     QMessageBox.question(self, 'Error',"File format doesn't look like an exported scan.", QMessageBox.Ok)
                     return
                         
                 # Ignore header row
-                for i in range (1, len(raw_list)):
-                    if (len(raw_list[i]) >= 22):
-                        newNet = WirelessNetwork()
-                        newNet.macAddr=raw_list[i][0]
-                        # 1 will be vendor
-                        newNet.ssid = raw_list[i][2].replace('"', '')
-                        newNet.security = raw_list[i][3]
-                        newNet.privacy = raw_list[i][4]
-                        
-                        # Channel could be primary+secondary
-                        channelstr = raw_list[i][5]
-                        
-                        if '+' in channelstr:
-                            newNet.channel = int(channelstr.split('+')[0])
-                            newNet.secondaryChannel = int(channelstr.split('+')[1])
+                try:
+                    for i in range (1, len(raw_list)):
+                        if (len(raw_list[i]) >= 22):
+                            newNet = WirelessNetwork()
+                            newNet.macAddr=raw_list[i][0]
+                            # 1 will be vendor
+                            newNet.ssid = raw_list[i][2].replace('"', '')
+                            newNet.security = raw_list[i][3]
+                            newNet.privacy = raw_list[i][4]
                             
-                            if newNet.secondaryChannel > newNet.channel:
-                                newNet.secondaryChannelLocation = 'above'
+                            # Channel could be primary+secondary
+                            channelstr = raw_list[i][5]
+                            
+                            if '+' in channelstr:
+                                newNet.channel = int(channelstr.split('+')[0])
+                                newNet.secondaryChannel = int(channelstr.split('+')[1])
+                                
+                                if newNet.secondaryChannel > newNet.channel:
+                                    newNet.secondaryChannelLocation = 'above'
+                                else:
+                                    newNet.secondaryChannelLocation = 'below'
                             else:
-                                newNet.secondaryChannelLocation = 'below'
-                        else:
-                            newNet.channel = int(raw_list[i][5])
-                            newNet.secondaryChannel = 0
-                            newNet.secondaryChannelLocation = 'none'
-                        
-                        newNet.frequency = int(raw_list[i][6])
-                        newNet.signal = int(raw_list[i][7])
-                        newNet.strongestsignal = int(raw_list[i][8])
-                        newNet.bandwidth = int(raw_list[i][9])
-                        newNet.lastSeen = parser.parse(raw_list[i][10])
-                        newNet.firstSeen = parser.parse(raw_list[i][11])
-                        newNet.gps.isValid = stringtobool(raw_list[i][12])
-                        newNet.gps.latitude = float(raw_list[i][13])
-                        newNet.gps.longitude = float(raw_list[i][14])
-                        newNet.gps.altitude = float(raw_list[i][15])
-                        newNet.gps.speed = float(raw_list[i][16])
-                        newNet.strongestgps.isValid = stringtobool(raw_list[i][17])
-                        newNet.strongestgps.latitude = float(raw_list[i][18])
-                        newNet.strongestgps.longitude = float(raw_list[i][19])
-                        newNet.strongestgps.altitude = float(raw_list[i][20])
-                        newNet.strongestgps.speed = float(raw_list[i][21])
-                        
-                        wirelessNetworks[newNet.getKey()] = newNet
-                    
+                                newNet.channel = int(raw_list[i][5])
+                                newNet.secondaryChannel = 0
+                                newNet.secondaryChannelLocation = 'none'
+                            
+                            newNet.frequency = int(raw_list[i][6])
+                            newNet.signal = int(raw_list[i][7])
+                            newNet.strongestsignal = int(raw_list[i][8])
+                            newNet.bandwidth = int(raw_list[i][9])
+                            newNet.lastSeen = parser.parse(raw_list[i][10])
+                            newNet.firstSeen = parser.parse(raw_list[i][11])
+                            newNet.gps.isValid = stringtobool(raw_list[i][12])
+                            newNet.gps.latitude = float(raw_list[i][13])
+                            newNet.gps.longitude = float(raw_list[i][14])
+                            newNet.gps.altitude = float(raw_list[i][15])
+                            newNet.gps.speed = float(raw_list[i][16])
+                            newNet.strongestgps.isValid = stringtobool(raw_list[i][17])
+                            newNet.strongestgps.latitude = float(raw_list[i][18])
+                            newNet.strongestgps.longitude = float(raw_list[i][19])
+                            newNet.strongestgps.altitude = float(raw_list[i][20])
+                            newNet.strongestgps.speed = float(raw_list[i][21])
+                            
+                            wirelessNetworks[newNet.getKey()] = newNet
+                except:
+                    QMessageBox.question(self, 'Error',"File format doesn't look like an exported scan.", QMessageBox.Ok)
+
         if len(wirelessNetworks) > 0:
             self.onClearData()
             self.populateTable(wirelessNetworks)
+
+        self.setArrowCursor()
 
     def onExportJSON(self):
         fileName = self.saveFileDialog("JSON Files (*.json);;All Files (*)")
@@ -3032,6 +3074,8 @@ class mainWindow(QMainWindow):
         outputdict = {}
         netlist = []
         
+        self.setWaitCursor()
+        
         for i in range(0, numItems):
             curData = self.networkTable.item(i, 2).data(Qt.UserRole+1)
             netlist.append(curData.toJsondict())
@@ -3042,6 +3086,9 @@ class mainWindow(QMainWindow):
         outputFile.write(outputstr)
         
         outputFile.close()
+        
+        self.setArrowCursor()
+        
         self.updateLock.release()
         
     def onExportCSV(self):
@@ -3066,7 +3113,9 @@ class mainWindow(QMainWindow):
             outputFile.close()
             self.updateLock.release()
             return
-           
+
+        self.setWaitCursor()
+        
         for i in range(0, numItems):
             curData = self.networkTable.item(i, 2).data(Qt.UserRole+1)
 
@@ -3077,6 +3126,8 @@ class mainWindow(QMainWindow):
                                     str(curData.strongestgps.isValid) + ',' + str(curData.strongestgps.latitude) + ',' + str(curData.strongestgps.longitude) + ',' + str(curData.strongestgps.altitude) + ',' + str(curData.strongestgps.speed) + '\n')
             
         outputFile.close()
+        
+        self.setArrowCursor()
         
         self.updateLock.release()
         
