@@ -56,10 +56,19 @@ If you would like to scan for bluetooth, you'll need a few things:
 	- Ubertooth tools installed and functioning (you can test it with ubertooth-specan-ui)
 	- Blue Hydra installed into /opt/bluetooth/blue_hydra (mkdir /opt/bluetooth && cd /opt/bluetooth && git clone https://github.com/pwnieexpress/blue_hydra.git).  Then make sure you've followed the blue_hydra installation instructions.  You can test it with bin/blue_hydra.  This msut be in /opt/bluetooth/blue_hydra or the app won't find it.
 
+Some troubleshooting tips:
+- If you don't see any devices with a basic LE advertisement scan, try "hcitool lescan" from the command-line and see if you get any errors.  If so address them there.  Sometimes a quick "hciconfig hci0 down && hciconfig hci0 up" can fix it.
+- If you have an Ubertooth and don't see any spectrum try running ubertooth-specan or ubertooth-specan-ui from the command line.  If you get any errors address them there.
+
 ## Spectrum / HackRF
 HackRF support has been added to take advantage of the hackrf_sweep capabilities added to the firmware.  With a HackRF you can sweep the entire range for a view of the spectrum.  While hackrf_sweep can sweep from 2.4 GHz through 5 GHz, the frame rate was too slow (like 1 frame every 2 seconds), so you can use it for only one band at a time.  With that said, if you have both an Ubertooth and a HackRF, you could use the Ubertooth to display the 2.4 GHz band and the HackRF to display the 5 GHz band simultaneously.
 
 With that said, standard RF and and antenna rules apply.  If you want to monitor either band, make sure you have an antenna capable of receiving in that band.  And if you do want to grab an external dual-band antenna used on wireless cards, just note that the connector polarity is typically reversed (rp-sma) so you'll need to grab an adapter to connect it to the HackRF.  An RP-SMA will screw on to the SMA connector but the center pin isn't there so you won't actually receive anything.  Just a word of caution.
+
+Note: The 5 GHz spectrum, even with a dual-band antenna can be difficult to see signals in the same way as in 2.4 GHz.  Sometimes the band shows better in a waterfall plot, but if that's what you need try qspectrumanalyzer.
+
+Troubleshooting tips:
+- If you don't see any spectrum at all try running hackrf_sweep from the command-line.  If you get any errors, address them there.
 
 ## Running sparrow-wifi remote agent
 Because the agent needs to use iw and bluetooth tools to scan, you will need to run sparrowwifiagent as root.  Simply run:

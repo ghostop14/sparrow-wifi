@@ -1193,14 +1193,14 @@ class mainWindow(QMainWindow):
             # Local
             if not self.hasUbertooth:
                 self.menuBtSpectrum.setEnabled(False)
-                self.menuBtSpectrumGain.setEnabled(False)
+                # self.menuBtSpectrumGain.setEnabled(False)
             if not self.hasBluetooth:
                 self.menuBtBluetooth.setEnabled(False)
                 self.menuBtBeacon.setEnabled(False)
         else:
             if not self.hasRemoteUbertooth:
                 self.menuBtSpectrum.setEnabled(False)
-                self.menuBtSpectrumGain.setEnabled(False)
+                # self.menuBtSpectrumGain.setEnabled(False)
             if not self.hasRemoteBluetooth:
                 self.menuBtBluetooth.setEnabled(False)
                 self.menuBtBeacon.setEnabled(False)
@@ -3410,7 +3410,7 @@ class mainWindow(QMainWindow):
                     
                     self.menuBtBeacon.setEnabled(False)
                     self.menuBtSpectrum.setEnabled(False)
-                    self.menuBtSpectrumGain.setEnabled(False)
+                    # self.menuBtSpectrumGain.setEnabled(False)
                     
                 self.onGPSStatus()
             else:

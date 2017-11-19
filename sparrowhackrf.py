@@ -41,6 +41,7 @@ class HackrfSweepThread(BaseThreadClass):
         
         self.gain = 40
         # mirror qspectrumanalyzer
+        # In python3 / is a floating point operation whereas // is explicitly integer division.  Result is without remainder
         self.lna_gain = 8 * (self.gain // 18)
         self.vga_gain = 2 * ((self.gain - self.lna_gain) // 2)
         
@@ -99,11 +100,15 @@ class HackrfSweepThread(BaseThreadClass):
                 try:
                     startfreq = int(data[2])
                     
+                    # debug:
+                    # print('DEBUG: ' + str(startfreq) + "," + data[3])
+                    
                     numSamples = len(data) - 6
                     # self.parentHackrf.spectrumLock.acquire()
                     
-                    for i in range(0, numSamples):
-                        self.parentHackrf.spectrum[startfreq + i * self.binWidth] = float(data[i+6])
+                    if numSamples > 0:
+                        for i in range(0, numSamples):
+                            self.parentHackrf.spectrum[startfreq + i * self.binWidth] = float(data[i+6])
                     
                     # self.parentHackrf.spectrumLock.release()
                 except:
@@ -145,9 +150,12 @@ class SparrowHackrf(object):
     def resetSpectrum(self):
         self.spectrum.clear()
         
+        # + 1 is for the range loop.  range goes 1 less than numNetries
         numEntries = int((self.maxFreq - self.minFreq) * 1000000 / self.binWidth) + 1
+        freqHz = self.minFreq * 1000000
+        
         for i in range(0, numEntries):
-            self.spectrum[self.minFreq + i * self.binWidth] = -100.0
+            self.spectrum[freqHz + i * self.binWidth] = -100.0
             
         
     def getNumHackrfDevices():
@@ -176,22 +184,19 @@ class SparrowHackrf(object):
         self.binWidth = 500000
         self.gain = 40
         
-        self.resetSpectrum()
-        
-        self.startScanning()
+        self.startScanning(16, 24)
         
     def startScanning5(self):
         self.minFreq = 5170
         # self.maxFreq = 5270
         self.maxFreq = 5840
-        self.binWidth = 1000000
+        self.binWidth = 2000000
         self.gain = 48
 
-        self.resetSpectrum()
+        # 5 GHz needs more gain
+        self.startScanning(32, 16)
         
-        self.startScanning()
-        
-    def startScanning(self):
+    def startScanning(self, lna_gain = 32, vga_gain = 16):
         if not self.hasHackrf:
             return
             
@@ -204,9 +209,12 @@ class SparrowHackrf(object):
         self.spectrumScanThread.binWidth = self.binWidth  # 250 KHz width
         self.spectrumScanThread.gain = self.gain
         # mirror qspectrumanalyzer
-        self.spectrumScanThread.lna_gain = 8 * (self.gain // 18)
-        self.spectrumScanThread.vga_gain = 2 * ((self.gain - self.spectrumScanThread.lna_gain) // 2)
+        self.spectrumScanThread.lna_gain = lna_gain
+        self.spectrumScanThread.vga_gain = vga_gain
 
+        self.spectrum.clear()
+        # self.resetSpectrum()
+        
         self.spectrumScanThread.start()
         
     def scanRunning(self):
@@ -276,7 +284,8 @@ class SparrowHackrf(object):
                     curFreq = float(curKey)/1000000.0
                     channel = SparrowHackrf.fFreqTo5Channel(curFreq)
                     power = self.spectrum[curKey]
-                    power = self.spectrum[curKey] - 25.0
+                    # 5 Ghz with the gain the noise floor is a bit higher.
+                    power = self.spectrum[curKey] - 30.0
                     if power <= -100.0:
                         power = -100.0
                     retVal[channel] = power
@@ -342,8 +351,13 @@ if __name__ == '__main__':
     if SparrowHackrf.getNumHackrfDevices() == 0:
         print("ERROR: No HackRF devices found.")
         exit(1)
-        
-    hackrf.startScanning()
+    
+    # Scan 5 GHz
+    hackrf.minFreq = 5170
+    hackrf.maxFreq = 5840
+    hackrf.binWidth = 1000000
+    
+    hackrf.startScanning(32, 16)
     
     for i in range(0, 30):
         sleep(1)
