@@ -20,6 +20,10 @@
 from threading import Thread
 from time import sleep
 import socket
+import platform
+import subprocess
+import io
+import gzip
 
 # ------------------  Global functions ------------------------------
 def stringtobool(instr):
@@ -59,6 +63,27 @@ def ping(host):
         pass
 
     return retVal
+    
+def gzipCompress(inputString):
+    out = io.BytesIO()
+    
+    with gzip.GzipFile(fileobj=out, mode='w') as ofile:
+        ofile.write(inputString.encode())
+        
+    compressedBytes = out.getvalue()
+    
+    return compressedBytes
+    
+def gzipUncompress(inputBytes):
+    inp = io.BytesIO()
+    inp.write(inputBytes)
+    inp.seek(0)
+    
+    with gzip.GzipFile(fileobj=inp, mode='rb') as ofile:
+        gunzippedString = ofile.read()
+        
+    return gunzippedString.decode('ASCII')
+    
 # ------------------  Class Base Thread ----------------------------------
 class BaseThreadClass(Thread):
     def __init__(self):

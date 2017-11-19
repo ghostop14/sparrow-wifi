@@ -38,6 +38,7 @@ from sparrowdrone import SparrowDroneMavlink
 from sparrowrpi import SparrowRPi
 from sparrowbluetooth import SparrowBluetooth
 from sparrowhackrf import SparrowHackrf
+from sparrowcommon import gzipCompress
 
 try:
     from manuf import manuf
@@ -719,8 +720,17 @@ class SparrowWiFiAgent(object):
         global useRPILeds
         
         server_address = ('', port)
-        httpd = HTTPServer.HTTPServer(server_address, SparrowWiFiAgentRequestHandler)
-        
+        try:
+            httpd = HTTPServer.HTTPServer(server_address, SparrowWiFiAgentRequestHandler)
+        except OSError as e:
+            curTime = datetime.datetime.now()
+            print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] Unable to bind to port " + str(port) +  ". " + e.strerror)
+            if runningcfg.useRPiLEDs:
+                SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_OFF)
+                SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)
+            exit(1)
+            
+    
         curTime = datetime.datetime.now()
         print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] Starting Sparrow-wifi agent on port " + str(port))
 
@@ -1244,745 +1254,115 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
         if len(s.client_address) == 0:
             # This should have the connecting client IP.  If this isn't at least 1, something is wrong
             return
-        
-        if len(allowedIPs) > 0:
-            if s.client_address[0] not in allowedIPs:
-                s.send_response(403)
+            
+        try:
+            # If the pipe gets broken mid-stream it'll throw an exception
+            if len(allowedIPs) > 0:
+                if s.client_address[0] not in allowedIPs:
+                    s.send_response(403)
+                    s.send_header("Content-type", "text/html")
+                    s.end_headers()
+                    s.wfile.write("<html><body><p>Connections not authorized from your IP address</p>".encode("utf-8"))
+                    s.wfile.write("</body></html>".encode("UTF-8"))
+                    if useRPILeds:
+                    # Green will heartbeat when servicing requests. Turn back solid here
+                        SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_ON)
+                    return
+
+            if not s.isValidGetURL():
+                s.send_response(404)
                 s.send_header("Content-type", "text/html")
                 s.end_headers()
-                s.wfile.write("<html><body><p>Connections not authorized from your IP address</p>".encode("utf-8"))
+                s.wfile.write("<html><body><p>Bad Request</p>".encode("utf-8"))
                 s.wfile.write("</body></html>".encode("UTF-8"))
                 if useRPILeds:
-                # Green will heartbeat when servicing requests. Turn back solid here
+                    # Green will heartbeat when servicing requests. Turn back solid here
                     SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_ON)
                 return
+                
+            """Respond to a GET request."""
+            if (not s.path.startswith('/system/getrecording/') and (not s.path == ('/bluetooth/scanstatus')) and 
+                (not s.path == ('/spectrum/scanstatus'))):
+                # In getrecording we may adjust the content type header based on file extension
+                # Spectrum we'll gzip
+                s.send_response(200)
+                s.send_header("Content-type", "application/json")
+                s.end_headers()
+                
+            # NOTE: In python 3, string is a bit different.  Examples write strings directly for Python2,
+            # In python3 you have to convert it to UTF-8 bytes
+            # s.wfile.write("<html><head><title>Sparrow-wifi agent</title></head><body>".encode("utf-8"))
 
-        if not s.isValidGetURL():
-            s.send_response(404)
-            s.send_header("Content-type", "text/html")
-            s.end_headers()
-            s.wfile.write("<html><body><p>Bad Request</p>".encode("utf-8"))
-            s.wfile.write("</body></html>".encode("UTF-8"))
-            if useRPILeds:
-                # Green will heartbeat when servicing requests. Turn back solid here
-                SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_ON)
-            return
-            
-        """Respond to a GET request."""
-        if not s.path.startswith('/system/getrecording/'):
-            # In getrecording we may adjust the content type header based on file extension
-            s.send_response(200)
-            #s.send_header("Content-type", "text/html")
-            s.send_header("Content-type", "application/json")
-            s.end_headers()
-            
-        # NOTE: In python 3, string is a bit different.  Examples write strings directly for Python2,
-        # In python3 you have to convert it to UTF-8 bytes
-        # s.wfile.write("<html><head><title>Sparrow-wifi agent</title></head><body>".encode("utf-8"))
+            if s.path == '/wireless/interfaces':
+                wirelessInterfaces = WirelessEngine.getInterfaces()
+                jsondict={}
+                jsondict['interfaces']=wirelessInterfaces
+                jsonstr = json.dumps(jsondict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            elif '/wireless/networks/' in s.path:
+                # THIS IS THE NORMAL SCAN
+                inputstr = s.path.replace('/wireless/networks/', '')
+                # Sanitize command-line input here:
+                p = re.compile('^([0-9a-zA-Z]+)')
+                try:
+                    fieldValue = p.search(inputstr).group(1)
+                except:
+                    fieldValue = ""
 
-        if s.path == '/wireless/interfaces':
-            wirelessInterfaces = WirelessEngine.getInterfaces()
-            jsondict={}
-            jsondict['interfaces']=wirelessInterfaces
-            jsonstr = json.dumps(jsondict)
-            s.wfile.write(jsonstr.encode("UTF-8"))
-        elif '/wireless/networks/' in s.path:
-            # THIS IS THE NORMAL SCAN
-            inputstr = s.path.replace('/wireless/networks/', '')
-            # Sanitize command-line input here:
-            p = re.compile('^([0-9a-zA-Z]+)')
-            try:
-                fieldValue = p.search(inputstr).group(1)
-            except:
-                fieldValue = ""
+                if len(fieldValue) == 0:
+                    if useRPILeds:
+                        # Green will heartbeat when servicing requests. Turn back solid here
+                        SparrowRPi.greenLED(LIGHT_STATE_ON)
+                        
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    return
+                
+                if '?' in inputstr:
+                    splitlist = inputstr.split('?')
+                    curInterface = splitlist[0]
+                else:
+                    curInterface = inputstr
+                    
+                p = re.compile('.*Frequencies=(.*)', re.IGNORECASE)
+                try:
+                    channelStr = p.search(inputstr).group(1)
+                except:
+                    channelStr = ""
 
-            if len(fieldValue) == 0:
+                huntChannelList = []
+                
+                if ',' in channelStr:
+                    tmpList = channelStr.split(',')
+                else:
+                    tmpList = []
+                
+                if len(tmpList) > 0:
+                    for curItem in tmpList:
+                        try:
+                            if len(curItem) > 0:
+                                huntChannelList.append(int(curItem))
+                                # Get results for the specified interface
+                                # Need to iterate through the channels and aggregate the results
+                        except:
+                            pass
+
                 if useRPILeds:
-                    # Green will heartbeat when servicing requests. Turn back solid here
-                    SparrowRPi.greenLED(LIGHT_STATE_ON)
+                    # Green will heartbeat when servicing requests
+                    SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_OFF)
+                    sleep(0.1)
                     
-                responsedict = {}
-                responsedict['errcode'] = 5
-                responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-                return
-            
-            if '?' in inputstr:
-                splitlist = inputstr.split('?')
-                curInterface = splitlist[0]
-            else:
-                curInterface = inputstr
+                if curInterface not in lockList.keys():
+                    lockList[curInterface] = Lock()
                 
-            p = re.compile('.*Frequencies=(.*)', re.IGNORECASE)
-            try:
-                channelStr = p.search(inputstr).group(1)
-            except:
-                channelStr = ""
-
-            huntChannelList = []
-            
-            if ',' in channelStr:
-                tmpList = channelStr.split(',')
-            else:
-                tmpList = []
-            
-            if len(tmpList) > 0:
-                for curItem in tmpList:
-                    try:
-                        if len(curItem) > 0:
-                            huntChannelList.append(int(curItem))
-                            # Get results for the specified interface
-                            # Need to iterate through the channels and aggregate the results
-                    except:
-                        pass
-
-            if useRPILeds:
-                # Green will heartbeat when servicing requests
-                SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_OFF)
-                sleep(0.1)
+                curLock = lockList[curInterface]
                 
-            if curInterface not in lockList.keys():
-                lockList[curInterface] = Lock()
-            
-            curLock = lockList[curInterface]
-            
-            if (curLock):
-                curLock.acquire()
-                
-            if useMavlink:
-                gpsCoord = GPSStatus()
-                gpsCoord.gpsInstalled = True
-                gpsCoord.gpsRunning = True
-                gpsCoord.isValid = mavlinkGPSThread.synchronized
-                gpsCoord.latitude = mavlinkGPSThread.latitude
-                gpsCoord.longitude = mavlinkGPSThread.longitude
-                gpsCoord.altitude = mavlinkGPSThread.altitude
-                gpsCoord.speed = mavlinkGPSThread.vehicle.getAirSpeed()
-                retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, gpsCoord, huntChannelList)
-            elif gpsEngine.gpsValid():
-                retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, gpsEngine.lastCoord, huntChannelList)
-                if useRPILeds:
-                    SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)
-            else:
-                retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, None, huntChannelList)
-                if useRPILeds:
-                    SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_HEARTBEAT)
-                
-            if (curLock):
-                curLock.release()
-        
-            s.wfile.write(jsonstr.encode("UTF-8"))
-        elif s.path == '/gps/status':
-            jsondict={}
-            
-            if not useMavlink:
-                jsondict['gpsinstalled'] = str(GPSEngine.GPSDInstalled())
-                jsondict['gpsrunning'] = str(GPSEngine.GPSDRunning())
-                jsondict['gpssynch'] = str(gpsEngine.gpsValid())
-                if gpsEngine.gpsValid():
-                    gpsPos = {}
-                    gpsPos['latitude'] = gpsEngine.lastCoord.latitude
-                    gpsPos['longitude'] = gpsEngine.lastCoord.longitude
-                    gpsPos['altitude'] = gpsEngine.lastCoord.altitude
-                    gpsPos['speed'] = gpsEngine.lastCoord.speed
-                    jsondict['gpspos'] = gpsPos
-                    if useRPILeds:
-                        SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)
-                else:
-                    if useRPILeds:
-                        SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_HEARTBEAT)
-            else:
-                jsondict['gpsinstalled'] = 'True'
-                jsondict['gpsrunning'] = 'True'
-                jsondict['gpssynch'] = str(mavlinkGPSThread.synchronized)
-                gpsPos = {}
-                gpsPos['latitude'] = mavlinkGPSThread.latitude
-                gpsPos['longitude'] = mavlinkGPSThread.longitude
-                gpsPos['altitude'] = mavlinkGPSThread.altitude
-                gpsPos['speed'] = mavlinkGPSThread.vehicle.getAirSpeed()
-                jsondict['gpspos'] = gpsPos
-                
-            jsonstr = json.dumps(jsondict)
-            s.wfile.write(jsonstr.encode("UTF-8"))
-        elif s.path == '/wireless/moninterfaces':
-            wirelessInterfaces = WirelessEngine.getMonitoringModeInterfaces()
-            jsondict={}
-            jsondict['interfaces']=wirelessInterfaces
-            jsonstr = json.dumps(jsondict)
-            s.wfile.write(jsonstr.encode("UTF-8"))
-        elif s.path == '/system/getrecordings':
-            filelist = getRecordingFiles()
-            
-            responsedict = {}
-            responsedict['files'] = filelist
-            
-            jsonstr = json.dumps(responsedict)
-            s.wfile.write(jsonstr.encode("UTF-8"))
-        elif s.path.startswith('/system/getrecording/'):
-            filename = s.path.replace('/system/getrecording/', '')
-            s.sendFile(filename)
-        elif s.path == '/bluetooth/present':
-                responsedict = {}
-                responsedict['errcode'] = 0
-                responsedict['errmsg'] = ''
-                responsedict['hasbluetooth'] = hasBluetooth
-                if hasBluetooth:
-                    responsedict['scanrunning'] = bluetooth.scanRunnning()
-                else:
-                    responsedict['scanrunning'] = False
+                if (curLock):
+                    curLock.acquire()
                     
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-        elif s.path.startswith('/bluetooth/beacon'):
-            if not hasBluetooth:
-                responsedict = {}
-                responsedict['errcode'] = 1
-                responsedict['errmsg'] = 'Bluetooth not supported on this agent'
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-            else:
-                function=s.path.replace('/bluetooth/beacon', '')
-                function = function.replace('/', '')
-                
-                responsedict = {}
-                responsedict['errcode'] = 0
-                responsedict['errmsg'] = ''
-                
-                if function=='start':
-                    if bluetooth.discoveryRunning():
-                        bluetooth.stopDiscovery()
-
-                    retVal = bluetooth.startBeacon()
-                    
-                    if not retVal:
-                        responsedict['errcode'] = 1
-                        responsedict['errmsg'] = 'Unable to start beacon.'
-                elif function == 'stop':
-                    bluetooth.stopBeacon()
-                else:
-                    responsedict['errcode'] = 1
-                    responsedict['errmsg'] = 'Unknown command'
-                    
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-        elif s.path.startswith('/bluetooth/scan'):
-            if not hasBluetooth:
-                responsedict = {}
-                responsedict['errcode'] = 1
-                responsedict['errmsg'] = 'Bluetooth not supported on this agent'
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-            else:
-                function=s.path.replace('/bluetooth/scan', '')
-                function = function.replace('/', '')
-                
-                responsedict = {}
-                responsedict['errcode'] = 0
-                responsedict['errmsg'] = ''
-                
-                if function=='start':
-                    bluetooth.startScanning()
-                elif function == 'stop':
-                    bluetooth.stopScanning()
-                elif function == 'status':
-                    channelData = bluetooth.spectrumToChannels()
-                    responsedict['channeldata'] = channelData
-                else:
-                    responsedict['errcode'] = 1
-                    responsedict['errmsg'] = 'Unknown command'
-                    
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-        elif s.path.startswith('/bluetooth/discovery'):
-            if not hasBluetooth:
-                responsedict = {}
-                responsedict['errcode'] = 1
-                responsedict['errmsg'] = 'Bluetooth not supported on this agent'
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-            else:
-                function=s.path.replace('/bluetooth/discovery', '')
-                function = function.replace('/', '')
-                
-                responsedict = {}
-                responsedict['errcode'] = 0
-                responsedict['errmsg'] = ''
-                
-                if function=='startp':
-                    # Promiscuous with ubertooth
-                    bluetooth.startDiscovery(True)
-                elif function == 'starta':
-                    # Normal with Bluetooth
-                    bluetooth.startDiscovery(False)
-                elif function == 'stop':
-                    bluetooth.stopDiscovery()
-                elif function == 'status':
-                    errcode, devices = bluetooth.getDiscoveredDevices()
-                    
-                    if errcode == 0:
-                        devdict = []
-                        for curdevice in devices:
-                            entryDict = curdevice.toJsondict()
-                            devdict.append(entryDict)
-                        responsedict['devices'] = devdict
-                    else:
-                        responsedict['errcode'] = errcode
-                        responsedict['devices'] = []
-                else:
-                    responsedict['errcode'] = 1
-                    responsedict['errmsg'] = 'Unknown command'
-                    
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-        elif s.path == '/bluetooth/running':
-            if not hasBluetooth:
-                responsedict = {}
-                responsedict['errcode'] = 1
-                responsedict['errmsg'] = 'Bluetooth not supported on this agent'
-                responsedict['hasbluetooth'] = hasBluetooth
-                responsedict['hasubertooth'] = hasUbertooth
-                responsedict['spectrumscanrunning'] = False
-                responsedict['discoveryscanrunning'] = False
-                responsedict['beaconrunning'] = False
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-            else:
-                responsedict = {}
-                responsedict['errcode'] = 0
-                responsedict['errmsg'] = ''
-
-                responsedict['hasbluetooth'] = hasBluetooth
-                responsedict['hasubertooth'] = hasUbertooth
-                responsedict['spectrumscanrunning'] = bluetooth.scanRunning()
-                responsedict['discoveryscanrunning'] = bluetooth.discoveryRunning()
-                responsedict['beaconrunning'] = bluetooth.beaconRunning()
-                
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-        elif s.path == '/spectrum/hackrfstatus':
-                responsedict = {}
-                responsedict['errcode'] = 0
-                responsedict['errmsg'] = ''
-                responsedict['hashackrf'] = hackrf.hasHackrf
-                responsedict['scan24running'] = hackrf.scanRunning24()
-                responsedict['scan5running'] = hackrf.scanRunning5()
-                    
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-        elif s.path.startswith('/spectrum/scan'):
-            if not hackrf.hasHackrf:
-                responsedict = {}
-                responsedict['errcode'] = 1
-                responsedict['errmsg'] = 'HackRF is not supported on this agent'
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-            else:
-                function=s.path.replace('/spectrum/scan', '')
-                function = function.replace('/', '')
-                
-                responsedict = {}
-                responsedict['errcode'] = 0
-                responsedict['errmsg'] = ''
-                
-                if function=='start24':
-                    hackrf.startScanning24()
-                elif function == 'start5':
-                    hackrf.startScanning5()
-                elif function == 'stop':
-                    hackrf.stopScanning()
-                elif function == 'status':
-                    if hackrf.scanRunning24():
-                        channelData = hackrf.spectrum24ToChannels()
-                        responsedict['scanrunning'] = hackrf.scanRunning24()
-                    elif hackrf.scanRunning5():
-                        channelData = hackrf.spectrum5ToChannels()
-                        responsedict['scanrunning'] = hackrf.scanRunning24()
-                    else:
-                        channelData = {}  # Shouldn't be here but just in case.
-                        responsedict['scanrunning'] = False
-                        
-                    responsedict['channeldata'] = channelData
-                else:
-                    responsedict['errcode'] = 1
-                    responsedict['errmsg'] = 'Unknown command'
-                    
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-        elif s.path == '/system/config':
-            cfgSettings = AgentConfigSettings()
-            cfgSettings.fromConfigFile('sparrowwifiagent.cfg')
-            responsedict = {}
-            responsedict['startup'] = cfgSettings.toJsondict()
-            
-            if recordThread:
-                runningcfg.recordRunning = True
-                runningcfg.recordInterface = recordThread.interface
-                
-            responsedict['running'] = runningcfg.toJsondict()
-            
-            jsonstr = json.dumps(responsedict)
-            s.wfile.write(jsonstr.encode("UTF-8"))
-        elif s.path.startswith('/system/startrecord'):
-            recordinterface = s.path.replace('/system/startrecord/', '')
-            
-            # Check that the specified interface is valid:
-            interfaces = WirelessEngine.getInterfaces()
-            
-            if recordinterface in interfaces:
-                startRecord(recordinterface)
-                responsedict = {}
-                responsedict['errcode'] = 0
-                responsedict['errmsg'] = ''
-                jsonstr = json.dumps(responsedict)
-            else:
-                responsedict = {}
-                responsedict['errcode'] = 1
-                responsedict['errmsg'] = 'The requested interface was not found on the system.'
-                jsonstr = json.dumps(responsedict)
-                
-            s.wfile.write(jsonstr.encode("UTF-8"))
-        elif s.path == '/system/stoprecord':
-            stopRecord()
-            responsedict = {}
-            responsedict['errcode'] = 0
-            responsedict['errmsg'] = ''
-            jsonstr = json.dumps(responsedict)
-            s.wfile.write(jsonstr.encode("UTF-8"))
-        elif '/falcon/startmonmode' in s.path:
-            if not hasFalcon:
-                responsedict = {}
-                responsedict['errcode'] = 5
-                responsedict['errmsg'] = "Unknown request: " + s.path
-                
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-            else:
-                inputstr = s.path.replace('/falcon/startmonmode/', '')
-                # Sanitize command-line input here:
-                p = re.compile('^([0-9a-zA-Z]+)')
-                try:
-                    fieldValue = p.search(inputstr).group(1)
-                except:
-                    fieldValue = ""
-                    
-                if len(fieldValue) == 0:
-                    if useRPILeds:
-                        # Green will heartbeat when servicing requests. Turn back solid here
-                        SparrowRPi.greenLED(LIGHT_STATE_ON)
-                        
-                    responsedict = {}
-                    responsedict['errcode'] = 5
-                    responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
-                    jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
-                    return
-                    
-                retVal, errMsg = falconWiFiRemoteAgent.startMonitoringInterface(fieldValue)
-                responsedict = {}
-                responsedict['errcode'] = retVal
-                responsedict['errmsg'] = errMsg
-                
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-        elif '/falcon/stopmonmode' in s.path:
-            if not hasFalcon:
-                responsedict = {}
-                responsedict['errcode'] = 5
-                responsedict['errmsg'] = "Unknown request: " + s.path
-                
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-            else:
-                inputstr = s.path.replace('/falcon/stopmonmode/', '')
-                # Sanitize command-line input here:
-                p = re.compile('^([0-9a-zA-Z]+)')
-                try:
-                    fieldValue = p.search(inputstr).group(1)
-                except:
-                    fieldValue = ""
-                    
-                if len(fieldValue) == 0:
-                    if useRPILeds:
-                        # Green will heartbeat when servicing requests. Turn back solid here
-                        SparrowRPi.greenLED(LIGHT_STATE_ON)
-                        
-                    responsedict = {}
-                    responsedict['errcode'] = 5
-                    responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
-                    jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
-                    return
-                    
-                retVal, errMsg = falconWiFiRemoteAgent.stopMonitoringInterface(fieldValue)
-                responsedict = {}
-                responsedict['errcode'] = retVal
-                responsedict['errmsg'] = errMsg
-                
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-        elif '/falcon/scanrunning' in s.path:
-            if not hasFalcon:
-                responsedict = {}
-                responsedict['errcode'] = 5
-                responsedict['errmsg'] = "Unknown request: " + s.path
-                
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-            else:
-                inputstr = s.path.replace('/falcon/scanrunning/', '')
-                # Sanitize command-line input here:
-                p = re.compile('^([0-9a-zA-Z]+)')
-                try:
-                    fieldValue = p.search(inputstr).group(1)
-                except:
-                    fieldValue = ""
-                    
-                if len(fieldValue) == 0:
-                    if useRPILeds:
-                        # Green will heartbeat when servicing requests. Turn back solid here
-                        SparrowRPi.greenLED(LIGHT_STATE_ON)
-                        
-                    responsedict = {}
-                    responsedict['errcode'] = 5
-                    responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
-                    jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
-                    return
-                    
-                scanrunning = falconWiFiRemoteAgent.isScanRunning(fieldValue)
-                
-                if scanrunning:
-                    retVal = 0
-                    errMsg = "scan for " + fieldValue + " is running"
-                else:
-                    retVal = 1
-                    errMsg = "scan for " + fieldValue + " is not running"
-                    
-                responsedict = {}
-                responsedict['errcode'] = retVal
-                responsedict['errmsg'] = errMsg
-                
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-        elif '/falcon/startscan' in s.path:
-            if not hasFalcon:
-                responsedict = {}
-                responsedict['errcode'] = 5
-                responsedict['errmsg'] = "Unknown request: " + s.path
-                
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-            else:
-                inputstr = s.path.replace('/falcon/startscan/', '')
-                # Sanitize command-line input here:
-                p = re.compile('^([0-9a-zA-Z]+)')
-                try:
-                    fieldValue = p.search(inputstr).group(1)
-                except:
-                    fieldValue = ""
-                    
-                if len(fieldValue) == 0:
-                    if useRPILeds:
-                        # Green will heartbeat when servicing requests. Turn back solid here
-                        SparrowRPi.greenLED(LIGHT_STATE_ON)
-                        
-                    responsedict = {}
-                    responsedict['errcode'] = 5
-                    responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
-                    jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
-                    return
-                    
-                scanProc = falconWiFiRemoteAgent.startCapture(fieldValue)
-                
-                if scanProc is not None:
-                    retVal = 0
-                    errMsg = ""
-                else:
-                    retVal = -1
-                    errMsg = "Unable to start scanning process."
-                    
-                responsedict = {}
-                responsedict['errcode'] = retVal
-                responsedict['errmsg'] = errMsg
-                
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-        elif '/falcon/stopscan' in s.path:
-            if not hasFalcon:
-                responsedict = {}
-                responsedict['errcode'] = 5
-                responsedict['errmsg'] = "Unknown request: " + s.path
-                
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-            else:
-                inputstr = s.path.replace('/falcon/stopscan/', '')
-                # Sanitize command-line input here:
-                p = re.compile('^([0-9a-zA-Z]+)')
-                try:
-                    fieldValue = p.search(inputstr).group(1)
-                except:
-                    fieldValue = ""
-                    
-                if len(fieldValue) == 0:
-                    if useRPILeds:
-                        # Green will heartbeat when servicing requests. Turn back solid here
-                        SparrowRPi.greenLED(LIGHT_STATE_ON)
-                        
-                    responsedict = {}
-                    responsedict['errcode'] = 5
-                    responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
-                    jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
-                    return
-                    
-                retVal = falconWiFiRemoteAgent.stopCapture(fieldValue)
-                
-                if retVal == 0:
-                    errMsg = ""
-                else:
-                    errMsg = "Unable to stop scanning process."
-                    
-                responsedict = {}
-                responsedict['errcode'] = retVal
-                responsedict['errmsg'] = errMsg
-                
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-        elif '/falcon/stopcrack' in s.path:
-            if not hasFalcon:
-                responsedict = {}
-                responsedict['errcode'] = 5
-                responsedict['errmsg'] = "Unknown request: " + s.path
-                
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-            else:
-                inputstr = s.path.replace('/falcon/stopcrack/', '')
-                # Sanitize command-line input here:
-                p = re.compile('^([0-9a-zA-Z]+)')
-                try:
-                    curInterface = p.search(inputstr).group(1)
-                except:
-                    curInterface = ""
-                    
-                if len(curInterface) == 0:
-                    if useRPILeds:
-                        # Green will heartbeat when servicing requests. Turn back solid here
-                        SparrowRPi.greenLED(LIGHT_STATE_ON)
-                        
-                    responsedict = {}
-                    responsedict['errcode'] = 5
-                    responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
-                    jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
-                    return
-                
-                try:
-                    if curInterface in falconWiFiRemoteAgent.WEPCrackList:
-                        falconWiFiRemoteAgent.WEPCrackList[curInterface].stopCrack()
-                        falconWiFiRemoteAgent.WEPCrackList[curInterface].cleanupTempFiles()
-                        del falconWiFiRemoteAgent.WEPCrackList[curInterface]
-                        
-                    if curInterface in falconWiFiRemoteAgent.WPAPSKCrackList:
-                        falconWiFiRemoteAgent.WPAPSKCrackList[curInterface].stopCrack()
-                        falconWiFiRemoteAgent.WPAPSKCrackList[curInterface].cleanupTempFiles()
-                        del falconWiFiRemoteAgent.WPAPSKCrackList[curInterface]
-                except:
-                    pass
-                    
-                retVal = 0
-                errMsg = ""
-                
-                responsedict = {}
-                responsedict['errcode'] = retVal
-                responsedict['errmsg'] = errMsg
-                
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-        elif '/falcon/crackstatus' in s.path:
-            if not hasFalcon:
-                responsedict = {}
-                responsedict['errcode'] = 5
-                responsedict['errmsg'] = "Unknown request: " + s.path
-                
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-            else:
-                if 'crackstatuswep' in s.path:
-                    type='wep'
-                else:
-                    type = 'wpapsk'
-                    
-                inputstr = s.path.replace('/falcon/crackstatus'+type+'/', '')
-                # Sanitize command-line input here:
-                p = re.compile('^([0-9a-zA-Z]+)')
-                try:
-                    curInterface = p.search(inputstr).group(1)
-                except:
-                    curInterface = ""
-                    
-                if len(curInterface) == 0:
-                    if useRPILeds:
-                        # Green will heartbeat when servicing requests. Turn back solid here
-                        SparrowRPi.greenLED(LIGHT_STATE_ON)
-                        
-                    responsedict = {}
-                    responsedict['errcode'] = 5
-                    responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + curInterface
-                    jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
-                    return
-                
-                responsedict = {}
-                retVal = -1
-                errMsg = "Unable to find running crack."
-                                
-                try:
-                    if type == 'wep':
-                        if curInterface in falconWiFiRemoteAgent.WEPCrackList:
-                            wepCrack = falconWiFiRemoteAgent.WEPCrackList[curInterface]
-                            retVal = 0
-                            errMsg = ""
-                            responsedict['isrunning'] = wepCrack.isRunning()
-                            responsedict['ivcount'] = wepCrack.getIVCount()
-                            responsedict['ssid'] = wepCrack.SSID
-                            responsedict['crackedpasswords'] = wepCrack.getCrackedPasswords()
-                    else:
-                        if curInterface in falconWiFiRemoteAgent.WPAPSKCrackList:
-                            wpaPSKCrack = falconWiFiRemoteAgent.WPAPSKCrackList[curInterface]
-                            retVal = 0
-                            errMsg = ""
-                            responsedict['isrunning'] = wpaPSKCrack.isRunning()
-                            hasHandshake = wpaPSKCrack.hasHandshake()
-                            responsedict['hashandshake'] = hasHandshake
-                            
-                            if hasHandshake:
-                                # For WPAPSK, lets copy the capture file to our recording directory for recovery
-                                dirname, filename = os.path.split(os.path.abspath(__file__))
-                                fullpath, filename=wpaPSKCrack.copyCaptureFile(dirname + '/recordings')
-                                responsedict['capturefile'] = filename
-                            else:
-                                responsedict['capturefile'] = ""
-                except:
-                    pass
-                    
-                responsedict['errcode'] = retVal
-                responsedict['errmsg'] = errMsg
-                
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-        elif s.path == '/falcon/getscanresults':
-            if not hasFalcon:
-                responsedict = {}
-                responsedict['errcode'] = 5
-                responsedict['errmsg'] = "Unknown request: " + s.path
-                
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-            else:
                 if useMavlink:
                     gpsCoord = GPSStatus()
                     gpsCoord.gpsInstalled = True
@@ -1992,78 +1372,739 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     gpsCoord.longitude = mavlinkGPSThread.longitude
                     gpsCoord.altitude = mavlinkGPSThread.altitude
                     gpsCoord.speed = mavlinkGPSThread.vehicle.getAirSpeed()
-                    retCode, errString, jsonstr=falconWiFiRemoteAgent.getNetworksAsJson(gpsCoord)
+                    retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, gpsCoord, huntChannelList)
                 elif gpsEngine.gpsValid():
-                    retCode, errString, jsonstr=falconWiFiRemoteAgent.getNetworksAsJson(gpsEngine.lastCoord)
+                    retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, gpsEngine.lastCoord, huntChannelList)
                     if useRPILeds:
                         SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)
                 else:
-                    retCode, errString, jsonstr=falconWiFiRemoteAgent.getNetworksAsJson(None)
+                    retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, None, huntChannelList)
                     if useRPILeds:
-                        # This just signals that the GPS isn't synced
                         SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_HEARTBEAT)
-                
+                    
+                if (curLock):
+                    curLock.release()
+            
                 s.wfile.write(jsonstr.encode("UTF-8"))
-        elif '/falcon/stopalldeauths' in s.path:
-            if not hasFalcon:
+            elif s.path == '/gps/status':
+                jsondict={}
+                
+                if not useMavlink:
+                    jsondict['gpsinstalled'] = str(GPSEngine.GPSDInstalled())
+                    jsondict['gpsrunning'] = str(GPSEngine.GPSDRunning())
+                    jsondict['gpssynch'] = str(gpsEngine.gpsValid())
+                    if gpsEngine.gpsValid():
+                        gpsPos = {}
+                        gpsPos['latitude'] = gpsEngine.lastCoord.latitude
+                        gpsPos['longitude'] = gpsEngine.lastCoord.longitude
+                        gpsPos['altitude'] = gpsEngine.lastCoord.altitude
+                        gpsPos['speed'] = gpsEngine.lastCoord.speed
+                        jsondict['gpspos'] = gpsPos
+                        if useRPILeds:
+                            SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)
+                    else:
+                        if useRPILeds:
+                            SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_HEARTBEAT)
+                else:
+                    jsondict['gpsinstalled'] = 'True'
+                    jsondict['gpsrunning'] = 'True'
+                    jsondict['gpssynch'] = str(mavlinkGPSThread.synchronized)
+                    gpsPos = {}
+                    gpsPos['latitude'] = mavlinkGPSThread.latitude
+                    gpsPos['longitude'] = mavlinkGPSThread.longitude
+                    gpsPos['altitude'] = mavlinkGPSThread.altitude
+                    gpsPos['speed'] = mavlinkGPSThread.vehicle.getAirSpeed()
+                    jsondict['gpspos'] = gpsPos
+                    
+                jsonstr = json.dumps(jsondict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            elif s.path == '/wireless/moninterfaces':
+                wirelessInterfaces = WirelessEngine.getMonitoringModeInterfaces()
+                jsondict={}
+                jsondict['interfaces']=wirelessInterfaces
+                jsonstr = json.dumps(jsondict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            elif s.path == '/system/getrecordings':
+                filelist = getRecordingFiles()
+                
                 responsedict = {}
-                responsedict['errcode'] = 5
-                responsedict['errmsg'] = "Unknown request: " + s.path
+                responsedict['files'] = filelist
                 
                 jsonstr = json.dumps(responsedict)
                 s.wfile.write(jsonstr.encode("UTF-8"))
-            else:
-                inputstr = s.path.replace('/falcon/stopalldeauths/', '')
-                # Sanitize command-line input here:
-                p = re.compile('^([0-9a-zA-Z]+)')
-                try:
-                    fieldValue = p.search(inputstr).group(1)
-                except:
-                    fieldValue = ""
-                    
-                if len(fieldValue) == 0:
-                    if useRPILeds:
-                        # Green will heartbeat when servicing requests. Turn back solid here
-                        SparrowRPi.greenLED(LIGHT_STATE_ON)
-                        
+            elif s.path.startswith('/system/getrecording/'):
+                filename = s.path.replace('/system/getrecording/', '')
+                s.sendFile(filename)
+            elif s.path == '/bluetooth/present':
                     responsedict = {}
-                    responsedict['errcode'] = 5
-                    responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
+                    responsedict['errcode'] = 0
+                    responsedict['errmsg'] = ''
+                    responsedict['hasbluetooth'] = hasBluetooth
+                    if hasBluetooth:
+                        responsedict['scanrunning'] = bluetooth.scanRunnning()
+                    else:
+                        responsedict['scanrunning'] = False
+                        
                     jsonstr = json.dumps(responsedict)
                     s.wfile.write(jsonstr.encode("UTF-8"))
-                    return
+            elif s.path.startswith('/bluetooth/beacon'):
+                if not hasBluetooth:
+                    responsedict = {}
+                    responsedict['errcode'] = 1
+                    responsedict['errmsg'] = 'Bluetooth not supported on this agent'
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                else:
+                    function=s.path.replace('/bluetooth/beacon', '')
+                    function = function.replace('/', '')
                     
-                falconWiFiRemoteAgent.stopAllDeauths(fieldValue)
+                    responsedict = {}
+                    responsedict['errcode'] = 0
+                    responsedict['errmsg'] = ''
+                    
+                    if function=='start':
+                        if bluetooth.discoveryRunning():
+                            bluetooth.stopDiscovery()
+
+                        retVal = bluetooth.startBeacon()
+                        
+                        if not retVal:
+                            responsedict['errcode'] = 1
+                            responsedict['errmsg'] = 'Unable to start beacon.'
+                    elif function == 'stop':
+                        bluetooth.stopBeacon()
+                    else:
+                        responsedict['errcode'] = 1
+                        responsedict['errmsg'] = 'Unknown command'
+                        
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+            elif s.path.startswith('/bluetooth/scan'):
+                if not hasBluetooth:
+                    responsedict = {}
+                    responsedict['errcode'] = 1
+                    responsedict['errmsg'] = 'Bluetooth not supported on this agent'
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                else:
+                    function=s.path.replace('/bluetooth/scan', '')
+                    function = function.replace('/', '')
+                    
+                    responsedict = {}
+                    responsedict['errcode'] = 0
+                    responsedict['errmsg'] = ''
+                    
+                    if function=='start':
+                        bluetooth.startScanning()
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    elif function == 'stop':
+                        bluetooth.stopScanning()
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    elif function == 'status':
+                        channelData = bluetooth.spectrumToChannels()
+                        responsedict['channeldata'] = channelData
+                        s.send_response(200)
+                        s.send_header("Content-type", "application/json")
+                        s.send_header("Content-Encoding", "gzip")
+                        s.end_headers()
+                        jsonstr = json.dumps(responsedict)
+                        gzipBytes = gzipCompress(jsonstr)
+                        # s.wfile.write(jsonstr.encode("UTF-8"))
+                        s.wfile.write(gzipBytes)
+                    else:
+                        responsedict['errcode'] = 1
+                        responsedict['errmsg'] = 'Unknown command'
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                        
+            elif s.path.startswith('/bluetooth/discovery'):
+                if not hasBluetooth:
+                    responsedict = {}
+                    responsedict['errcode'] = 1
+                    responsedict['errmsg'] = 'Bluetooth not supported on this agent'
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                else:
+                    function=s.path.replace('/bluetooth/discovery', '')
+                    function = function.replace('/', '')
+                    
+                    responsedict = {}
+                    responsedict['errcode'] = 0
+                    responsedict['errmsg'] = ''
+                    
+                    if function=='startp':
+                        # Promiscuous with ubertooth
+                        bluetooth.startDiscovery(True)
+                    elif function == 'starta':
+                        # Normal with Bluetooth
+                        bluetooth.startDiscovery(False)
+                    elif function == 'stop':
+                        bluetooth.stopDiscovery()
+                    elif function == 'status':
+                        errcode, devices = bluetooth.getDiscoveredDevices()
+                        
+                        if errcode == 0:
+                            devdict = []
+                            for curdevice in devices:
+                                entryDict = curdevice.toJsondict()
+                                devdict.append(entryDict)
+                            responsedict['devices'] = devdict
+                        else:
+                            responsedict['errcode'] = errcode
+                            responsedict['devices'] = []
+                    else:
+                        responsedict['errcode'] = 1
+                        responsedict['errmsg'] = 'Unknown command'
+                        
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+            elif s.path == '/bluetooth/running':
+                if not hasBluetooth:
+                    responsedict = {}
+                    responsedict['errcode'] = 1
+                    responsedict['errmsg'] = 'Bluetooth not supported on this agent'
+                    responsedict['hasbluetooth'] = hasBluetooth
+                    responsedict['hasubertooth'] = hasUbertooth
+                    responsedict['spectrumscanrunning'] = False
+                    responsedict['discoveryscanrunning'] = False
+                    responsedict['beaconrunning'] = False
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                else:
+                    responsedict = {}
+                    responsedict['errcode'] = 0
+                    responsedict['errmsg'] = ''
+
+                    responsedict['hasbluetooth'] = hasBluetooth
+                    responsedict['hasubertooth'] = hasUbertooth
+                    responsedict['spectrumscanrunning'] = bluetooth.scanRunning()
+                    responsedict['discoveryscanrunning'] = bluetooth.discoveryRunning()
+                    responsedict['beaconrunning'] = bluetooth.beaconRunning()
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+            elif s.path == '/spectrum/hackrfstatus':
+                    responsedict = {}
+                    responsedict['errcode'] = 0
+                    responsedict['errmsg'] = ''
+                    responsedict['hashackrf'] = hackrf.hasHackrf
+                    responsedict['scan24running'] = hackrf.scanRunning24()
+                    responsedict['scan5running'] = hackrf.scanRunning5()
+                        
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+            elif s.path.startswith('/spectrum/scan'):
+                if not hackrf.hasHackrf:
+                    responsedict = {}
+                    responsedict['errcode'] = 1
+                    responsedict['errmsg'] = 'HackRF is not supported on this agent'
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                else:
+                    function=s.path.replace('/spectrum/scan', '')
+                    function = function.replace('/', '')
+                    
+                    responsedict = {}
+                    responsedict['errcode'] = 0
+                    responsedict['errmsg'] = ''
+                    
+                    if function=='start24':
+                        hackrf.startScanning24()
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    elif function == 'start5':
+                        hackrf.startScanning5()
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    elif function == 'stop':
+                        hackrf.stopScanning()
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    elif function == 'status':
+                        if hackrf.scanRunning24():
+                            channelData = hackrf.spectrum24ToChannels()
+                            responsedict['scanrunning'] = hackrf.scanRunning24()
+                        elif hackrf.scanRunning5():
+                            channelData = hackrf.spectrum5ToChannels()
+                            responsedict['scanrunning'] = hackrf.scanRunning24()
+                        else:
+                            channelData = {}  # Shouldn't be here but just in case.
+                            responsedict['scanrunning'] = False
+                            
+                        responsedict['channeldata'] = channelData
+
+                        s.send_response(200)
+                        s.send_header("Content-type", "application/json")
+                        s.send_header("Content-Encoding", "gzip")
+                        s.end_headers()
+                        jsonstr = json.dumps(responsedict)
+                        gzipBytes = gzipCompress(jsonstr)
+                        # s.wfile.write(jsonstr.encode("UTF-8"))
+                        s.wfile.write(gzipBytes)
+                    else:
+                        responsedict['errcode'] = 1
+                        responsedict['errmsg'] = 'Unknown command'
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+            elif s.path == '/system/config':
+                cfgSettings = AgentConfigSettings()
+                cfgSettings.fromConfigFile('sparrowwifiagent.cfg')
                 responsedict = {}
-                responsedict['errcode'] = 0
-                responsedict['errmsg'] = ""
+                responsedict['startup'] = cfgSettings.toJsondict()
+                
+                if recordThread:
+                    runningcfg.recordRunning = True
+                    runningcfg.recordInterface = recordThread.interface
+                    
+                responsedict['running'] = runningcfg.toJsondict()
                 
                 jsonstr = json.dumps(responsedict)
                 s.wfile.write(jsonstr.encode("UTF-8"))
-        elif '/falcon/getalldeauths' in s.path:
-            if not hasFalcon:
+            elif s.path.startswith('/system/startrecord'):
+                recordinterface = s.path.replace('/system/startrecord/', '')
+                
+                # Check that the specified interface is valid:
+                interfaces = WirelessEngine.getInterfaces()
+                
+                if recordinterface in interfaces:
+                    startRecord(recordinterface)
+                    responsedict = {}
+                    responsedict['errcode'] = 0
+                    responsedict['errmsg'] = ''
+                    jsonstr = json.dumps(responsedict)
+                else:
+                    responsedict = {}
+                    responsedict['errcode'] = 1
+                    responsedict['errmsg'] = 'The requested interface was not found on the system.'
+                    jsonstr = json.dumps(responsedict)
+                    
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            elif s.path == '/system/stoprecord':
+                stopRecord()
+                responsedict = {}
+                responsedict['errcode'] = 0
+                responsedict['errmsg'] = ''
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            elif '/falcon/startmonmode' in s.path:
+                if not hasFalcon:
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Unknown request: " + s.path
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                else:
+                    inputstr = s.path.replace('/falcon/startmonmode/', '')
+                    # Sanitize command-line input here:
+                    p = re.compile('^([0-9a-zA-Z]+)')
+                    try:
+                        fieldValue = p.search(inputstr).group(1)
+                    except:
+                        fieldValue = ""
+                        
+                    if len(fieldValue) == 0:
+                        if useRPILeds:
+                            # Green will heartbeat when servicing requests. Turn back solid here
+                            SparrowRPi.greenLED(LIGHT_STATE_ON)
+                            
+                        responsedict = {}
+                        responsedict['errcode'] = 5
+                        responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                        return
+                        
+                    retVal, errMsg = falconWiFiRemoteAgent.startMonitoringInterface(fieldValue)
+                    responsedict = {}
+                    responsedict['errcode'] = retVal
+                    responsedict['errmsg'] = errMsg
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+            elif '/falcon/stopmonmode' in s.path:
+                if not hasFalcon:
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Unknown request: " + s.path
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                else:
+                    inputstr = s.path.replace('/falcon/stopmonmode/', '')
+                    # Sanitize command-line input here:
+                    p = re.compile('^([0-9a-zA-Z]+)')
+                    try:
+                        fieldValue = p.search(inputstr).group(1)
+                    except:
+                        fieldValue = ""
+                        
+                    if len(fieldValue) == 0:
+                        if useRPILeds:
+                            # Green will heartbeat when servicing requests. Turn back solid here
+                            SparrowRPi.greenLED(LIGHT_STATE_ON)
+                            
+                        responsedict = {}
+                        responsedict['errcode'] = 5
+                        responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                        return
+                        
+                    retVal, errMsg = falconWiFiRemoteAgent.stopMonitoringInterface(fieldValue)
+                    responsedict = {}
+                    responsedict['errcode'] = retVal
+                    responsedict['errmsg'] = errMsg
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+            elif '/falcon/scanrunning' in s.path:
+                if not hasFalcon:
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Unknown request: " + s.path
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                else:
+                    inputstr = s.path.replace('/falcon/scanrunning/', '')
+                    # Sanitize command-line input here:
+                    p = re.compile('^([0-9a-zA-Z]+)')
+                    try:
+                        fieldValue = p.search(inputstr).group(1)
+                    except:
+                        fieldValue = ""
+                        
+                    if len(fieldValue) == 0:
+                        if useRPILeds:
+                            # Green will heartbeat when servicing requests. Turn back solid here
+                            SparrowRPi.greenLED(LIGHT_STATE_ON)
+                            
+                        responsedict = {}
+                        responsedict['errcode'] = 5
+                        responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                        return
+                        
+                    scanrunning = falconWiFiRemoteAgent.isScanRunning(fieldValue)
+                    
+                    if scanrunning:
+                        retVal = 0
+                        errMsg = "scan for " + fieldValue + " is running"
+                    else:
+                        retVal = 1
+                        errMsg = "scan for " + fieldValue + " is not running"
+                        
+                    responsedict = {}
+                    responsedict['errcode'] = retVal
+                    responsedict['errmsg'] = errMsg
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+            elif '/falcon/startscan' in s.path:
+                if not hasFalcon:
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Unknown request: " + s.path
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                else:
+                    inputstr = s.path.replace('/falcon/startscan/', '')
+                    # Sanitize command-line input here:
+                    p = re.compile('^([0-9a-zA-Z]+)')
+                    try:
+                        fieldValue = p.search(inputstr).group(1)
+                    except:
+                        fieldValue = ""
+                        
+                    if len(fieldValue) == 0:
+                        if useRPILeds:
+                            # Green will heartbeat when servicing requests. Turn back solid here
+                            SparrowRPi.greenLED(LIGHT_STATE_ON)
+                            
+                        responsedict = {}
+                        responsedict['errcode'] = 5
+                        responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                        return
+                        
+                    scanProc = falconWiFiRemoteAgent.startCapture(fieldValue)
+                    
+                    if scanProc is not None:
+                        retVal = 0
+                        errMsg = ""
+                    else:
+                        retVal = -1
+                        errMsg = "Unable to start scanning process."
+                        
+                    responsedict = {}
+                    responsedict['errcode'] = retVal
+                    responsedict['errmsg'] = errMsg
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+            elif '/falcon/stopscan' in s.path:
+                if not hasFalcon:
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Unknown request: " + s.path
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                else:
+                    inputstr = s.path.replace('/falcon/stopscan/', '')
+                    # Sanitize command-line input here:
+                    p = re.compile('^([0-9a-zA-Z]+)')
+                    try:
+                        fieldValue = p.search(inputstr).group(1)
+                    except:
+                        fieldValue = ""
+                        
+                    if len(fieldValue) == 0:
+                        if useRPILeds:
+                            # Green will heartbeat when servicing requests. Turn back solid here
+                            SparrowRPi.greenLED(LIGHT_STATE_ON)
+                            
+                        responsedict = {}
+                        responsedict['errcode'] = 5
+                        responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                        return
+                        
+                    retVal = falconWiFiRemoteAgent.stopCapture(fieldValue)
+                    
+                    if retVal == 0:
+                        errMsg = ""
+                    else:
+                        errMsg = "Unable to stop scanning process."
+                        
+                    responsedict = {}
+                    responsedict['errcode'] = retVal
+                    responsedict['errmsg'] = errMsg
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+            elif '/falcon/stopcrack' in s.path:
+                if not hasFalcon:
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Unknown request: " + s.path
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                else:
+                    inputstr = s.path.replace('/falcon/stopcrack/', '')
+                    # Sanitize command-line input here:
+                    p = re.compile('^([0-9a-zA-Z]+)')
+                    try:
+                        curInterface = p.search(inputstr).group(1)
+                    except:
+                        curInterface = ""
+                        
+                    if len(curInterface) == 0:
+                        if useRPILeds:
+                            # Green will heartbeat when servicing requests. Turn back solid here
+                            SparrowRPi.greenLED(LIGHT_STATE_ON)
+                            
+                        responsedict = {}
+                        responsedict['errcode'] = 5
+                        responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                        return
+                    
+                    try:
+                        if curInterface in falconWiFiRemoteAgent.WEPCrackList:
+                            falconWiFiRemoteAgent.WEPCrackList[curInterface].stopCrack()
+                            falconWiFiRemoteAgent.WEPCrackList[curInterface].cleanupTempFiles()
+                            del falconWiFiRemoteAgent.WEPCrackList[curInterface]
+                            
+                        if curInterface in falconWiFiRemoteAgent.WPAPSKCrackList:
+                            falconWiFiRemoteAgent.WPAPSKCrackList[curInterface].stopCrack()
+                            falconWiFiRemoteAgent.WPAPSKCrackList[curInterface].cleanupTempFiles()
+                            del falconWiFiRemoteAgent.WPAPSKCrackList[curInterface]
+                    except:
+                        pass
+                        
+                    retVal = 0
+                    errMsg = ""
+                    
+                    responsedict = {}
+                    responsedict['errcode'] = retVal
+                    responsedict['errmsg'] = errMsg
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+            elif '/falcon/crackstatus' in s.path:
+                if not hasFalcon:
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Unknown request: " + s.path
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                else:
+                    if 'crackstatuswep' in s.path:
+                        type='wep'
+                    else:
+                        type = 'wpapsk'
+                        
+                    inputstr = s.path.replace('/falcon/crackstatus'+type+'/', '')
+                    # Sanitize command-line input here:
+                    p = re.compile('^([0-9a-zA-Z]+)')
+                    try:
+                        curInterface = p.search(inputstr).group(1)
+                    except:
+                        curInterface = ""
+                        
+                    if len(curInterface) == 0:
+                        if useRPILeds:
+                            # Green will heartbeat when servicing requests. Turn back solid here
+                            SparrowRPi.greenLED(LIGHT_STATE_ON)
+                            
+                        responsedict = {}
+                        responsedict['errcode'] = 5
+                        responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + curInterface
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                        return
+                    
+                    responsedict = {}
+                    retVal = -1
+                    errMsg = "Unable to find running crack."
+                                    
+                    try:
+                        if type == 'wep':
+                            if curInterface in falconWiFiRemoteAgent.WEPCrackList:
+                                wepCrack = falconWiFiRemoteAgent.WEPCrackList[curInterface]
+                                retVal = 0
+                                errMsg = ""
+                                responsedict['isrunning'] = wepCrack.isRunning()
+                                responsedict['ivcount'] = wepCrack.getIVCount()
+                                responsedict['ssid'] = wepCrack.SSID
+                                responsedict['crackedpasswords'] = wepCrack.getCrackedPasswords()
+                        else:
+                            if curInterface in falconWiFiRemoteAgent.WPAPSKCrackList:
+                                wpaPSKCrack = falconWiFiRemoteAgent.WPAPSKCrackList[curInterface]
+                                retVal = 0
+                                errMsg = ""
+                                responsedict['isrunning'] = wpaPSKCrack.isRunning()
+                                hasHandshake = wpaPSKCrack.hasHandshake()
+                                responsedict['hashandshake'] = hasHandshake
+                                
+                                if hasHandshake:
+                                    # For WPAPSK, lets copy the capture file to our recording directory for recovery
+                                    dirname, filename = os.path.split(os.path.abspath(__file__))
+                                    fullpath, filename=wpaPSKCrack.copyCaptureFile(dirname + '/recordings')
+                                    responsedict['capturefile'] = filename
+                                else:
+                                    responsedict['capturefile'] = ""
+                    except:
+                        pass
+                        
+                    responsedict['errcode'] = retVal
+                    responsedict['errmsg'] = errMsg
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+            elif s.path == '/falcon/getscanresults':
+                if not hasFalcon:
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Unknown request: " + s.path
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                else:
+                    if useMavlink:
+                        gpsCoord = GPSStatus()
+                        gpsCoord.gpsInstalled = True
+                        gpsCoord.gpsRunning = True
+                        gpsCoord.isValid = mavlinkGPSThread.synchronized
+                        gpsCoord.latitude = mavlinkGPSThread.latitude
+                        gpsCoord.longitude = mavlinkGPSThread.longitude
+                        gpsCoord.altitude = mavlinkGPSThread.altitude
+                        gpsCoord.speed = mavlinkGPSThread.vehicle.getAirSpeed()
+                        retCode, errString, jsonstr=falconWiFiRemoteAgent.getNetworksAsJson(gpsCoord)
+                    elif gpsEngine.gpsValid():
+                        retCode, errString, jsonstr=falconWiFiRemoteAgent.getNetworksAsJson(gpsEngine.lastCoord)
+                        if useRPILeds:
+                            SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)
+                    else:
+                        retCode, errString, jsonstr=falconWiFiRemoteAgent.getNetworksAsJson(None)
+                        if useRPILeds:
+                            # This just signals that the GPS isn't synced
+                            SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_HEARTBEAT)
+                    
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+            elif '/falcon/stopalldeauths' in s.path:
+                if not hasFalcon:
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Unknown request: " + s.path
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                else:
+                    inputstr = s.path.replace('/falcon/stopalldeauths/', '')
+                    # Sanitize command-line input here:
+                    p = re.compile('^([0-9a-zA-Z]+)')
+                    try:
+                        fieldValue = p.search(inputstr).group(1)
+                    except:
+                        fieldValue = ""
+                        
+                    if len(fieldValue) == 0:
+                        if useRPILeds:
+                            # Green will heartbeat when servicing requests. Turn back solid here
+                            SparrowRPi.greenLED(LIGHT_STATE_ON)
+                            
+                        responsedict = {}
+                        responsedict['errcode'] = 5
+                        responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                        return
+                        
+                    falconWiFiRemoteAgent.stopAllDeauths(fieldValue)
+                    responsedict = {}
+                    responsedict['errcode'] = 0
+                    responsedict['errmsg'] = ""
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+            elif '/falcon/getalldeauths' in s.path:
+                if not hasFalcon:
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Unknown request: " + s.path
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                else:
+                    responsedict = falconWiFiRemoteAgent.getAllDeauthsAsJsonDict()
+                    # Add in successful response
+                    responsedict['errcode'] = 0
+                    responsedict['errmsg'] = ""
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+            else:
+                # Catch-all.  Should never be here
                 responsedict = {}
                 responsedict['errcode'] = 5
                 responsedict['errmsg'] = "Unknown request: " + s.path
                 
                 jsonstr = json.dumps(responsedict)
                 s.wfile.write(jsonstr.encode("UTF-8"))
-            else:
-                responsedict = falconWiFiRemoteAgent.getAllDeauthsAsJsonDict()
-                # Add in successful response
-                responsedict['errcode'] = 0
-                responsedict['errmsg'] = ""
-                
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-        else:
-            # Catch-all.  Should never be here
-            responsedict = {}
-            responsedict['errcode'] = 5
-            responsedict['errmsg'] = "Unknown request: " + s.path
-            
-            jsonstr = json.dumps(responsedict)
-            s.wfile.write(jsonstr.encode("UTF-8"))
+        except:
+            pass
             
         if useRPILeds:
             # Green will heartbeat when servicing requests. Turn back solid here

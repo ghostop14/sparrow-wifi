@@ -1747,7 +1747,10 @@ class mainWindow(QMainWindow):
                     QMessageBox.question(self, 'Error',"Could not figure channel out from " + curItem, QMessageBox.Ok)
         
     def onXGPSLocal(self):
-        subprocess.Popen('xgps')
+        try:
+            subprocess.Popen('xgps')
+        except:
+            QMessageBox.question(self, 'Error',"Unable to open xgps.  You may need to 'apt install gpsd-clients'", QMessageBox.Ok)
         
     def onXGPSRemote(self):
         text, okPressed = QInputDialog.getText(self, "Remote Agent","Please provide gpsd IP:", QLineEdit.Normal, "127.0.0.1:2947")
@@ -1772,7 +1775,11 @@ class mainWindow(QMainWindow):
                 return
                     
             args = ['xgps', remoteIP + ":" + str(remotePort)]
-            subprocess.Popen(args)
+            
+            try:
+                subprocess.Popen(args)
+            except:
+                QMessageBox.question(self, 'Error',"Unable to open xgps.  You may need to 'apt install gpsd-clients'", QMessageBox.Ok)
 
     def onCopyNet(self):
         self.updateLock.acquire()
