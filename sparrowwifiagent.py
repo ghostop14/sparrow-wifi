@@ -241,11 +241,13 @@ def stopAnnounceThread():
         
         print('Waiting for announce thread to terminate...')
         
-        i=0
-        maxCycles = 2 /0.2
-        while (announceThread.threadRunning) and (i<maxCycles):
-            sleep(0.2)
-            i += 1
+        sleep(0.2)
+        
+        # i=0
+        # maxCycles = 5 # int(2.0 /0.2)
+        # while (announceThread.threadRunning) and (i<maxCycles):
+        #    sleep(0.2)
+        #    i += 1
             
         announceThread = None
 
@@ -718,6 +720,9 @@ class SparrowWiFiAgent(object):
     # For HTTP Server info
     def run(self, port):
         global useRPILeds
+        global hackrf
+        global bluetooth
+        global falconWiFiRemoteAgent
         
         server_address = ('', port)
         try:
@@ -753,6 +758,9 @@ class SparrowWiFiAgent(object):
         if bluetooth:
             bluetooth.stopScanning()
             
+        if hackrf.scanRunning():
+            hackrf.stopScanning()
+        
         curTime = datetime.datetime.now()
         print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] Sparrow-wifi agent stopped.")
 
@@ -2381,3 +2389,9 @@ if __name__ == '__main__':
     if runningcfg.useRPiLEDs:
         SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_OFF)
         SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)
+
+    for curKey in lockList.keys():
+        curLock = lockList[curKey]
+        curLock.release()
+
+    os._exit(0)
