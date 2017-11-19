@@ -38,7 +38,7 @@ pip3 install QScintilla PyQtChart gps3 dronekit manuf db-sqlite3
 
 If you're going to use the gps capabilities, you'll also need to make sure gpsd is installed and configured:
 
-sudo apt-get install gpsd
+sudo apt-get install gpsd gpsd-clients
 
 ## Running sparrow-wifi
 Because it needs to use iw to scan, you will need to run sparrow-wifi as root.  Simply run:
