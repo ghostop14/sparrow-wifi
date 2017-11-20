@@ -1,23 +1,22 @@
 # sparrow-wifi - Graphical WiFi Analyzer for Linux
 
 ## Overview
-Like so many of us who have used tools like inSSIDer on Windows in the past, I've been looking for something that runs natively on linux with at least the same or better capabilities.  After not finding exactly what I was looking for I decided to create a new one.  Sparrow-wifi is written in python3 with the exception that behind the scenes it uses the linux 'iw' command for data acquisition.
+Sparrow-wifi has been built from the ground up to be the next generation 2.4 GHz and 5 GHz Wifi spectral awareness tool.  At its most basic it provides a more comprehensive GUI-based replacement for tools like inSSIDer and linssid that runs specifically on linux.  In its most comprehensive use cases, sparrow-wifi integrates wifi, software-defined radio (hackrf), advanced bluetooth tools (traditional and Ubertooth), traditional gps, and drone/rover gps via mavlink in one solution.
 
-Sparrow-wifi provides a nice graphical interface with tables of discovered networks and signal plots along with a few other nice features:
+Written entirely in Python3, Sparrow-wifi has been designed for the following scenarios:
+- Basic wifi SSID identification
+- Wifi source hunt - Switch from normal to hunt mode to get multiple samples per second and use the telemetry windows to track a wifi source
+- 2.4 GHz and 5 GHz spectrum view - Overlay spectrums from Ubertooth (2.4 GHz) or HackRF (2.4 GHz and 5 GHz) in realtime on top of the wifi spectrum
+- Bluetooth identification - LE advertisement listening with standard bluetooth, full promiscuous mode in LE and classic bluetooth with Ubertooth
+- Bluetooth source hunt - Track LE advertisement sources or iBeacons with the telemetry window
+- iBeacon advertisement - Advertise your own iBeacons
+- Remote operations - An agent is included that provides all of the GUI functionality via a remote agent the GUI can talk to.  The agent can be run on systems such as a Raspberry Pi and flown on a drone (its made several flights on a Solo 3DR), or attached to a rover in either GUI-controlled or autonomous scan/record modes.
+- The remote agent is JSON-based so it can be integrated with other applications
+- Import/Export - Ability to import and export to/from CSV and JSON for easy integration and revisiualization.  You can also just run 'iw dev <interface> scan' and save it to a file and import that as well.
 
-- Enhanced per-network telemetry display ('tracker' style signal meter, time plots, GPS log which can be exported)
-- WiFi Signal "hunt" mode.  Normal scans running across all 2.4 GHz and 5 GHz channels can take 5-10 seconds per sweep as the radio needs to retune to each frequency and listen.  If you're trying to locate a particular SSID, this can be too slow.  Hunt mode allows you to specify the channel number or center frequency and only scan that one channel for much faster hunt performance (generally less than 0.2 seconds/channel).
-- Bluetooth support with either standard Bluetooth dongles and an Ubertooth
-- If you have an Ubertooth, you can display active spectrum on the 2.4 GHz frequency chart
-- HackRF support!  If you have a HackRF you can use it to display spectrum for either 2.4 GHz or 5 GHz using hackrf_sweep (you can use Ubertooth in 2.4 GHz and a HackRF in 5 GHz to cover both)
-- Ability to export results to CSV or JSON and import them back in to revisualize a scan
-- Plot SSID GPS coordinates on Google maps
-- Sparrow-wifi has built-in GPS support via gpsd for network location tagging
-- Sparrow-wifi has a remotely deployable agent (sparrowwifiagent.py) that can be run on a separate system.  The GUI can then be connected to the remote agent for remote monitoring, including remote GPS.  Agent supports a --sendannounce startup parameter to allow for auto-discovery via broadcast packets.  It also supports a headless record local on start mode (see --help)
-- MAVLINK / DRONE SUPPORT!  The remote agent can be configured to pull GPS via the Mavlink protocol from a mavlink-enabled vehicle such as a drone or rover
-- The agent provides a basic HTTP service and provides JSON responses to requests from the UI, so requests for wireless interfaces, networks, and GPS status can even be used in other applications
+[NOTE: This project is under active development so check back regularly for updates, bugfixes, and new features.]
 
-Sample screenshots:
+A few sample screenshots.  The first is the main window showing a basic wifi scan, the second shows the telemetry/tracking window used for both Wifi and bluetooth tracking.
 
 <p align="center">
   <img src="https://github.com/ghostop14/sparrow-wifi/blob/master/sparrow-screenshot.png" width="800"/>
@@ -27,21 +26,17 @@ Sample screenshots:
   <img src="https://github.com/ghostop14/sparrow-wifi/blob/master/telemetry-screenshot.png" width="600"/>
 </p>
 
-NOTE: This project is under active development so check back regularly for updates, bugfixes, and new features.
-
 ## Installation
-sparrow-wifi uses python3, qt5, and qtchart behind the scenes.  On a standard debian variant you will may already have python3 and qt5 installed.  The only addition to run is qtchart.  Therefore you may need to run the following command for setup:
+sparrow-wifi uses python3, qt5, and qtchart for the UI.  On a standard debian variant you will may already have python3 and qt5 installed.  The only addition to run it is qtchart.  The following commands should get you up and running with wifi on both Ubuntu and Kali linux:
 
-(if you don't already have pip3 installed, use 'apt-get install python3-pip')
+sudo apt-get install python3-pip gpsd gpsd-clients
+sudo pip3 install QScintilla PyQtChart gps3 dronekit manuf python-dateutil
 
-pip3 install QScintilla PyQtChart gps3 dronekit manuf db-sqlite3
+NOTE: If you're trying to run on a Raspberry Pi, see the Raspberry Pi section below.  Only the remote agent has been run on a Pi, some of the GUI components wouldn't install / set up on the ARM platform.
 
-If you're going to use the gps capabilities, you'll also need to make sure gpsd is installed and configured:
-
-sudo apt-get install gpsd gpsd-clients
 
 ## Running sparrow-wifi
-Because it needs to use iw to scan, you will need to run sparrow-wifi as root.  Simply run:
+Because it needs to use the standard command-line tool 'iw' for wifi scans, you will need to run sparrow-wifi as root.  Simply run this from the cloned directory:
 
 sudo ./sparrow-wifi.py
 
@@ -71,33 +66,80 @@ Troubleshooting tips:
 - If you don't see any spectrum at all try running hackrf_sweep from the command-line.  If you get any errors, address them there.
 
 ## Running sparrow-wifi remote agent
-Because the agent needs to use iw and bluetooth tools to scan, you will need to run sparrowwifiagent as root.  Simply run:
+Because the agent has the same requirements as the GUI in terms of system access, you will need to run the agent as root as well.  Simply run:
 
 sudo ./sparrowwifiagent.py
+
+By default it will listen on port 8020.  There are a number of options that can be seen with --help, and a local configuration file can also be used.
 
 An alternate port can also be specified with:
 sudo ./sparrowwifiagent.py --port=&lt;myport&gt;
 
-There are a number of options including IP connection restrictions and record-local-on-start.  See ./sparrowwifiagent.py --help for a full list of options.
+There are a number of options including IP connection restrictions and record-local-on-start.  Here's the --help parameter list at this time:
 
-To use mavlink to pull GPS from a drone use the --mavlinkgps parameter:
+usage: sparrowwifiagent.py [-h] [--port PORT] [--allowedips ALLOWEDIPS]
+                           [--mavlinkgps MAVLINKGPS] [--sendannounce]
+                           [--userpileds] [--recordinterface RECORDINTERFACE]
+                           [--ignorecfg] [--cfgfile CFGFILE]
+                           [--delaystart DELAYSTART]
 
-                        --mavlinkgps MAVLINKGPS
+Sparrow-wifi agent
 
-			Use Mavlink (drone) for GPS. Options are: '3dr' for a
-
+optional arguments:
+  -h, --help            show this help message and exit
+  --port PORT           Port for HTTP server to listen on
+  --allowedips ALLOWEDIPS
+                        IP addresses allowed to connect to this agent. Default
+                        is any. This can be a comma-separated list for
+                        multiple IP addresses
+  --mavlinkgps MAVLINKGPS
+                        Use Mavlink (drone) for GPS. Options are: '3dr' for a
                         Solo, 'sitl' for local simulator, or full connection
-
                         string ('udp/tcp:<ip>:<port>' such as:
-
                         'udp:10.1.1.10:14550')
+  --sendannounce        Send a UDP broadcast packet on the specified port to
+                        announce presence
+  --userpileds          Use RPi LEDs to signal state. Red=GPS
+                        [off=None,blinking=Unsynchronized,solid=synchronized],
+                        Green=Agent Running [On=Running, blinking=servicing
+                        HTTP request]
+  --recordinterface RECORDINTERFACE
+                        Automatically start recording locally with the given
+                        wireless interface (headless mode) in a recordings
+                        directory
+  --ignorecfg           Don't load any config files (useful for overriding
+                        and/or testing)
+  --cfgfile CFGFILE     Use the specified config file rather than the default
+                        sparrowwifiagent.cfg file
+  --delaystart DELAYSTART
+                        Wait <delaystart> seconds before initializing
 
+## Drone Notes
+Being able to "war fly" (the drone equivilent of "wardriving" popular in the wifi world) was another goal of the project.  As a result, being able to have a lightweight agent that could be run on a small platform such as a Raspberry Pi that could be mounted on a drone was incorporated into the design requirements.  The agent has been flown successfully on a Solo 3DR drone (keeping the overall weight under the 350 g payload weight).
+
+The Solo was a perfect choice for the project because the controller acts as a wifi access point and communicates with the drone over a traditional IP network using the mavlink protocol.  This allows other devices such as laptops, tablets, and the Raspberry Pi to simply join the controller wifi network and have IP connectivity.  This was important for field operations as it kept the operational complexity down.
+
+Because these drones have onboard GPS as part of their basic functionality, it's possible over mavlink (with the help of dronekit) to pull GPS coordinates directly from the drone's GPS.  This helps keep the overall payload weight down as an additional GPS receiver does not need to be flown as part of the payload.  Also, in order to keep the number of tasks required by the drone operator to a minimum during flight, the agent can be started, wait for the drone GPS to be synchronized, use the Raspberry Pi lights to signal operational readiness, and automatically start recording wifi networks to a local file.  The GUI then provides an interface to retrieve those remotely saved files and pull back for visualization.
+
+This scenario has been tested with a Cisco AE1000 dual-band adapter connected to the Pi.  Note though that I ran into an issue scanning 5 GHz from the Pi that I finally found the solution for.  With a dual-band adapter, if you don't disable the internal Pi wireless adapter you won't get any 5 GHz results (this is a known issue).  What you'll need to do is disable the onboard wifi by editing /boot/config.txt and adding the following line then reboot 'dtoverlay=pi3-disable-wifi'.  Now you'll be able to scan both bands from the Pi.
+
+The quickest way to start the agent on a Raspberry Pi (IMPORTANT: see the Raspbery Pi section first, you'll need to build Python 3.5 to run the agent since the subprocess commands used were initially removed from python3 then put back in 3.5) and pull GPS from a Solo drone is to start it with the following command on the Pi:
+
+sudo python3.5 ./sparrowwifiagent.py --userpileds --sendannounce --mavlinkgps 3dr
+
+The Raspberry Pi red and green LED's will then be used as visual indicators transitioning through the following states:
+1. Both lights off - Initializing
+2. Red LED Heartbeat - Connected to the drone (dronekit vehicle connect was successful)
+3. Red LED Solid - Connected and GPS synchronized and operational (the drone can take a couple of minutes for the GPS to settle as part of its basic flight initialization)
+4. Green LED Solid - Agent HTTP server is up and the agent is operational and ready to serve requests
+
+Note: Without the mavlink setting, if using a local GPS module, the red LED will transition through the same heartbeat=GPS present but unsynchronized, solid = GPS synchronized states.
 
 ## Raspberry Pi Notes
 
 You can run the remote agent on a Raspberry pi, however the installation requirements are a bit different.  For the pip installation, you won't be able to run the GUI since there doesn't appear to be a PyQtChart suitable for the Pi.  So for the agent, just install the python-dateutil, gps, dronekit, and manuf modules:
 
-You will also need to upgrade to Python 3.5.1 or higher with a process similar to this:
+You will also need to upgrade to Python 3.5.1 or higher with the following commands:
 
 sudo apt-get install libsqlite3-dev
 
