@@ -427,14 +427,32 @@ class QHoverLineSeries(QLineSeries):
         self.callout = Callout(self.name(), parentChart, self.textColor)
 
         self.callout.setZValue(100)
+        self.clicked.connect(self.onClicked)
+
+        self.labelTimer = QTimer()
+        self.labelTimerTimeout = 3000
+        self.labelTimer.timeout.connect(self.onLabelTimer)
+        self.labelTimer.setSingleShot(True)
+        self.timerRunning = False
+        
+    def onLabelTimer(self):
+        self.callout.hide()
+        self.timerRunning = False
+        
+    def onClicked(self, point):
+        self.callout.show()
+        self.timerRunning = True
+        self.labelTimer.start(self.labelTimerTimeout)
         
     def onHover(self, point, state):
         if state:
             self.callout.setTextAndPos(self.name(), point)
             # self.callout.setVisible(True)
+            self.labelTimer.stop()
             self.callout.show()
         else:
-            self.callout.hide()
+            if not self.timerRunning:
+                self.callout.hide()
             
 # ------------------  Graphics Callout  ------------------------------
 class Callout(QGraphicsSimpleTextItem):
@@ -461,7 +479,7 @@ class Callout(QGraphicsSimpleTextItem):
         localCoord = self.chartParent.mapToPosition(point)
         # self.setPos(point.x() - bR.width()/2, point.y() - bR.height()/2)
         #self.setPos(point)
-        self.setPos(localCoord.x() - bR.width()/2, localCoord.y() - bR.height()/2-5)
+        self.setPos(localCoord.x() - bR.width()/2, localCoord.y() - bR.height()/2-7)
 
 # ------------------  Local network scan thread  ------------------------------
 class ScanThread(BaseThreadClass):
