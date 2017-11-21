@@ -2502,7 +2502,87 @@ class mainWindow(QMainWindow):
                 self.huntChannels.setEnabled(True)
                 self.combo.setEnabled(True)
 
+    def plotSSID(self, curSeries, curNet):
+        tmpssid = curNet.ssid
+        if (len(tmpssid) == 0):
+            tmpssid = '<Unknown>'
+            
+        curSeries.setName(tmpssid)
+        
+        # Both 2.4 and 5 GHz use +-2 channels for 20 MHz channels
+        channelDeltaLow = 2
+        channelDeltaHigh = 2
+        
+        # For 2.4 GHz Channels:
+        # https://en.wikipedia.org/wiki/List_of_WLAN_channels#5_GHz_.28802.11a.2Fh.2Fj.2Fn.2Fac.29
+        # See this for 5 GHz channels:
+        # http://stevencrowley.com/wp-content/uploads/2013/02/NTIA5-2.jpg
+        if curNet.bandwidth == 40:
+            if curNet.channel <= 16:
+                if curNet.secondaryChannelLocation == 'above':
+                    channelDeltaHigh = 6
+                else:
+                    channelDeltaLow = 6
+            else:
+                # 5 GHz channels for these bandwidths center up.
+                channelDeltaLow = 4
+                channelDeltaHigh = 4
+        elif curNet.bandwidth == 80:
+                # 5 GHz channels for these bandwidths center up.
+                channelDeltaLow = 8
+                channelDeltaHigh = 8
+        elif curNet.bandwidth == 160:
+                channelDeltaLow = 16
+                channelDeltaHigh = 16
+            
+        lowChannel = curNet.channel - channelDeltaLow
+        highChannel = curNet.channel + channelDeltaHigh
+        
+        if curNet.channel <= 16:
+            chartChannelLow = 0
+            chartChannelHigh = 17
+        else:
+            chartChannelLow = 30
+            chartChannelHigh = 171
+            
+        curSeries.clear()
+        
+        if lowChannel <=chartChannelLow:
+            # First point on the graph needs to be at dBm rather than -100
+            if curNet.signal >= -100:
+                curSeries.append( chartChannelLow, curNet.signal)
+            else:
+                curSeries.append(chartChannelLow, -100)
+        else:
+            # Add the zero then our plot
+            # curSeries.append(chartChannelLow, -100)
+            
+            if curNet.signal >= -100:
+                curSeries.append( lowChannel, -100)
+                curSeries.append( lowChannel, curNet.signal)
+            else:
+                curSeries.append(lowChannel, -100)
+            
+        if highChannel >= chartChannelHigh:
+            # First point on the graph needs to be at dBm rather than -100
+            if curNet.signal >= -100:
+                curSeries.append( chartChannelHigh, curNet.signal)
+            else:
+                curSeries.append(chartChannelHigh, -100)
+        else:
+            if curNet.signal >= -100:
+                curSeries.append( highChannel, curNet.signal)
+                curSeries.append( highChannel, -100)
+            else:
+                curSeries.append(highChannel, -100)
+            
+            # Add the zero then our plot
+            # curSeries.append(chartChannelHigh, -100)
+            
     def updateNet(self, curSeries, curNet, channelPlotStart, channelPlotEnd):
+        self.plotSSID(curSeries, curNet)
+        
+    def updateNetOld(self, curSeries, curNet, channelPlotStart, channelPlotEnd):
         curSeries.setName(curNet.ssid)
         
         for i in range(channelPlotStart, channelPlotEnd):
@@ -2544,8 +2624,20 @@ class mainWindow(QMainWindow):
     def update24Net(self, curSeries, curNet):
         # Loop to channel 14 + 2 for high end, + 1 for range function = 17
         self.updateNet(curSeries, curNet, 0, 17)
-        
+
     def addNet(self, newSeries, curNet, channelPlotStart, channelPlotEnd, adding5GHz):
+        self.plotSSID(newSeries, curNet)
+
+        if adding5GHz:
+            self.chart5.addSeries(newSeries)
+            newSeries.attachAxis(self.chart5axisx )
+            newSeries.attachAxis(self.chart5.axisY())
+        else:
+            self.chart24.addSeries(newSeries)
+            newSeries.attachAxis(self.chart24axisx)
+            newSeries.attachAxis(self.chart24.axisY())
+
+    def addNetOld(self, newSeries, curNet, channelPlotStart, channelPlotEnd, adding5GHz):
         for i in range(channelPlotStart, channelPlotEnd):
             graphPoint = False
             
@@ -3121,7 +3213,7 @@ class mainWindow(QMainWindow):
             curData = self.networkTable.item(i, 2).data(Qt.UserRole+1)
 
             outputFile.write(curData.macAddr  + ',' + self.networkTable.item(i, 1).text() + ',"' + curData.ssid + '",' + curData.security + ',' + curData.privacy)
-            outputFile.write(',' + str(curData.channel) + ',' + str(curData.frequency) + ',' + str(curData.signal) + ',' + str(curData.strongestsignal) + ',' + str(curData.bandwidth) + ',' +
+            outputFile.write(',' + curData.getChannelString() + ',' + str(curData.frequency) + ',' + str(curData.signal) + ',' + str(curData.strongestsignal) + ',' + str(curData.bandwidth) + ',' +
                                     curData.lastSeen.strftime("%m/%d/%Y %H:%M:%S") + ',' + curData.firstSeen.strftime("%m/%d/%Y %H:%M:%S") + ',' + 
                                     str(curData.gps.isValid) + ',' + str(curData.gps.latitude) + ',' + str(curData.gps.longitude) + ',' + str(curData.gps.altitude) + ',' + str(curData.gps.speed) + ',' + 
                                     str(curData.strongestgps.isValid) + ',' + str(curData.strongestgps.latitude) + ',' + str(curData.strongestgps.longitude) + ',' + str(curData.strongestgps.altitude) + ',' + str(curData.strongestgps.speed) + '\n')

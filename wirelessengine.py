@@ -411,10 +411,10 @@ class WirelessNetwork(object):
         return json.dumps(dictjson)
         
     def getChannelString(self):
-        retVal = self.channel
-        
         if self.bandwidth == 40 and self.secondaryChannel > 0:
             retVal = str(self.channel) + '+' + str(self.secondaryChannel)
+        else:
+            retVal = str(self.channel)
             
         return retVal
         
