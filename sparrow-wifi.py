@@ -30,7 +30,7 @@ import requests
 from time import sleep
 from threading import Thread, Lock
 
-from PyQt5.QtWidgets import QApplication, QMainWindow,  QDesktopWidget, QGraphicsSimpleTextItem, QFrame
+from PyQt5.QtWidgets import QApplication, QMainWindow,  QDesktopWidget, QGraphicsSimpleTextItem, QFrame, QGraphicsView
 from PyQt5.QtWidgets import QMessageBox, QFileDialog, QInputDialog, QLineEdit, QAbstractItemView #, QSplitter
 from PyQt5.QtWidgets import QMenu, QAction, QComboBox, QLabel, QPushButton, QCheckBox, QTableWidget,QTableWidgetItem, QHeaderView
 #from PyQt5.QtWidgets import QTabWidget, QWidget, QVBoxLayout
@@ -1283,6 +1283,7 @@ class mainWindow(QMainWindow):
         self.Plot5 = QChartView(self.chart5, self)
         self.Plot5.setBackgroundBrush(chartBorder)
         self.Plot5.setRenderHint(QPainter.Antialiasing)
+        self.Plot5.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
     
     def onBtSpectrumOverrideGain(self):
         text, okPressed = QInputDialog.getText(self, "Spectrum Analyzer Gain","Enter a gain to apply to the spectrum:", 
@@ -1967,6 +1968,7 @@ class mainWindow(QMainWindow):
                 self.spectrum5Line.clear()
 
             if len(channelData) > 0 and self.hackrfShowSpectrum24:
+                self.Plot24.setViewportUpdateMode(QGraphicsView.NoViewportUpdate)
                 sortedKeys = sorted(channelData.keys())
                 for curKey in sortedKeys:
                     fCurKey = float(curKey)
@@ -1977,8 +1979,14 @@ class mainWindow(QMainWindow):
                     else:
                         dBm = float(channelData[curKey])
                     self.spectrum24Line.append(fCurKey, dBm)
+                # Re-enable updates and force an update
+                self.Plot24.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
+                self.Plot24.update()
                 
             if len(channelData) > 0 and self.hackrfShowSpectrum5:
+                # Disable chart update
+                self.Plot5.setViewportUpdateMode(QGraphicsView.NoViewportUpdate)
+
                 sortedKeys = sorted(channelData.keys())
                 for curKey in sortedKeys:
                     fCurKey = float(curKey)
@@ -1989,6 +1997,10 @@ class mainWindow(QMainWindow):
                     else:
                         dBm = float(channelData[curKey])
                     self.spectrum5Line.append(fCurKey, dBm)
+
+                # Re-enable updates and force an update
+                self.Plot5.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
+                self.Plot5.update()
                 
             if not self.remoteAgentUp:
                 self.hackrfSpectrumTimer.start(self.hackrfSpectrumTimeoutLocal)

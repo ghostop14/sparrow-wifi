@@ -190,7 +190,10 @@ class SparrowHackrf(object):
         self.minFreq = 5170
         # self.maxFreq = 5270
         self.maxFreq = 5840
-        self.binWidth = 2000000
+        #self.binWidth = 2000000
+        # Settled on this as the most optimal resolution versus update rate setting.  (5 GHz uses 52 streams across 20 MHz for about 0.38 MHz
+        # per stream.  Taking into account spacing and such this captures probably about 4 streams per bucket)
+        self.binWidth = 1600000
         self.gain = 48
 
         # 5 GHz needs more gain
