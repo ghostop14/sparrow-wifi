@@ -1715,6 +1715,7 @@ class BluetoothDialog(QDialog):
             errcode, errmsg, devices = getRemoteBluetoothDiscoveryStatus(self.remoteAgentIP, self.remoteAgentPort)
         else:
             errcode = 0
+            self.bluetooth.updateDeviceList()
             devices= self.bluetooth.devices
         
         if (errcode == 0) and (devices is not None) and (len(devices) > 0):
@@ -1724,13 +1725,13 @@ class BluetoothDialog(QDialog):
                 
             for curKey in devices.keys():
                 curDevice = devices[curKey]
-                elapsedTime =  now - curDevice.lastSeen
                 curDevice.manufacturer = self.mainWin.ouiLookup(curDevice.macAddress)
                 if curDevice.manufacturer is None:
                     curDevice.manufacturer = ''
                 
                 if not self.usingRemoteAgent:
                     # Remote agent takes care of this before sending it.
+                    elapsedTime =  now - curDevice.lastSeen
                     
                     # This is a little bit of a hack for the BlueHydra side since it can take a while to see devices or have
                     # them show up in the db.  For LE discovery scans this will always be pretty quick.

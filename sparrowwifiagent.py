@@ -1626,21 +1626,22 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     elif function == 'stop':
                         bluetooth.stopDiscovery()
                     elif function == 'status':
-                        errcode, devices = bluetooth.getDiscoveredDevices()
-
-                        # have to get the GPS:
-                    gpsCoord = GPSStatus()
-                    if useMavlink:
-                        gpsCoord.gpsInstalled = True
-                        gpsCoord.gpsRunning = True
-                        gpsCoord.isValid = mavlinkGPSThread.synchronized
-                        gpsCoord.latitude = mavlinkGPSThread.latitude
-                        gpsCoord.longitude = mavlinkGPSThread.longitude
-                        gpsCoord.altitude = mavlinkGPSThread.altitude
-                        gpsCoord.speed = mavlinkGPSThread.vehicle.getAirSpeed()
-                    elif gpsEngine.gpsValid():
-                        gpsCoord.copy(gpsEngine.lastCoord)
+                            # have to get the GPS:
+                        gpsCoord = GPSStatus()
+                        if useMavlink:
+                            gpsCoord.gpsInstalled = True
+                            gpsCoord.gpsRunning = True
+                            gpsCoord.isValid = mavlinkGPSThread.synchronized
+                            gpsCoord.latitude = mavlinkGPSThread.latitude
+                            gpsCoord.longitude = mavlinkGPSThread.longitude
+                            gpsCoord.altitude = mavlinkGPSThread.altitude
+                            gpsCoord.speed = mavlinkGPSThread.vehicle.getAirSpeed()
+                        elif gpsEngine.gpsValid():
+                            gpsCoord.copy(gpsEngine.lastCoord)
                             
+                        # errcode, devices = bluetooth.getDiscoveredDevices()
+                        bluetooth.updateDeviceList()
+                        
                         bluetooth.deviceLock.acquire()
                         devdict = []
                         now = datetime.datetime.now()
