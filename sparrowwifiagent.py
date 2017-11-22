@@ -498,6 +498,7 @@ class AgentConfigSettings(object):
 class AutoAgentScanThread(Thread):
     def __init__(self, interface):
         global lockList
+        global hasBluetooth
         
         super(AutoAgentScanThread, self).__init__()
         self.interface = interface
@@ -505,7 +506,8 @@ class AutoAgentScanThread(Thread):
         self.scanDelay = 0.5  # seconds
         self.threadRunning = False
         self.discoveredNetworks = {}
-
+        self.discoveredBluetoothDevices = {}
+        
         try:
             self.hostname = os.uname()[1]
         except:
@@ -524,13 +526,21 @@ class AutoAgentScanThread(Thread):
             
         now = datetime.datetime.now()
         
-        self.filename = './recordings/' + self.hostname + '_' + str(now.year) + "-" + TwoDigits(str(now.month)) + "-" + TwoDigits(str(now.day))
+        self.filename = './recordings/' + self.hostname  + '_wifi__' + str(now.year) + "-" + TwoDigits(str(now.month)) + "-" + TwoDigits(str(now.day))
         self.filename += "_" + TwoDigits(str(now.hour)) + "_" + TwoDigits(str(now.minute)) + "_" + TwoDigits(str(now.second)) + ".csv"
 
-        print('Capturing on ' + interface + ' and writing to ' + self.filename)
+        self.btfilename = './recordings/' + self.hostname  + '_bt__' + str(now.year) + "-" + TwoDigits(str(now.month)) + "-" + TwoDigits(str(now.day))
+        self.btfilename += "_" + TwoDigits(str(now.hour)) + "_" + TwoDigits(str(now.minute)) + "_" + TwoDigits(str(now.second)) + ".csv"
+
+        if hasBluetooth:
+            print('Capturing on ' + interface + ' and writing wifi to ' + self.filename)
+            print('and writing bluetooth to ' + self.btfilename)
+        else:
+            print('Capturing on ' + interface + ' and writing wifi to ' + self.filename)
                 
     def run(self):
         global lockList
+        global hasBluetooth
         
         self.threadRunning = True
         
@@ -539,7 +549,13 @@ class AutoAgentScanThread(Thread):
         
         curLock = lockList[self.interface]
         
+        if hasBluetooth:
+            # Start normal discovery
+            bluetooth.startDiscovery(False)
+            
         lastState = -1
+        
+        lastBluetoothUpdate = datetime.datetime.now()
         
         while (not self.signalStop):
             # Scan all / normal mode
@@ -574,8 +590,8 @@ class AutoAgentScanThread(Thread):
                 if wirelessNetworks and (len(wirelessNetworks) > 0) and (not self.signalStop):
                     for netKey in wirelessNetworks.keys():
                         curNet = wirelessNetworks[netKey]
-                        curNet.gps = gpsCoord
-                        curNet.strongestgps = gpsCoord
+                        curNet.gps.copy(gpsCoord)
+                        curNet.strongestgps.copy(gpsCoord)
                         
                         curKey = curNet.getKey()
                         if curKey not in self.discoveredNetworks.keys():
@@ -601,8 +617,29 @@ class AutoAgentScanThread(Thread):
                     if not self.signalStop:
                         self.exportNetworks()
         
+                    # Now if we have bluetooth running export these:
+                    if hasBluetooth and bluetooth.discoveryRunning():
+                        bluetooth.deviceLock.acquire()
+                        
+                        # Update GPS
+                        for curKey in bluetooth.devices.keys():
+                            curDevice = bluetooth.devices[curKey]
+                            if curDevice.lastSeen > lastBluetoothUpdate:
+                                curDevice.gps.copy(gpsCoord)
+                                if curDevice.rssi > curDevice.strongestRssi:
+                                    curDevice.strongestRssi = curDevice.rssi
+                                    curDevice.strongestgps.copy(gpsCoord)
+                        # export
+                        self.exportBluetoothDevices(bluetooth.devices)
+                        lastBluetoothUpdate = datetime.datetime.now()
+                        bluetooth.deviceLock.release()
+                    
             sleep(self.scanDelay)
               
+        if hasBluetooth:
+            # Start normal discovery
+            bluetooth.stopDiscovery()
+            
         self.threadRunning = False
         
     def ouiLookup(self, macAddr):
@@ -617,12 +654,43 @@ class AutoAgentScanThread(Thread):
             
         return clientVendor
 
+    def exportBluetoothDevices(self, devices):
+        try:
+            btOutputFile = open(self.btfilename, 'w')
+        except:
+            print('ERROR: Unable to write to bluetooth file ' + self.filename)
+            return
+
+        btOutputFile.write('uuid,Address,Name,Company,Manufacturer,Type,RSSI,TX Power,Strongest RSSI,Est Range (m),Last Seen,GPS Valid,Latitude,Longitude,Altitude,Speed,Strongest GPS Valid,Strongest Latitude,Strongest Longitude,Strongest Altitude,Strongest Speed\n')
+
+        for curKey in devices.keys():
+            curData = devices[curKey]
+            
+            btType = ""
+            if curData.btType == BluetoothDevice.BT_LE:
+                btType = "BTLE"
+            else:
+                btType = "Classic"
+                
+            if curData.txPowerValid:
+                txPower = str(curData.txPower)
+            else:
+                txPower = 'Unknown'
+                
+            btOutputFile.write(curData.uuid  + ',' + curData.macAddress + ',"' + curData.name + '","' + curData.company + '","' + curData.manufacturer)
+            btOutputFile.write('","' + btType + '",' + str(curData.rssi) + ',' + str(curData.strongestRssi) + ',' + txPower + ',' + str(curData.iBeaconRange) + ',' +
+                                    curData.lastSeen.strftime("%m/%d/%Y %H:%M:%S") + ',' + 
+                                    str(curData.gps.isValid) + ',' + str(curData.gps.latitude) + ',' + str(curData.gps.longitude) + ',' + str(curData.gps.altitude) + ',' + str(curData.gps.speed) + ',' + 
+                                    str(curData.strongestgps.isValid) + ',' + str(curData.strongestgps.latitude) + ',' + str(curData.strongestgps.longitude) + ',' + str(curData.strongestgps.altitude) + ',' + str(curData.strongestgps.speed) + '\n')
+
+        btOutputFile.close()
+        
     def exportNetworks(self):
         try:
             self.outputFile = open(self.filename, 'w')
         except:
-            print('ERROR: Unable to write to file ' + self.filename)
-            exit(1)
+            print('ERROR: Unable to write to wifi file ' + self.filename)
+            return
 
         self.outputFile.write('macAddr,vendor,SSID,Security,Privacy,Channel,Frequency,Signal Strength,Strongest Signal Strength,Bandwidth,Last Seen,First Seen,GPS Valid,Latitude,Longitude,Altitude,Speed,Strongest GPS Valid,Strongest Latitude,Strongest Longitude,Strongest Altitude,Strongest Speed\n')
         
@@ -633,12 +701,8 @@ class AutoAgentScanThread(Thread):
             if vendor is None:
                 vendor = ''
             
-            channelstr = str(curData.channel)
-            if curData.secondaryChannel > 0:
-                channelstr = channelstr + '+' + str(curData.secondaryChannel)
-                
             self.outputFile.write(curData.macAddr  + ',' + vendor + ',"' + curData.ssid + '",' + curData.security + ',' + curData.privacy)
-            self.outputFile.write(',' + channelstr + ',' + str(curData.frequency) + ',' + str(curData.signal) + ',' + str(curData.strongestsignal) + ',' + str(curData.bandwidth) + ',' +
+            self.outputFile.write(',' + curData.getChannelString() + ',' + str(curData.frequency) + ',' + str(curData.signal) + ',' + str(curData.strongestsignal) + ',' + str(curData.bandwidth) + ',' +
                                     curData.lastSeen.strftime("%m/%d/%Y %H:%M:%S") + ',' + curData.firstSeen.strftime("%m/%d/%Y %H:%M:%S") + ',' + 
                                     str(curData.gps.isValid) + ',' + str(curData.gps.latitude) + ',' + str(curData.gps.longitude) + ',' + str(curData.gps.altitude) + ',' + str(curData.gps.speed) + ',' + 
                                     str(curData.strongestgps.isValid) + ',' + str(curData.strongestgps.latitude) + ',' + str(curData.strongestgps.longitude) + ',' + str(curData.strongestgps.altitude) + ',' + str(curData.strongestgps.speed) + '\n')
@@ -1253,6 +1317,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
         global runningcfg
         global falconWiFiRemoteAgent
         global hasBluetooth
+        global hasUbertooth
         global bluetooth
         
         # For RPi LED's, using it during each get request wasn't completely working.  Short transactions like
@@ -1544,7 +1609,11 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     
                     if function=='startp':
                         # Promiscuous with ubertooth
-                        bluetooth.startDiscovery(True)
+                        if hasUbertooth:
+                            bluetooth.startDiscovery(True)
+                        else:
+                            responsedict['errcode'] = 2
+                            responsedict['errmsg'] = 'Ubertooth not supported on this agent'
                     elif function == 'starta':
                         # Normal with Bluetooth
                         bluetooth.startDiscovery(False)
@@ -1552,16 +1621,15 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                         bluetooth.stopDiscovery()
                     elif function == 'status':
                         errcode, devices = bluetooth.getDiscoveredDevices()
-                        
-                        if errcode == 0:
-                            devdict = []
-                            for curdevice in devices:
-                                entryDict = curdevice.toJsondict()
-                                devdict.append(entryDict)
-                            responsedict['devices'] = devdict
-                        else:
-                            responsedict['errcode'] = errcode
-                            responsedict['devices'] = []
+
+                        bluetooth.deviceLock.acquire()
+                        devdict = []
+                        for curKey in bluetooth.devices.keys():
+                            curDevice = bluetooth.devices[curKey]
+                            entryDict = curDevice.toJsondict()
+                            devdict.append(entryDict)
+                        bluetooth.deviceLock.release()
+                        responsedict['devices'] = devdict
                     else:
                         responsedict['errcode'] = 1
                         responsedict['errmsg'] = 'Unknown command'
@@ -2394,4 +2462,5 @@ if __name__ == '__main__':
         curLock = lockList[curKey]
         curLock.release()
 
-    os._exit(0)
+    # os._exit(0)
+    exit(0)

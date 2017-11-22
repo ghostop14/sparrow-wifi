@@ -144,12 +144,12 @@ def getRemoteBluetoothDiscoveryStatus(agentIP, agentPort):
             errcode = responsedict['errcode']
             errmsg = responsedict['errmsg']
             tmpDeviceData = responsedict['devices']
-            devices = []
+            devices = {}
             for curDevice in tmpDeviceData:
                 newdevice = BluetoothDevice()
                 try:
                     newdevice.fromJsondict(curDevice)
-                    devices.append(newdevice)
+                    devices[newdevice.macAddress] = newdevice
                 except:
                     pass
             return errcode, errmsg, devices
@@ -1334,7 +1334,9 @@ class BluetoothDialog(QDialog):
                 self.scanPromiscuous = ubertooth
                 self.bluetooth.startDiscovery(ubertooth)
             else:
+                self.setCursor(Qt.WaitCursor)
                 errcode, errmsg = startRemoteBluetoothDiscoveryScan(self.remoteAgentIP, self.remoteAgentPort, ubertooth)
+                self.setCursor(Qt.ArrowCursor)
 
                 if errcode != 0:
                     QMessageBox.question(self, 'Error',"Could not start remote scan: " + errmsg, QMessageBox.Ok)
@@ -1351,10 +1353,12 @@ class BluetoothDialog(QDialog):
             self.btnScan.setStyleSheet("background-color: rgba(2,128,192,255); border: none;")
             self.btnScan.setText('&Scan')
             self.comboScanType.setEnabled(True)
+            self.setCursor(Qt.WaitCursor)
             if not self.mainWin.remoteAgentUp:
                 self.bluetooth.stopDiscovery()
             else:
                 errcode, errmsg = stopRemoteBluetoothDiscoveryScan(self.remoteAgentIP, self.remoteAgentPort)
+            self.setCursor(Qt.ArrowCursor)
 
     def setBlackoutColors(self):
         self.bluetoothTable.setStyleSheet("background-color: black;gridline-color: white;color: white")
@@ -1465,7 +1469,8 @@ class BluetoothDialog(QDialog):
                     
                 if (curData):
                     # We already have the network.  just update it
-                    for curDevice in deviceList:
+                    for curKey in deviceList.keys():
+                        curDevice = deviceList[curKey]
                         if curData.getKey() == curDevice.getKey():
                             curDevice.foundInList = True
                             
@@ -1523,7 +1528,8 @@ class BluetoothDialog(QDialog):
 
         addedNetworks = 0
         
-        for curDevice in deviceList:
+        for curKey in deviceList.keys():
+            curDevice = deviceList[curKey]
             if not curDevice.foundInList:
                 addedNetworks += 1
                 # Insert new at the top
@@ -1708,19 +1714,25 @@ class BluetoothDialog(QDialog):
         if self.usingRemoteAgent:
             errcode, errmsg, devices = getRemoteBluetoothDiscoveryStatus(self.remoteAgentIP, self.remoteAgentPort)
         else:
-            errcode, devices= self.bluetooth.getDiscoveredDevices()
+            errcode = 0
+            devices= self.bluetooth.devices
         
-        if errcode == 0 and len(devices) > 0:
+        if (errcode == 0) and (devices is not None) and (len(devices) > 0):
             now = datetime.datetime.now()
-            for curDevice in devices:
+            for curKey in devices.keys():
+                curDevice = devices[curKey]
                 elapsedTime =  now - curDevice.lastSeen
                 curDevice.manufacturer = self.mainWin.ouiLookup(curDevice.macAddress)
                 if curDevice.manufacturer is None:
                     curDevice.manufacturer = ''
                 
+                # This is a little bit of a hack for the BlueHydra side since it can take a while to see devices or have
+                # them show up in the db.  For LE discovery scans this will always be pretty quick.
                 if elapsedTime.total_seconds() < 120:
                     curDevice.gps.copy(curGPS)
-                    curDevice.strongestgps.copy(curGPS)
+                    if curDevice.rssi >= curDevice.strongestRssi:
+                        curDevice.strongestRssi = curDevice.rssi
+                        curDevice.strongestgps.copy(curGPS)
                 
             self.updateTable(devices)
             

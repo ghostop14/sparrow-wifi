@@ -38,6 +38,7 @@ class GPSThread(Thread):
         self.agps_thread = AGPS3mechanism()  # Instantiate AGPS3 Mechanisms
         self.agps_thread.stream_data()  # From localhost (), or other hosts, by example, (host='gps.ddns.net')
         self.agps_thread.run_thread()  # Throttle time to sleep after an empty lookup, default '()' 0.2 two tenths of a second
+        self.daemon = True
 
     def run(self):
         self.threadRunning = True
@@ -54,10 +55,14 @@ class GPSThread(Thread):
                             gpsResult.altitude = 0.0
                     else:
                         gpsResult.altitude = 0.0
-                        
-                    gpsResult.latitude = float(self.agps_thread.data_stream.lat)
-                    gpsResult.longitude = float(self.agps_thread.data_stream.lon)
                     
+                    try:
+                        gpsResult.latitude = float(self.agps_thread.data_stream.lat)
+                        gpsResult.longitude = float(self.agps_thread.data_stream.lon)
+                    except:
+                        gpsResult.latitude = 0.0
+                        gpsResult.longitude = 0.0
+                        
                     try:
                         gpsResult.speed = float(self.agps_thread.data_stream.speed)
                     except:
@@ -181,8 +186,11 @@ class GPSEngine(object):
     def stop(self):
         if self.gpsThread and self.gpsThread.threadRunning:
             self.gpsThread.signalStop = True
-            while self.gpsThread.threadRunning:
+            maxIterations = 10
+            i=0
+            while self.gpsThread.threadRunning and i < maxIterations:
                 sleep(0.1)
+                i += 1
             
     def engineRunning(self):
         if self.gpsThread is None:

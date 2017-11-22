@@ -461,6 +461,10 @@ class BtmonThread(BaseThreadClass):
                     if curDevice.macAddress in self.parentBluetooth.devices:
                         # We may not always get some fields
                         lastDevice = self.parentBluetooth.devices[curDevice.macAddress]
+                        curDevice.firstSeen = lastDevice.firstSeen  # copy first seen timestamp
+                        curDevice.gps.copy(lastDevice.gps)
+                        curDevice.strongestgps.copy(lastDevice.strongestgps)
+                        
                         if len(lastDevice.name) > 0 and len(curDevice.name) == 0:
                             curDevice.name = lastDevice.name
                         if len(lastDevice.uuid) > 0 and len(curDevice.uuid) == 0:
@@ -683,26 +687,51 @@ class SparrowBluetooth(object):
             self.btmonThread.stopAndWait()
             self.btmonThread = None
 
-    def getDiscoveredDevices(self):
+    def updateDeviceList(self):
+        # Because GPS comes from further up the stack, we maintain a local class list and have to
+        # be sure to copy some fields like firstseen forward on updates
         if self.scanType == SparrowBluetooth.SCANTYPE_BLUEHYDRA:
             errcode, retList = SparrowBluetooth.getBlueHydraBluetoothDevices()        
+            
+            if errcode == 0:
+                self.deviceLock.acquire()
+                for curDevice in retList:
+                    if curDevice.macAddress not in self.devices:
+                        self.devices[curDevice.macAddress] = curDevice
+                    else:
+                        # Already had it so copy forward a few fields then update our list
+                        dev = self.devices[curDevice.macAddress]
+                        curDevice.firstSeen = dev.firstSeen
+                        curDevice.strongestRssi = dev.strongestRssi
+                        curDevice.strongestgps.copy(dev.strongestgps)
+                        self.devices[curDevice.macAddress] = curDevice
+                self.deviceLock.release()                            
         else:
-            errcode=0
-            retList = []
+            errcode = 0
             
-            self.deviceLock.acquire()
+        return errcode
+        
+    def getDiscoveredDevices(self):
+        errcode = self.updateDeviceList()
+        
+        retList = []
+        
+        # Now copy to return list
+        self.deviceLock.acquire()
+        
+        for curKey in self.devices.keys():
+            curEntry = self.devices[curKey]
+            newDevice = BluetoothDevice()
+            newDevice.copy(curEntry)
+            retList.append(newDevice)
             
-            for curKey in self.devices.keys():
-                curEntry = self.devices[curKey]
-                newDevice = BluetoothDevice()
-                newDevice.copy(curEntry)
-                retList.append(newDevice)
-                
-            self.deviceLock.release()
+        self.deviceLock.release()
                 
         return errcode, retList
         
     def startDiscovery(self, useBlueHydra=True):
+        self.devices.clear()
+        
         if useBlueHydra:
             # Make sure we don't have a discovery scan running
             if self.btmonThread and self.btmonThread.threadRunning:
@@ -741,7 +770,6 @@ class SparrowBluetooth(object):
                 
                 
             self.scanType = SparrowBluetooth.SCANTYPE_ADVERTISEMENT
-            self.devices.clear()
             self.btmonThread = BtmonThread(self)
             self.btmonThread.start()
             

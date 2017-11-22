@@ -3654,5 +3654,9 @@ if __name__ == '__main__':
             
     app = QApplication(sys.argv)
     mainWin = mainWindow()
-    sys.exit(app.exec_())
+    result = app.exec_()
+    sys.exit(result)
+    # Some thread is still blocking...
+    # os._exit(result)
+
     
