@@ -1981,7 +1981,8 @@ class mainWindow(QMainWindow):
                     self.spectrum24Line.append(fCurKey, dBm)
                 # Re-enable updates and force an update
                 self.Plot24.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
-                self.Plot24.update()
+                # Not needed
+                # self.Plot24.update()
                 
             if len(channelData) > 0 and self.hackrfShowSpectrum5:
                 # Disable chart update
@@ -2000,7 +2001,8 @@ class mainWindow(QMainWindow):
 
                 # Re-enable updates and force an update
                 self.Plot5.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
-                self.Plot5.update()
+                # Not needed
+                # self.Plot5.update()
                 
             if not self.remoteAgentUp:
                 self.hackrfSpectrumTimer.start(self.hackrfSpectrumTimeoutLocal)
