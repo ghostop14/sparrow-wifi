@@ -1719,6 +1719,9 @@ class BluetoothDialog(QDialog):
         
         if (errcode == 0) and (devices is not None) and (len(devices) > 0):
             now = datetime.datetime.now()
+            if not self.usingRemoteAgent:
+                self.bluetooth.deviceLock.acquire()
+                
             for curKey in devices.keys():
                 curDevice = devices[curKey]
                 elapsedTime =  now - curDevice.lastSeen
@@ -1726,15 +1729,21 @@ class BluetoothDialog(QDialog):
                 if curDevice.manufacturer is None:
                     curDevice.manufacturer = ''
                 
-                # This is a little bit of a hack for the BlueHydra side since it can take a while to see devices or have
-                # them show up in the db.  For LE discovery scans this will always be pretty quick.
-                if elapsedTime.total_seconds() < 120:
-                    curDevice.gps.copy(curGPS)
-                    if curDevice.rssi >= curDevice.strongestRssi:
-                        curDevice.strongestRssi = curDevice.rssi
-                        curDevice.strongestgps.copy(curGPS)
+                if not self.usingRemoteAgent:
+                    # Remote agent takes care of this before sending it.
+                    
+                    # This is a little bit of a hack for the BlueHydra side since it can take a while to see devices or have
+                    # them show up in the db.  For LE discovery scans this will always be pretty quick.
+                    if elapsedTime.total_seconds() < 120:
+                        curDevice.gps.copy(curGPS)
+                        if curDevice.rssi >= curDevice.strongestRssi:
+                            curDevice.strongestRssi = curDevice.rssi
+                            curDevice.strongestgps.copy(curGPS)
                 
             self.updateTable(devices)
+            
+            if not self.usingRemoteAgent:
+                self.bluetooth.deviceLock.release()
             
         self.btTimer.start(self.btTimerTimeout)
         

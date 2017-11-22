@@ -292,6 +292,7 @@ class BtmonThread(BaseThreadClass):
         self.parentBluetooth= parentBluetooth
         self.hcitoolProc = None
         self.btmonProc = None
+        self.daemon = True
         
     def getFieldValue(self, p, curLine):
         matchobj = p.search(curLine)
@@ -501,6 +502,7 @@ class specanThread(BaseThreadClass):
     def __init__(self, parentBluetooth):
         super().__init__()
         self.parentBluetooth= parentBluetooth
+        self.daemon = True
         
     def run(self):
         self.threadRunning = True

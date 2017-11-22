@@ -36,7 +36,7 @@ from wirelessengine import WirelessEngine
 from sparrowgps import GPSEngine, GPSStatus
 from sparrowdrone import SparrowDroneMavlink
 from sparrowrpi import SparrowRPi
-from sparrowbluetooth import SparrowBluetooth
+from sparrowbluetooth import SparrowBluetooth, BluetoothDevice
 from sparrowhackrf import SparrowHackrf
 from sparrowcommon import gzipCompress
 
@@ -507,6 +507,7 @@ class AutoAgentScanThread(Thread):
         self.threadRunning = False
         self.discoveredNetworks = {}
         self.discoveredBluetoothDevices = {}
+        self.daemon = True
         
         try:
             self.hostname = os.uname()[1]
@@ -526,10 +527,10 @@ class AutoAgentScanThread(Thread):
             
         now = datetime.datetime.now()
         
-        self.filename = './recordings/' + self.hostname  + '_wifi__' + str(now.year) + "-" + TwoDigits(str(now.month)) + "-" + TwoDigits(str(now.day))
+        self.filename = './recordings/' + self.hostname  + '_wifi_' + str(now.year) + "-" + TwoDigits(str(now.month)) + "-" + TwoDigits(str(now.day))
         self.filename += "_" + TwoDigits(str(now.hour)) + "_" + TwoDigits(str(now.minute)) + "_" + TwoDigits(str(now.second)) + ".csv"
 
-        self.btfilename = './recordings/' + self.hostname  + '_bt__' + str(now.year) + "-" + TwoDigits(str(now.month)) + "-" + TwoDigits(str(now.day))
+        self.btfilename = './recordings/' + self.hostname  + '_bt_' + str(now.year) + "-" + TwoDigits(str(now.month)) + "-" + TwoDigits(str(now.day))
         self.btfilename += "_" + TwoDigits(str(now.hour)) + "_" + TwoDigits(str(now.minute)) + "_" + TwoDigits(str(now.second)) + ".csv"
 
         if hasBluetooth:
@@ -554,8 +555,6 @@ class AutoAgentScanThread(Thread):
             bluetooth.startDiscovery(False)
             
         lastState = -1
-        
-        lastBluetoothUpdate = datetime.datetime.now()
         
         while (not self.signalStop):
             # Scan all / normal mode
@@ -622,16 +621,21 @@ class AutoAgentScanThread(Thread):
                         bluetooth.deviceLock.acquire()
                         
                         # Update GPS
+                        now = datetime.datetime.now()
+                        
                         for curKey in bluetooth.devices.keys():
                             curDevice = bluetooth.devices[curKey]
-                            if curDevice.lastSeen > lastBluetoothUpdate:
+                            elapsedTime =  now - curDevice.lastSeen
+                            
+                            # This is a little bit of a hack for the BlueHydra side since it can take a while to see devices or have
+                            # them show up in the db.  For LE discovery scans this will always be pretty quick.
+                            if elapsedTime.total_seconds() < 120:
                                 curDevice.gps.copy(gpsCoord)
-                                if curDevice.rssi > curDevice.strongestRssi:
+                                if curDevice.rssi >= curDevice.strongestRssi:
                                     curDevice.strongestRssi = curDevice.rssi
                                     curDevice.strongestgps.copy(gpsCoord)
                         # export
                         self.exportBluetoothDevices(bluetooth.devices)
-                        lastBluetoothUpdate = datetime.datetime.now()
                         bluetooth.deviceLock.release()
                     
             sleep(self.scanDelay)
@@ -716,6 +720,7 @@ class AnnounceThread(Thread):
         self.signalStop = False
         self.sendDelay = 4.0  # seconds
         self.threadRunning = False
+        self.daemon = True
         
         self.broadcastSocket = socket(AF_INET, SOCK_DGRAM)
         self.broadcastSocket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
@@ -756,6 +761,7 @@ class MavlinkGPSThread(Thread):
         self.latitude = 0.0
         self.longitude = 0.0
         self.altitude = 0.0
+        self.daemon = True
         
     def run(self):
         self.threadRunning = True
@@ -1622,12 +1628,37 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     elif function == 'status':
                         errcode, devices = bluetooth.getDiscoveredDevices()
 
+                        # have to get the GPS:
+                    gpsCoord = GPSStatus()
+                    if useMavlink:
+                        gpsCoord.gpsInstalled = True
+                        gpsCoord.gpsRunning = True
+                        gpsCoord.isValid = mavlinkGPSThread.synchronized
+                        gpsCoord.latitude = mavlinkGPSThread.latitude
+                        gpsCoord.longitude = mavlinkGPSThread.longitude
+                        gpsCoord.altitude = mavlinkGPSThread.altitude
+                        gpsCoord.speed = mavlinkGPSThread.vehicle.getAirSpeed()
+                    elif gpsEngine.gpsValid():
+                        gpsCoord.copy(gpsEngine.lastCoord)
+                            
                         bluetooth.deviceLock.acquire()
                         devdict = []
+                        now = datetime.datetime.now()
                         for curKey in bluetooth.devices.keys():
                             curDevice = bluetooth.devices[curKey]
+                            elapsedTime =  now - curDevice.lastSeen
+                            
+                            # This is a little bit of a hack for the BlueHydra side since it can take a while to see devices or have
+                            # them show up in the db.  For LE discovery scans this will always be pretty quick.
+                            if elapsedTime.total_seconds() < 120:
+                                curDevice.gps.copy(gpsCoord)
+                                if curDevice.rssi >= curDevice.strongestRssi:
+                                    curDevice.strongestRssi = curDevice.rssi
+                                    curDevice.strongestgps.copy(gpsCoord)
+                                
                             entryDict = curDevice.toJsondict()
                             devdict.append(entryDict)
+                            
                         bluetooth.deviceLock.release()
                         responsedict['devices'] = devdict
                     else:
@@ -2458,9 +2489,12 @@ if __name__ == '__main__':
         SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_OFF)
         SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)
 
-    for curKey in lockList.keys():
-        curLock = lockList[curKey]
-        curLock.release()
+    #for curKey in lockList.keys():
+    #    curLock = lockList[curKey]
+    #    try:
+    #        curLock.release()
+    #    except:
+    #        pass
 
     # os._exit(0)
     exit(0)
