@@ -90,6 +90,10 @@ class BaseThreadClass(Thread):
         super().__init__()
         self.signalStop = False
         self.threadRunning = False
+        
+        # Indicate to the base thread class that we can be stopped by the main thread
+        self.daemon = True
+
 
     def run(self):
         self.threadRunning = True
