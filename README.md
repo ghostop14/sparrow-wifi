@@ -31,8 +31,8 @@ A few sample screenshots.  The first is the main window showing a basic wifi sca
 ## Installation
 sparrow-wifi uses python3, qt5, and qtchart for the UI.  On a standard debian variant you will may already have python3 and qt5 installed.  The only addition to run it is qtchart.  The following commands should get you up and running with wifi on both Ubuntu and Kali linux:
 
-sudo apt-get install python3-pip gpsd gpsd-clients
-sudo pip3 install QScintilla PyQtChart gps3 dronekit manuf python-dateutil
+sudo apt-get install python3-pip gpsd gpsd-clients python3-tk
+sudo pip3 install QScintilla PyQtChart gps3 dronekit manuf python-dateutil numpy matplotlib
 
 NOTE: If you're trying to run on a Raspberry Pi, see the Raspberry Pi section below.  Only the remote agent has been run on a Pi, some of the GUI components wouldn't install / set up on the ARM platform.
 
