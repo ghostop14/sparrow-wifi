@@ -796,8 +796,7 @@ class SparrowWiFiAgent(object):
         global falconWiFiRemoteAgent
         
         server_address = ('', port)
-        try:
-            # httpd = HTTPServer.HTTPServer(server_address, SparrowWiFiAgentRequestHandler)
+        try:           # httpd = HTTPServer.HTTPServer(server_address, SparrowWiFiAgentRequestHandler)
             httpd = MultithreadHTTPServer(server_address, SparrowWiFiAgentRequestHandler)
         except OSError as e:
             curTime = datetime.datetime.now()
