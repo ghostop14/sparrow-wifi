@@ -861,7 +861,7 @@ class mainWindow(QMainWindow):
         else:
             self.statusBar().showMessage('No wireless interfaces found.')
 
-        self. combo.activated[str].connect(self.onInterface)        
+        self.combo.activated[str].connect(self.onInterface)        
         
         # Scan Button
         self.btnScan = QPushButton("&Scan", self)
@@ -1903,6 +1903,9 @@ class mainWindow(QMainWindow):
         self.ntRightClickMenu.exec_(self.networkTable.mapToGlobal(pos))
  
     def onSpectrumTimer(self):
+        
+        # This is actually for the Ubertooth spectrum.  HackRF spectrums are handled by OnHackrfSpectrumAnalyzer<24/5> methods
+        
         if self.btShowSpectrum: #  and self.bluetooth:
             if (not self.remoteAgentUp):
                 # Get Local data
@@ -1922,6 +1925,10 @@ class mainWindow(QMainWindow):
 
             if len(channelData) > 0:
                 sortedKeys = sorted(channelData.keys())
+                
+                # For testing the waterfall
+                # newArray=[]
+                
                 for curKey in sortedKeys:
                     fCurKey = float(curKey)
                     if self.btSpectrumGain != 1.0:
@@ -1930,9 +1937,16 @@ class mainWindow(QMainWindow):
                         dBm = float((channelData[curKey] + 110.0)*self.btSpectrumGain - 110.0)
                     else:
                         dBm = float(channelData[curKey])
+                        
                     self.spectrum24Line.append(fCurKey, dBm)
+                    # For testing the waterfall
+                    # newArray.append(dBm)
                 
-                # self.spectrum24Line.append(12.0, -110.0)
+                # For testing the waterfall
+                #if not self.waterfall24:
+                #    self.waterfall24 = WaterfallPlotWindow(self, None)
+                
+                #self.waterfall24.update
             
             if not self.remoteAgentUp:
                 self.btSpectrumTimer.start(self.btSpectrumTimeoutLocal)

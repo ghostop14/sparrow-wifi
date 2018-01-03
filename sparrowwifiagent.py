@@ -31,6 +31,7 @@ from time import sleep
 from threading import Thread, Lock
 from dateutil import parser
 from http import server as HTTPServer
+from socketserver import ThreadingMixIn
 
 from wirelessengine import WirelessEngine
 from sparrowgps import GPSEngine, GPSStatus
@@ -796,7 +797,8 @@ class SparrowWiFiAgent(object):
         
         server_address = ('', port)
         try:
-            httpd = HTTPServer.HTTPServer(server_address, SparrowWiFiAgentRequestHandler)
+            # httpd = HTTPServer.HTTPServer(server_address, SparrowWiFiAgentRequestHandler)
+            httpd = MultithreadHTTPServer(server_address, SparrowWiFiAgentRequestHandler)
         except OSError as e:
             curTime = datetime.datetime.now()
             print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] Unable to bind to port " + str(port) +  ". " + e.strerror)
@@ -833,6 +835,10 @@ class SparrowWiFiAgent(object):
         
         curTime = datetime.datetime.now()
         print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] Sparrow-wifi agent stopped.")
+
+# --------------- Multithreaded HTTP Server ------------------------------------
+class MultithreadHTTPServer(ThreadingMixIn, HTTPServer.HTTPServer):
+    pass
 
 # ---------------  HTTP Request Handler --------------------
 # Sample handler: https://wiki.python.org/moin/BaseHttpServer
