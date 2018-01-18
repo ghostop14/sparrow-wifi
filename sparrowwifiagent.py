@@ -857,19 +857,25 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
         
         if len(allowedIPs) > 0:
             if s.client_address[0] not in allowedIPs:
-                s.send_response(403)
-                s.send_header("Content-type", "text/html")
-                s.end_headers()
-                s.wfile.write("<html><body><p>Connections not authorized from your IP address</p>".encode("utf-8"))
-                s.wfile.write("</body></html>".encode("UTF-8"))
+                try:
+                    s.send_response(403)
+                    s.send_header("Content-type", "text/html")
+                    s.end_headers()
+                    s.wfile.write("<html><body><p>Connections not authorized from your IP address</p>".encode("utf-8"))
+                    s.wfile.write("</body></html>".encode("UTF-8"))
+                except:
+                    pass
                 return
                 
         if (not s.isValidPostURL()):
-            s.send_response(404)
-            s.send_header("Content-type", "text/html")
-            s.end_headers()
-            s.wfile.write("<html><body><p>Page not found.</p>".encode("utf-8"))
-            s.wfile.write("</body></html>".encode("UTF-8"))
+            try:
+                s.send_response(404)
+                s.send_header("Content-type", "text/html")
+                s.end_headers()
+                s.wfile.write("<html><body><p>Page not found.</p>".encode("utf-8"))
+                s.wfile.write("</body></html>".encode("UTF-8"))
+            except:
+                pass
             return
             
         # Get the size of the posted data
@@ -883,11 +889,14 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
             responsedict['errcode'] = 1
             responsedict['errmsg'] = 'Agent received a zero-length request.'
 
-            s.send_response(400)
-            s.send_header("Content-type", "application/json")
-            s.end_headers()
-            jsonstr = json.dumps(responsedict)
-            s.wfile.write(jsonstr.encode("UTF-8"))
+            try:
+                s.send_response(400)
+                s.send_header("Content-type", "application/json")
+                s.end_headers()
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            except:
+                pass
             return
             
         # get the POSTed payload
@@ -901,11 +910,14 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
             responsedict['errcode'] = 1
             responsedict['errmsg'] = 'bad posted data.'
 
-            s.send_response(400)
-            s.send_header("Content-type", "application/json")
-            s.end_headers()
-            jsonstr = json.dumps(responsedict)
-            s.wfile.write(jsonstr.encode("UTF-8"))
+            try:
+                s.send_response(400)
+                s.send_header("Content-type", "application/json")
+                s.end_headers()
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            except:
+                pass
             return
             
         if s.path == '/system/config':
@@ -926,21 +938,27 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errcode'] = 2
                     responsedict['errmsg'] = 'An error occurred saving the startup config.'
 
-                    s.send_response(400)
-                    s.send_header("Content-type", "application/json")
-                    s.end_headers()
-                    jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.send_response(400)
+                        s.send_header("Content-type", "application/json")
+                        s.end_headers()
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
             except:
                 responsedict = {}
                 responsedict['errcode'] = 3
                 responsedict['errmsg'] = 'Bad startup config.'
 
-                s.send_response(400)
-                s.send_header("Content-type", "application/json")
-                s.end_headers()
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
+                try:
+                    s.send_response(400)
+                    s.send_header("Content-type", "application/json")
+                    s.end_headers()
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                except:
+                    pass
 
             # -------------  Check if we should reboot ------------------
             if 'rebootagent' in jsondata:
@@ -950,12 +968,15 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errcode'] = 0
                     responsedict['errmsg'] = 'Restarting agent.'
 
-                    s.send_response(200)
-                    s.send_header("Content-type", "application/json")
-                    s.end_headers()
-                    jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
-                    
+                    try:
+                        s.send_response(200)
+                        s.send_header("Content-type", "application/json")
+                        s.end_headers()
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
+                        
                     restartAgent()
                 
             # If we're restarting, we'll never get to running config.
@@ -973,11 +994,14 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 responsedict['errcode'] = 4
                 responsedict['errmsg'] = 'Bad running config.'
 
-                s.send_response(400)
-                s.send_header("Content-type", "application/json")
-                s.end_headers()
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
+                try:
+                    s.send_response(400)
+                    s.send_header("Content-type", "application/json")
+                    s.end_headers()
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                except:
+                    pass
 
             # -------------  Done updating config ------------------
         elif s.path == '/system/deleterecordings':
@@ -996,28 +1020,38 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = problemfiles
                     
                 jsonstr = json.dumps(responsedict)
-                s.send_response(200)
-                s.send_header("Content-type", "application/json")
-                s.end_headers()
-                s.wfile.write(jsonstr.encode("UTF-8"))
+                
+                try:
+                    s.send_response(200)
+                    s.send_header("Content-type", "application/json")
+                    s.end_headers()
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                except:
+                    pass
             except:
-                s.send_response(400)
-                s.send_header("Content-type", "application/json")
-                s.end_headers()
-                responsedict = {}
-                responsedict['errcode'] = 5
-                responsedict['errmsg'] = "Error parsing json"
+                try:
+                    s.send_response(400)
+                    s.send_header("Content-type", "application/json")
+                    s.end_headers()
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Error parsing json"
+                except:
+                    pass
         elif s.path == '/falcon/stopdeauth':
             if not hasFalcon:
-                s.send_response(400)
-                s.send_header("Content-type", "application/json")
-                s.end_headers()
-                responsedict = {}
-                responsedict['errcode'] = 5
-                responsedict['errmsg'] = "Unknown request: " + s.path
-                
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
+                try:
+                    s.send_response(400)
+                    s.send_header("Content-type", "application/json")
+                    s.end_headers()
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Unknown request: " + s.path
+                    
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                except:
+                    pass
             else:
                 # Should get a FalconDeauth object
                 # This is in jsondata
@@ -1033,31 +1067,40 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = ""
                     
                     jsonstr = json.dumps(responsedict)
-                    s.send_response(200)
-                    s.send_header("Content-type", "application/json")
-                    s.end_headers()
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.send_response(200)
+                        s.send_header("Content-type", "application/json")
+                        s.end_headers()
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
                 except:
+                    try:
+                        s.send_response(400)
+                        s.send_header("Content-type", "application/json")
+                        s.end_headers()
+                        responsedict = {}
+                        responsedict['errcode'] = 5
+                        responsedict['errmsg'] = "Error parsing json"
+                        
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
+        elif s.path == '/falcon/deauth':
+            if not hasFalcon:
+                try:
                     s.send_response(400)
                     s.send_header("Content-type", "application/json")
                     s.end_headers()
                     responsedict = {}
                     responsedict['errcode'] = 5
-                    responsedict['errmsg'] = "Error parsing json"
+                    responsedict['errmsg'] = "Unknown request: " + s.path
                     
                     jsonstr = json.dumps(responsedict)
                     s.wfile.write(jsonstr.encode("UTF-8"))
-        elif s.path == '/falcon/deauth':
-            if not hasFalcon:
-                s.send_response(400)
-                s.send_header("Content-type", "application/json")
-                s.end_headers()
-                responsedict = {}
-                responsedict['errcode'] = 5
-                responsedict['errmsg'] = "Unknown request: " + s.path
-                
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
+                except:
+                    pass
             else:
                 # Should get a FalconDeauth object
                 # This is in jsondata
@@ -1075,20 +1118,8 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                         
                     if not continuous:
                         # There's nothing to check.  Just return
-                        s.send_response(200)
-                        s.send_header("Content-type", "application/json")
-                        s.end_headers()
-                        responsedict = {}
-                        responsedict['errcode'] = 0
-                        responsedict['errmsg'] = ""
-                        
-                        jsonstr = json.dumps(responsedict)
-                        s.wfile.write(jsonstr.encode("UTF-8"))
-                    else:
-                        if newDeauth:
-                            # Deauth was started
+                        try:
                             s.send_response(200)
-                            #s.send_header("Content-type", "text/html")
                             s.send_header("Content-type", "application/json")
                             s.end_headers()
                             responsedict = {}
@@ -1097,38 +1128,65 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                             
                             jsonstr = json.dumps(responsedict)
                             s.wfile.write(jsonstr.encode("UTF-8"))
+                        except:
+                            pass
+                    else:
+                        if newDeauth:
+                            # Deauth was started
+                            try:
+                                s.send_response(200)
+                                #s.send_header("Content-type", "text/html")
+                                s.send_header("Content-type", "application/json")
+                                s.end_headers()
+                                responsedict = {}
+                                responsedict['errcode'] = 0
+                                responsedict['errmsg'] = ""
+                                
+                                jsonstr = json.dumps(responsedict)
+                                s.wfile.write(jsonstr.encode("UTF-8"))
+                            except:
+                                pass
                         else:
                             # Something went wrong with the start
-                            s.send_response(400)
-                            s.send_header("Content-type", "application/json")
-                            s.end_headers()
-                            responsedict = {}
-                            responsedict['errcode'] = 1
-                            responsedict['errmsg'] = "An error occurred starting the deauth process."
-                            
-                            jsonstr = json.dumps(responsedict)
-                            s.wfile.write(jsonstr.encode("UTF-8"))
+                            try:
+                                s.send_response(400)
+                                s.send_header("Content-type", "application/json")
+                                s.end_headers()
+                                responsedict = {}
+                                responsedict['errcode'] = 1
+                                responsedict['errmsg'] = "An error occurred starting the deauth process."
+                                
+                                jsonstr = json.dumps(responsedict)
+                                s.wfile.write(jsonstr.encode("UTF-8"))
+                            except:
+                                pass
                 except:
+                    try:
+                        s.send_response(400)
+                        s.send_header("Content-type", "application/json")
+                        s.end_headers()
+                        responsedict = {}
+                        responsedict['errcode'] = 5
+                        responsedict['errmsg'] = "Error parsing json"
+                        
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
+        elif s.path == '/falcon/startcrack':
+            if not hasFalcon:
+                try:
                     s.send_response(400)
                     s.send_header("Content-type", "application/json")
                     s.end_headers()
                     responsedict = {}
                     responsedict['errcode'] = 5
-                    responsedict['errmsg'] = "Error parsing json"
+                    responsedict['errmsg'] = "Unknown request: " + s.path
                     
                     jsonstr = json.dumps(responsedict)
                     s.wfile.write(jsonstr.encode("UTF-8"))
-        elif s.path == '/falcon/startcrack':
-            if not hasFalcon:
-                s.send_response(400)
-                s.send_header("Content-type", "application/json")
-                s.end_headers()
-                responsedict = {}
-                responsedict['errcode'] = 5
-                responsedict['errmsg'] = "Unknown request: " + s.path
-                
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
+                except:
+                    pass
             else:
                 # Extract necessary info for cracking
                 try:
@@ -1164,38 +1222,47 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                         wpaPSKCrack.cleanupTempFiles()
                         retVal, errMsg = wpaPSKCrack.startCrack(curInterface, channel, ssid, apMacAddr, hasClient)
                     
-                    s.send_response(200)
-                    s.send_header("Content-type", "application/json")
-                    s.end_headers()
-                    responsedict = {}
+                    try:
+                        s.send_response(200)
+                        s.send_header("Content-type", "application/json")
+                        s.end_headers()
+                        responsedict = {}
 
-                    # For start, retVal is True/False
-                    responsedict['errcode'] = retVal
-                    responsedict['errmsg'] = errMsg
-                    
-                    jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                        # For start, retVal is True/False
+                        responsedict['errcode'] = retVal
+                        responsedict['errmsg'] = errMsg
+                        
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
                 except:
-                    s.send_response(400)
-                    s.send_header("Content-type", "application/json")
-                    s.end_headers()
-                    responsedict = {}
-                    responsedict['errcode'] = 5
-                    responsedict['errmsg'] = "Error parsing json"
-                    
-                    jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.send_response(400)
+                        s.send_header("Content-type", "application/json")
+                        s.end_headers()
+                        responsedict = {}
+                        responsedict['errcode'] = 5
+                        responsedict['errmsg'] = "Error parsing json"
+                        
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
         else:
-            responsedict = {}
-            responsedict['errcode'] = 5
-            responsedict['errmsg'] = 'Bad request.'
+            try:
+                responsedict = {}
+                responsedict['errcode'] = 5
+                responsedict['errmsg'] = 'Bad request.'
 
-            s.send_response(400)
-            s.send_header("Content-type", "application/json")
-            s.end_headers()
-            jsonstr = json.dumps(responsedict)
-            s.wfile.write(jsonstr.encode("UTF-8"))
-            
+                s.send_response(400)
+                s.send_header("Content-type", "application/json")
+                s.end_headers()
+                jsonstr = json.dumps(responsedict)
+                s.wfile.write(jsonstr.encode("UTF-8"))
+            except:
+                pass
+                
     def isValidPostURL(s):
         allowedfullurls = ['/system/config', 
                                     '/falcon/startcrack', 
@@ -1343,22 +1410,28 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
             # If the pipe gets broken mid-stream it'll throw an exception
             if len(allowedIPs) > 0:
                 if s.client_address[0] not in allowedIPs:
-                    s.send_response(403)
-                    s.send_header("Content-type", "text/html")
-                    s.end_headers()
-                    s.wfile.write("<html><body><p>Connections not authorized from your IP address</p>".encode("utf-8"))
-                    s.wfile.write("</body></html>".encode("UTF-8"))
+                    try:
+                        s.send_response(403)
+                        s.send_header("Content-type", "text/html")
+                        s.end_headers()
+                        s.wfile.write("<html><body><p>Connections not authorized from your IP address</p>".encode("utf-8"))
+                        s.wfile.write("</body></html>".encode("UTF-8"))
+                    except:
+                        pass
                     if useRPILeds:
                     # Green will heartbeat when servicing requests. Turn back solid here
                         SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_ON)
                     return
 
             if not s.isValidGetURL():
-                s.send_response(404)
-                s.send_header("Content-type", "text/html")
-                s.end_headers()
-                s.wfile.write("<html><body><p>Bad Request</p>".encode("utf-8"))
-                s.wfile.write("</body></html>".encode("UTF-8"))
+                try:
+                    s.send_response(404)
+                    s.send_header("Content-type", "text/html")
+                    s.end_headers()
+                    s.wfile.write("<html><body><p>Bad Request</p>".encode("utf-8"))
+                    s.wfile.write("</body></html>".encode("UTF-8"))
+                except:
+                    pass
                 if useRPILeds:
                     # Green will heartbeat when servicing requests. Turn back solid here
                     SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_ON)
@@ -1369,10 +1442,13 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 (not s.path == ('/spectrum/scanstatus'))):
                 # In getrecording we may adjust the content type header based on file extension
                 # Spectrum we'll gzip
-                s.send_response(200)
-                s.send_header("Content-type", "application/json")
-                s.end_headers()
-                
+                try:
+                    s.send_response(200)
+                    s.send_header("Content-type", "application/json")
+                    s.end_headers()
+                except:
+                    pass
+                    
             # NOTE: In python 3, string is a bit different.  Examples write strings directly for Python2,
             # In python3 you have to convert it to UTF-8 bytes
             # s.wfile.write("<html><head><title>Sparrow-wifi agent</title></head><body>".encode("utf-8"))
@@ -1382,7 +1458,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 jsondict={}
                 jsondict['interfaces']=wirelessInterfaces
                 jsonstr = json.dumps(jsondict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
+                try:
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                except:
+                    pass
             elif '/wireless/networks/' in s.path:
                 # THIS IS THE NORMAL SCAN
                 inputstr = s.path.replace('/wireless/networks/', '')
@@ -1402,7 +1481,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errcode'] = 5
                     responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
                     return
                 
                 if '?' in inputstr:
@@ -1501,13 +1583,19 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     jsondict['gpspos'] = gpsPos
                     
                 jsonstr = json.dumps(jsondict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
+                try:
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                except:
+                    pass
             elif s.path == '/wireless/moninterfaces':
                 wirelessInterfaces = WirelessEngine.getMonitoringModeInterfaces()
                 jsondict={}
                 jsondict['interfaces']=wirelessInterfaces
                 jsonstr = json.dumps(jsondict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
+                try:
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                except:
+                    pass
             elif s.path == '/system/getrecordings':
                 filelist = getRecordingFiles()
                 
@@ -1515,7 +1603,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 responsedict['files'] = filelist
                 
                 jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
+                try:
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                except:
+                    pass
             elif s.path.startswith('/system/getrecording/'):
                 filename = s.path.replace('/system/getrecording/', '')
                 s.sendFile(filename)
@@ -1530,14 +1621,20 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                         responsedict['scanrunning'] = False
                         
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
             elif s.path.startswith('/bluetooth/beacon'):
                 if not hasBluetooth:
                     responsedict = {}
                     responsedict['errcode'] = 1
                     responsedict['errmsg'] = 'Bluetooth not supported on this agent'
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
                 else:
                     function=s.path.replace('/bluetooth/beacon', '')
                     function = function.replace('/', '')
@@ -1562,14 +1659,20 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                         responsedict['errmsg'] = 'Unknown command'
                         
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
             elif s.path.startswith('/bluetooth/scan'):
                 if not hasBluetooth:
                     responsedict = {}
                     responsedict['errcode'] = 1
                     responsedict['errmsg'] = 'Bluetooth not supported on this agent'
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
                 else:
                     function=s.path.replace('/bluetooth/scan', '')
                     function = function.replace('/', '')
@@ -1581,27 +1684,42 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     if function=='start':
                         bluetooth.startScanning()
                         jsonstr = json.dumps(responsedict)
-                        s.wfile.write(jsonstr.encode("UTF-8"))
+                        try:
+                            s.wfile.write(jsonstr.encode("UTF-8"))
+                        except:
+                            pass
                     elif function == 'stop':
                         bluetooth.stopScanning()
                         jsonstr = json.dumps(responsedict)
-                        s.wfile.write(jsonstr.encode("UTF-8"))
+                        try:
+                            s.wfile.write(jsonstr.encode("UTF-8"))
+                        except:
+                            pass
                     elif function == 'status':
                         channelData = bluetooth.spectrumToChannels()
                         responsedict['channeldata'] = channelData
-                        s.send_response(200)
-                        s.send_header("Content-type", "application/json")
-                        s.send_header("Content-Encoding", "gzip")
-                        s.end_headers()
+                        try:
+                            s.send_response(200)
+                            s.send_header("Content-type", "application/json")
+                            s.send_header("Content-Encoding", "gzip")
+                            s.end_headers()
+                        except:
+                            pass
                         jsonstr = json.dumps(responsedict)
                         gzipBytes = gzipCompress(jsonstr)
                         # s.wfile.write(jsonstr.encode("UTF-8"))
-                        s.wfile.write(gzipBytes)
+                        try:
+                            s.wfile.write(gzipBytes)
+                        except:
+                            pass
                     else:
                         responsedict['errcode'] = 1
                         responsedict['errmsg'] = 'Unknown command'
                         jsonstr = json.dumps(responsedict)
-                        s.wfile.write(jsonstr.encode("UTF-8"))
+                        try:
+                            s.wfile.write(jsonstr.encode("UTF-8"))
+                        except:
+                            pass
                         
             elif s.path.startswith('/bluetooth/discovery'):
                 if not hasBluetooth:
@@ -1609,7 +1727,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errcode'] = 1
                     responsedict['errmsg'] = 'Bluetooth not supported on this agent'
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
                 else:
                     function=s.path.replace('/bluetooth/discovery', '')
                     function = function.replace('/', '')
@@ -1672,7 +1793,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                         responsedict['errmsg'] = 'Unknown command'
                         
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
             elif s.path == '/bluetooth/running':
                 if not hasBluetooth:
                     responsedict = {}
@@ -1684,7 +1808,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['discoveryscanrunning'] = False
                     responsedict['beaconrunning'] = False
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
                 else:
                     responsedict = {}
                     responsedict['errcode'] = 0
@@ -1697,7 +1824,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['beaconrunning'] = bluetooth.beaconRunning()
                     
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
             elif s.path == '/spectrum/hackrfstatus':
                     responsedict = {}
                     responsedict['errcode'] = 0
@@ -1707,14 +1837,20 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['scan5running'] = hackrf.scanRunning5()
                         
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
             elif s.path.startswith('/spectrum/scan'):
                 if not hackrf.hasHackrf:
                     responsedict = {}
                     responsedict['errcode'] = 1
                     responsedict['errmsg'] = 'HackRF is not supported on this agent'
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
                 else:
                     function=s.path.replace('/spectrum/scan', '')
                     function = function.replace('/', '')
@@ -1748,19 +1884,25 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                             
                         responsedict['channeldata'] = channelData
 
-                        s.send_response(200)
-                        s.send_header("Content-type", "application/json")
-                        s.send_header("Content-Encoding", "gzip")
-                        s.end_headers()
-                        jsonstr = json.dumps(responsedict)
-                        gzipBytes = gzipCompress(jsonstr)
-                        # s.wfile.write(jsonstr.encode("UTF-8"))
-                        s.wfile.write(gzipBytes)
+                        try:
+                            s.send_response(200)
+                            s.send_header("Content-type", "application/json")
+                            s.send_header("Content-Encoding", "gzip")
+                            s.end_headers()
+                            jsonstr = json.dumps(responsedict)
+                            gzipBytes = gzipCompress(jsonstr)
+                            # s.wfile.write(jsonstr.encode("UTF-8"))
+                            s.wfile.write(gzipBytes)
+                        except:
+                            pass
                     else:
                         responsedict['errcode'] = 1
                         responsedict['errmsg'] = 'Unknown command'
                         jsonstr = json.dumps(responsedict)
-                        s.wfile.write(jsonstr.encode("UTF-8"))
+                        try:
+                            s.wfile.write(jsonstr.encode("UTF-8"))
+                        except:
+                            pass
             elif s.path == '/system/config':
                 cfgSettings = AgentConfigSettings()
                 cfgSettings.fromConfigFile('sparrowwifiagent.cfg')
@@ -1774,7 +1916,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 responsedict['running'] = runningcfg.toJsondict()
                 
                 jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
+                try:
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                except:
+                    pass
             elif s.path.startswith('/system/startrecord'):
                 recordinterface = s.path.replace('/system/startrecord/', '')
                 
@@ -1793,14 +1938,20 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = 'The requested interface was not found on the system.'
                     jsonstr = json.dumps(responsedict)
                     
-                s.wfile.write(jsonstr.encode("UTF-8"))
+                try:
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                except:
+                    pass
             elif s.path == '/system/stoprecord':
                 stopRecord()
                 responsedict = {}
                 responsedict['errcode'] = 0
                 responsedict['errmsg'] = ''
                 jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
+                try:
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                except:
+                    pass
             elif '/falcon/startmonmode' in s.path:
                 if not hasFalcon:
                     responsedict = {}
@@ -1808,7 +1959,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = "Unknown request: " + s.path
                     
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
                 else:
                     inputstr = s.path.replace('/falcon/startmonmode/', '')
                     # Sanitize command-line input here:
@@ -1827,7 +1981,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                         responsedict['errcode'] = 5
                         responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
                         jsonstr = json.dumps(responsedict)
-                        s.wfile.write(jsonstr.encode("UTF-8"))
+                        try:
+                            s.wfile.write(jsonstr.encode("UTF-8"))
+                        except:
+                            pass
                         return
                         
                     retVal, errMsg = falconWiFiRemoteAgent.startMonitoringInterface(fieldValue)
@@ -1836,7 +1993,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = errMsg
                     
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
             elif '/falcon/stopmonmode' in s.path:
                 if not hasFalcon:
                     responsedict = {}
@@ -1844,7 +2004,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = "Unknown request: " + s.path
                     
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
                 else:
                     inputstr = s.path.replace('/falcon/stopmonmode/', '')
                     # Sanitize command-line input here:
@@ -1863,7 +2026,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                         responsedict['errcode'] = 5
                         responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
                         jsonstr = json.dumps(responsedict)
-                        s.wfile.write(jsonstr.encode("UTF-8"))
+                        try:
+                            s.wfile.write(jsonstr.encode("UTF-8"))
+                        except:
+                            pass
                         return
                         
                     retVal, errMsg = falconWiFiRemoteAgent.stopMonitoringInterface(fieldValue)
@@ -1872,7 +2038,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = errMsg
                     
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
             elif '/falcon/scanrunning' in s.path:
                 if not hasFalcon:
                     responsedict = {}
@@ -1880,7 +2049,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = "Unknown request: " + s.path
                     
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
                 else:
                     inputstr = s.path.replace('/falcon/scanrunning/', '')
                     # Sanitize command-line input here:
@@ -1899,7 +2071,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                         responsedict['errcode'] = 5
                         responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
                         jsonstr = json.dumps(responsedict)
-                        s.wfile.write(jsonstr.encode("UTF-8"))
+                        try:
+                            s.wfile.write(jsonstr.encode("UTF-8"))
+                        except:
+                            pass
                         return
                         
                     scanrunning = falconWiFiRemoteAgent.isScanRunning(fieldValue)
@@ -1916,7 +2091,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = errMsg
                     
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
             elif '/falcon/startscan' in s.path:
                 if not hasFalcon:
                     responsedict = {}
@@ -1924,7 +2102,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = "Unknown request: " + s.path
                     
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
                 else:
                     inputstr = s.path.replace('/falcon/startscan/', '')
                     # Sanitize command-line input here:
@@ -1943,7 +2124,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                         responsedict['errcode'] = 5
                         responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
                         jsonstr = json.dumps(responsedict)
-                        s.wfile.write(jsonstr.encode("UTF-8"))
+                        try:
+                            s.wfile.write(jsonstr.encode("UTF-8"))
+                        except:
+                            pass
                         return
                         
                     scanProc = falconWiFiRemoteAgent.startCapture(fieldValue)
@@ -1960,7 +2144,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = errMsg
                     
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
             elif '/falcon/stopscan' in s.path:
                 if not hasFalcon:
                     responsedict = {}
@@ -1968,7 +2155,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = "Unknown request: " + s.path
                     
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
                 else:
                     inputstr = s.path.replace('/falcon/stopscan/', '')
                     # Sanitize command-line input here:
@@ -1987,7 +2177,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                         responsedict['errcode'] = 5
                         responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
                         jsonstr = json.dumps(responsedict)
-                        s.wfile.write(jsonstr.encode("UTF-8"))
+                        try:
+                            s.wfile.write(jsonstr.encode("UTF-8"))
+                        except:
+                            pass
                         return
                         
                     retVal = falconWiFiRemoteAgent.stopCapture(fieldValue)
@@ -2002,7 +2195,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = errMsg
                     
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
             elif '/falcon/stopcrack' in s.path:
                 if not hasFalcon:
                     responsedict = {}
@@ -2010,7 +2206,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = "Unknown request: " + s.path
                     
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
                 else:
                     inputstr = s.path.replace('/falcon/stopcrack/', '')
                     # Sanitize command-line input here:
@@ -2029,7 +2228,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                         responsedict['errcode'] = 5
                         responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + fieldValue
                         jsonstr = json.dumps(responsedict)
-                        s.wfile.write(jsonstr.encode("UTF-8"))
+                        try:
+                            s.wfile.write(jsonstr.encode("UTF-8"))
+                        except:
+                            pass
                         return
                     
                     try:
@@ -2053,7 +2255,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = errMsg
                     
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
             elif '/falcon/crackstatus' in s.path:
                 if not hasFalcon:
                     responsedict = {}
@@ -2061,7 +2266,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = "Unknown request: " + s.path
                     
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
                 else:
                     if 'crackstatuswep' in s.path:
                         type='wep'
@@ -2085,7 +2293,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                         responsedict['errcode'] = 5
                         responsedict['errmsg'] = "Error parsing interface.  Identified interface: " + curInterface
                         jsonstr = json.dumps(responsedict)
-                        s.wfile.write(jsonstr.encode("UTF-8"))
+                        try:
+                            s.wfile.write(jsonstr.encode("UTF-8"))
+                        except:
+                            pass
                         return
                     
                     responsedict = {}
@@ -2125,7 +2336,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = errMsg
                     
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
             elif s.path == '/falcon/getscanresults':
                 if not hasFalcon:
                     responsedict = {}
@@ -2133,7 +2347,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = "Unknown request: " + s.path
                     
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
                 else:
                     if useMavlink:
                         gpsCoord = GPSStatus()
@@ -2155,7 +2372,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                             # This just signals that the GPS isn't synced
                             SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_HEARTBEAT)
                     
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
             elif '/falcon/stopalldeauths' in s.path:
                 if not hasFalcon:
                     responsedict = {}
@@ -2163,7 +2383,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = "Unknown request: " + s.path
                     
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
                 else:
                     inputstr = s.path.replace('/falcon/stopalldeauths/', '')
                     # Sanitize command-line input here:
@@ -2191,7 +2414,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = ""
                     
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
             elif '/falcon/getalldeauths' in s.path:
                 if not hasFalcon:
                     responsedict = {}
@@ -2199,7 +2425,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = "Unknown request: " + s.path
                     
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
                 else:
                     responsedict = falconWiFiRemoteAgent.getAllDeauthsAsJsonDict()
                     # Add in successful response
@@ -2207,7 +2436,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = ""
                     
                     jsonstr = json.dumps(responsedict)
-                    s.wfile.write(jsonstr.encode("UTF-8"))
+                    try:
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
             else:
                 # Catch-all.  Should never be here
                 responsedict = {}
@@ -2215,7 +2447,10 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                 responsedict['errmsg'] = "Unknown request: " + s.path
                 
                 jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
+                try:
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                except:
+                    pass
         except:
             pass
             
