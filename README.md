@@ -107,7 +107,7 @@ Because the agent has the same requirements as the GUI in terms of system access
 By default it will listen on port 8020.  There are a number of options that can be seen with --help, and a local configuration file can also be used.
 
 An alternate port can also be specified with:
-`sudo ./sparrowwifiagent.py --port=&lt;myport&gt;`
+`sudo ./sparrowwifiagent.py --port=<myport>`
 
 There are a number of options including IP connection restrictions and record-local-on-start.  Here's the --help parameter list at this time:
 
