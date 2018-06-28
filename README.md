@@ -31,8 +31,8 @@ A few sample screenshots.  The first is the main window showing a basic wifi sca
 ## Installation
 sparrow-wifi uses python3, qt5, and qtchart for the UI.  On a standard debian variant you will may already have python3 and qt5 installed.  The only addition to run it is qtchart.  The following commands should get you up and running with wifi on both Ubuntu and Kali linux:
 
-sudo apt-get install python3-pip gpsd gpsd-clients python3-tk
-sudo pip3 install QScintilla PyQtChart gps3 dronekit manuf python-dateutil numpy matplotlib
+`sudo apt-get install python3-pip gpsd gpsd-clients python3-tk`
+`sudo pip3 install QScintilla PyQtChart gps3 dronekit manuf python-dateutil numpy matplotlib`
 
 NOTE: If you're trying to run on a Raspberry Pi, see the Raspberry Pi section below.  Only the remote agent has been run on a Pi, some of the GUI components wouldn't install / set up on the ARM platform.
 
@@ -40,7 +40,7 @@ NOTE: If you're trying to run on a Raspberry Pi, see the Raspberry Pi section be
 ## Running sparrow-wifi
 Because it needs to use the standard command-line tool 'iw' for wifi scans, you will need to run sparrow-wifi as root.  Simply run this from the cloned directory:
 
-sudo ./sparrow-wifi.py
+`sudo ./sparrow-wifi.py`
 
 ## WiFi Notes
 One item of note on wifi scanning, especially in the 5 GHz range is to find a card that works.  It's not so much an issue with the 'iw' tool, however in more advanced configurations where monitoring mode is required, it can be an issue.
@@ -84,7 +84,7 @@ IMPORTANT: Standard RF and antenna rules apply.  If you want to monitor either b
 Notes: The 5 GHz spectrum, even with a dual-band antenna can be difficult to see signals in the same way as in 2.4 GHz.  The SNR for 5 GHz seems much lower than 2.4 GHz.  Some of this could be attributed to the HackRF as 5 GHz is getting towards the edge of its useable frequency range, while part of it can also be attributed to 5 GHz not penetrating walls, ceilings, etc. as well as 2.4 GHz.  Sometimes the 5 GHz band shows better in a waterfall plot to distinguish an active signal, but if that's what you need try the tool qspectrumanalyzer.
 
 Troubleshooting tips:
-- If you don't see any spectrum at all try running hackrf_sweep from the command-line.  If you get any errors, address them there.
+- If you don't see any spectrum at all try running `hackrf_sweep` from the command-line.  If you get any errors, address them there.
 
 ## GPS
 Sparrow-wifi relies on gpsd to provide standard GPS communications.  During testing there were a number of GPS-related issues worth being aware of.  First in terms of GPS receivers, make sure you get one that works with gpsd.  I've tested it with a GlobalSAT ND-105C Micro USB receiver.  I've also used a GPS app on an android device to provide GPS over bluetooth (although this takes some tinkering, and would preclude using the bluetooth adapter for scanning while using it for GPS).
@@ -102,15 +102,16 @@ Once the daemon is up and working, xgps is a tool that's part of the gpsd-client
 ## Running sparrow-wifi remote agent
 Because the agent has the same requirements as the GUI in terms of system access, you will need to run the agent as root as well.  Simply run:
 
-sudo ./sparrowwifiagent.py
+`sudo ./sparrowwifiagent.py`
 
 By default it will listen on port 8020.  There are a number of options that can be seen with --help, and a local configuration file can also be used.
 
 An alternate port can also be specified with:
-sudo ./sparrowwifiagent.py --port=&lt;myport&gt;
+`sudo ./sparrowwifiagent.py --port=<myport>`
 
 There are a number of options including IP connection restrictions and record-local-on-start.  Here's the --help parameter list at this time:
 
+```
 usage: sparrowwifiagent.py [-h] [--port PORT] [--allowedips ALLOWEDIPS]
                            [--mavlinkgps MAVLINKGPS] [--sendannounce]
                            [--userpileds] [--recordinterface RECORDINTERFACE]
@@ -147,6 +148,7 @@ optional arguments:
                         sparrowwifiagent.cfg file
   --delaystart DELAYSTART
                         Wait <delaystart> seconds before initializing
+```
 
 ## Drone / Rover Operations
 Being able to "war fly" (the drone equivilent of "wardriving" popular in the wifi world) was another goal of the project.  As a result, being able to have a lightweight agent that could be run on a small platform such as a Raspberry Pi that could be mounted on a drone was incorporated into the design requirements.  The agent has been flown successfully on a Solo 3DR drone (keeping the overall weight under the 350 g payload weight).
@@ -159,7 +161,7 @@ This scenario has been tested with a Cisco AE1000 dual-band adapter connected to
 
 The quickest way to start the agent on a Raspberry Pi (IMPORTANT: see the Raspbery Pi section first, you'll need to build Python 3.5 to run the agent since the subprocess commands used were initially removed from python3 then put back in 3.5) and pull GPS from a Solo drone is to start it with the following command on the Pi:
 
-sudo python3.5 ./sparrowwifiagent.py --userpileds --sendannounce --mavlinkgps 3dr
+`sudo python3.5 ./sparrowwifiagent.py --userpileds --sendannounce --mavlinkgps 3dr`
 
 The Raspberry Pi red and green LED's will then be used as visual indicators transitioning through the following states:
 1. Both lights off - Initializing
@@ -175,31 +177,31 @@ If you don't have a second set of hands while flying your drone and want to fly 
 You can run the remote agent on a Raspberry pi, however the installation requirements are a bit different.  First, Python3 did not include some of the subprocess module capabilities in the initial 3.x versions prior to 3.5.  However they did put them back in from 3.5 forward.  But the Raspbian repositories only have Python 3.4.x there.  So the first step will be to download and build Python 3.5.
 
 You can use the following sequence to build it (you will need to apt-get install libsqlite3-dev prior to building Python since it's built in at compile time now):
+`sudo apt-get install libsqlite3-dev`
 
-sudo apt-get install libsqlite3-dev
+`sudo apt-get install python3.5`
 
-cd /tmp
-wget https://www.python.org/ftp/python/3.5.1/Python-3.5.1.tgz
-tar -zxvf Python-3.5.1.tgz
-cd Python-3.5.1
-./configure && make -j3 && sudo make install
+
+Then install Pip for Python3:
+`sudo apt-get install python3-pip`
+
 
 Once that is done, install the necessary modules into the 3.5 build:
-sudo pip3.5 install gps3 dronekit manuf python-dateutil
+`sudo pip3.5 install gps3 dronekit manuf python-dateutil`
+
 
 Then you can run the agent directly with commands like this:
+`sudo python3 ./sparrowwifiagent.py`
 
-/usr/local/bin/python3.5 ./sparrowwifiagent.py
-
-/usr/local/bin/python3.5 ./sparrowwifiagent.py --mavlinkgps=3dr --recordinterface=wlan0
+`sudo python3 ./sparrowwifiagent.py --mavlinkgps=3dr --recordinterface=wlan0`
 
 Note that if you forget to specifically start them with 3.5 you will get an exception thrown since a subprocess function will be missing.
 
 Another important note about using dual band USB wireless adapters on the Raspberry Pi (tested on a Pi 3), is that as long as the internal wireless is enabled, Raspbian won't see the 5 GHz band.
 
-Add this line in your /boot/config.txt to disable the internal wireless, then your dual-band USB wireless will be able to see the 5 GHz band:
+Add this line in your `/boot/config.txt` to disable the internal wireless, then your dual-band USB wireless will be able to see the 5 GHz band:
 
-dtoverlay=pi3-disable-wifi
+`dtoverlay=pi3-disable-wifi`
 
 The red and green LED's are also used on the Raspberry Pi to provide some visual feedback:
 1. Both lights off - Initializing
