@@ -32,7 +32,7 @@ A few sample screenshots.  The first is the main window showing a basic wifi sca
 sparrow-wifi uses python3, qt5, and qtchart for the UI.  On a standard debian variant you will may already have python3 and qt5 installed.  The only addition to run it is qtchart.  The following commands should get you up and running with wifi on both Ubuntu and Kali linux:
 
 ```
-sudo apt-get install python3-pip gpsd gpsd-clients python3-tk
+sudo apt-get install python3-pip gpsd gpsd-clients python3-tk python3-setuptools
 sudo pip3 install QScintilla PyQtChart gps3 dronekit manuf python-dateutil numpy matplotlib
 ```
 
