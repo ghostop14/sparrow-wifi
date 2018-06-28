@@ -117,6 +117,7 @@ class RadarWidget(FigureCanvas):
         # Create bullseye
         circle = plt.Circle((0.0, 0.0), 20, transform=self.axes.transData._b, color=self.fontColor, alpha=0.4)
         self.bullseye = self.axes.add_artist(circle)
+
         
 class TelemetryDialog(QDialog):
     resized = QtCore.pyqtSignal()
