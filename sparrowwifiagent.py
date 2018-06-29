@@ -35,7 +35,12 @@ from socketserver import ThreadingMixIn
 
 from wirelessengine import WirelessEngine
 from sparrowgps import GPSEngine, GPSStatus
-from sparrowdrone import SparrowDroneMavlink
+try:
+    from sparrowdrone import SparrowDroneMavlink
+    hasDroneKit = True
+except:
+    hasDroneKit = False
+    
 from sparrowrpi import SparrowRPi
 from sparrowbluetooth import SparrowBluetooth, BluetoothDevice
 from sparrowhackrf import SparrowHackrf
@@ -2633,7 +2638,7 @@ if __name__ == '__main__':
 
     buildAllowedIPs(allowedIPstr)
     
-    if len(runningcfg.mavlinkGPS) > 0:
+    if len(runningcfg.mavlinkGPS) > 0 and hasDroneKit:
         vehicle = SparrowDroneMavlink()
         
         print('Connecting to ' + runningcfg.mavlinkGPS)
@@ -2721,7 +2726,7 @@ if __name__ == '__main__':
 
     stopRecord()
         
-    if useMavlink and vehicle:
+    if hasDroneKit and useMavlink and vehicle:
         vehicle.close()
 
     stopAnnounceThread()
