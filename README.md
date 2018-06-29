@@ -31,8 +31,10 @@ A few sample screenshots.  The first is the main window showing a basic wifi sca
 ## Installation
 sparrow-wifi uses python3, qt5, and qtchart for the UI.  On a standard debian variant you will may already have python3 and qt5 installed.  The only addition to run it is qtchart.  The following commands should get you up and running with wifi on both Ubuntu and Kali linux:
 
-sudo apt-get install python3-pip gpsd gpsd-clients python3-tk
+```
+sudo apt-get install python3-pip gpsd gpsd-clients python3-tk python3-setuptools
 sudo pip3 install QScintilla PyQtChart gps3 dronekit manuf python-dateutil numpy matplotlib
+```
 
 NOTE: If you're trying to run on a Raspberry Pi, see the Raspberry Pi section below.  Only the remote agent has been run on a Pi, some of the GUI components wouldn't install / set up on the ARM platform.
 
@@ -40,7 +42,9 @@ NOTE: If you're trying to run on a Raspberry Pi, see the Raspberry Pi section be
 ## Running sparrow-wifi
 Because it needs to use the standard command-line tool 'iw' for wifi scans, you will need to run sparrow-wifi as root.  Simply run this from the cloned directory:
 
+```
 sudo ./sparrow-wifi.py
+```
 
 ## WiFi Notes
 One item of note on wifi scanning, especially in the 5 GHz range is to find a card that works.  It's not so much an issue with the 'iw' tool, however in more advanced configurations where monitoring mode is required, it can be an issue.
@@ -93,7 +97,9 @@ So the first important note is on the GPS receiver side.  If you are planning on
 
 In terms of getting the receiver to work with gpsd, there were some challenges that were encountered getting it to work.  First, the easiest way to test the gps is to stop the gpsd service (service gpsd stop), and run gpsd from the command-line with debugging enabled.  If you have a USB-based GPS you should see a device that looks like /dev/ttyUSB0 show up when it is connected.  If that's the case, a command similar to this would start gpsd in the foreground for a quick test:
 
+```
 gpsd -D 2 -N /dev/ttyUSB0
+```
 
 If you see good data, you can daemonize it by just removing the -N parameter.  On Ubuntu, editing /etc/default/gpsd and specifically putting /dev/ttyUSB0 in the device parameter and restarting the service worked fine.  However on Kali linux and the Raspberry Pi, the same process didn't work as if the gpsd service was ignoring the parameter.  In those cases, the GPS service was set to not auto-start and the gpsd daemon was started manually from the command-line with the command 'gpsd /dev/ttyUSB0'.
 
@@ -102,15 +108,20 @@ Once the daemon is up and working, xgps is a tool that's part of the gpsd-client
 ## Running sparrow-wifi remote agent
 Because the agent has the same requirements as the GUI in terms of system access, you will need to run the agent as root as well.  Simply run:
 
+```
 sudo ./sparrowwifiagent.py
+```
 
 By default it will listen on port 8020.  There are a number of options that can be seen with --help, and a local configuration file can also be used.
 
 An alternate port can also be specified with:
+```
 sudo ./sparrowwifiagent.py --port=&lt;myport&gt;
+```
 
 There are a number of options including IP connection restrictions and record-local-on-start.  Here's the --help parameter list at this time:
 
+```
 usage: sparrowwifiagent.py [-h] [--port PORT] [--allowedips ALLOWEDIPS]
                            [--mavlinkgps MAVLINKGPS] [--sendannounce]
                            [--userpileds] [--recordinterface RECORDINTERFACE]
@@ -147,6 +158,7 @@ optional arguments:
                         sparrowwifiagent.cfg file
   --delaystart DELAYSTART
                         Wait <delaystart> seconds before initializing
+```
 
 ## Drone / Rover Operations
 Being able to "war fly" (the drone equivilent of "wardriving" popular in the wifi world) was another goal of the project.  As a result, being able to have a lightweight agent that could be run on a small platform such as a Raspberry Pi that could be mounted on a drone was incorporated into the design requirements.  The agent has been flown successfully on a Solo 3DR drone (keeping the overall weight under the 350 g payload weight).
@@ -159,7 +171,9 @@ This scenario has been tested with a Cisco AE1000 dual-band adapter connected to
 
 The quickest way to start the agent on a Raspberry Pi (IMPORTANT: see the Raspbery Pi section first, you'll need to build Python 3.5 to run the agent since the subprocess commands used were initially removed from python3 then put back in 3.5) and pull GPS from a Solo drone is to start it with the following command on the Pi:
 
+```
 sudo python3.5 ./sparrowwifiagent.py --userpileds --sendannounce --mavlinkgps 3dr
+```
 
 The Raspberry Pi red and green LED's will then be used as visual indicators transitioning through the following states:
 1. Both lights off - Initializing
@@ -176,6 +190,7 @@ You can run the remote agent on a Raspberry pi, however the installation require
 
 You can use the following sequence to build it (you will need to apt-get install libsqlite3-dev prior to building Python since it's built in at compile time now):
 
+```
 sudo apt-get install libsqlite3-dev
 
 cd /tmp
@@ -183,15 +198,18 @@ wget https://www.python.org/ftp/python/3.5.1/Python-3.5.1.tgz
 tar -zxvf Python-3.5.1.tgz
 cd Python-3.5.1
 ./configure && make -j3 && sudo make install
+```
 
 Once that is done, install the necessary modules into the 3.5 build:
 sudo pip3.5 install gps3 dronekit manuf python-dateutil
 
 Then you can run the agent directly with commands like this:
 
+```
 /usr/local/bin/python3.5 ./sparrowwifiagent.py
 
 /usr/local/bin/python3.5 ./sparrowwifiagent.py --mavlinkgps=3dr --recordinterface=wlan0
+```
 
 Note that if you forget to specifically start them with 3.5 you will get an exception thrown since a subprocess function will be missing.
 
@@ -199,7 +217,9 @@ Another important note about using dual band USB wireless adapters on the Raspbe
 
 Add this line in your /boot/config.txt to disable the internal wireless, then your dual-band USB wireless will be able to see the 5 GHz band:
 
+```
 dtoverlay=pi3-disable-wifi
+```
 
 The red and green LED's are also used on the Raspberry Pi to provide some visual feedback:
 1. Both lights off - Initializing
