@@ -169,7 +169,7 @@ Because these drones have onboard GPS as part of their basic functionality, it's
 
 This scenario has been tested with a Cisco AE1000 dual-band adapter connected to the Pi.  Note though that I ran into an issue scanning 5 GHz from the Pi that I finally found the solution for.  With a dual-band adapter, if you don't disable the internal Pi wireless adapter you won't get any 5 GHz results (this is a known issue).  What you'll need to do is disable the onboard wifi by editing /boot/config.txt and adding the following line then reboot 'dtoverlay=pi3-disable-wifi'.  Now you'll be able to scan both bands from the Pi.
 
-The quickest way to start the agent on a Raspberry Pi (IMPORTANT: see the Raspbery Pi section first, you'll need to build Python 3.5 to run the agent since the subprocess commands used were initially removed from python3 then put back in 3.5) and pull GPS from a Solo drone is to start it with the following command on the Pi:
+The quickest way to start the agent on a Raspberry Pi (IMPORTANT: see the Raspbery Pi section first, if you're running Raspian Squeeze, you'll need to build Python 3.5 first (Stretch already has 3.5) to run the agent since the subprocess commands used were initially removed from python3 then put back in 3.5) and pull GPS from a Solo drone is to start it with the following command on the Pi:
 
 ```
 sudo python3.5 ./sparrowwifiagent.py --userpileds --sendannounce --mavlinkgps 3dr
@@ -186,17 +186,17 @@ Note: Without the mavlink setting, if using a local GPS module, the red LED will
 If you don't have a second set of hands while flying your drone and want to fly the Pi without having to worry about the agent, you can start the agent in auto-record mode.  There are a few scripts in the scripts directory that start with 'rpi' that can be scheduled for monitoring the agent and starting it as appropriate.  The overall intention is a headless configuration where the Pi starts up (you'll need to configure the wifi on the Pi ahead of time to automatically connect to the controller wifi network), the agent will be started and automatically go into wifi record mode using the drone's gps for recording.  Once you're done the sparrow-wifi agent menu gives you a screen to manage the files in the recordings directory on the agent and download or delete the files there.  These scripts in the scripts directory are just samples.  It is highly recommended that you customize them and the Pi integration to meet your specific needs, and by all means keep safety (and federal regulations) in mind when doing anything with a drone as you're responsible for both.
 
 ## Raspberry Pi Notes
-You can run the remote agent on a Raspberry pi, however the installation requirements are a bit different.  First, Python3 did not include some of the subprocess module capabilities in the initial 3.x versions prior to 3.5.  However they did put them back in from 3.5 forward.  But the Raspbian repositories only have Python 3.4.x there.  So the first step will be to download and build Python 3.5.
+You can run the remote agent on a Raspberry pi, however the installation requirements are a bit different.  First, Python3 did not include some of the subprocess module capabilities in the initial 3.x versions prior to 3.5.  However they did put them back in from 3.5 forward.  In terms of Raspian builds, Raspbian Squeeze only has Python 3.4.x in the repository.  So the first step will be to download and build Python 3.5.  However if you're running on Debian Stretch (the latest as of now), you can skip the 3.5 build.  The repositories do have Python 3.5.
 
-You can use the following sequence to build it (you will need to apt-get install libsqlite3-dev prior to building Python since it's built in at compile time now):
+You can use the following sequence to build python if you need to (you will need to apt-get install libsqlite3-dev prior to building Python since it's built in at compile time now):
 
 ```
 sudo apt-get install libsqlite3-dev
 
 cd /tmp
-wget https://www.python.org/ftp/python/3.5.1/Python-3.5.1.tgz
-tar -zxvf Python-3.5.1.tgz
-cd Python-3.5.1
+wget https://www.python.org/ftp/python/3.5.5/Python-3.5.5.tgz
+tar -zxvf Python-3.5.5.tgz
+cd Python-3.5.5
 ./configure && make -j3 && sudo make install
 ```
 
