@@ -967,7 +967,11 @@ class SparrowBluetooth(object):
         
         
     def getBluetoothInterfaces(printResults=False):
-        result = subprocess.run(['hcitool', 'dev'], stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+        try:
+            result = subprocess.run(['hcitool', 'dev'], stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+        except:
+            print('ERROR: Unable to run hcitool.  Reporting no bluetooth devices.')
+            return []
         
         if result.returncode != 0:
             return []
