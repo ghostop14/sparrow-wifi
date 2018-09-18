@@ -388,7 +388,7 @@ class BtmonThread(BaseThreadClass):
             if not self.btMonRunning():
                 self.startBTMon()
                 
-            curLine = self.btmonProc.stdout.readline().decode('ASCII').replace('\n', '')
+            curLine = self.btmonProc.stdout.readline().decode('utf-8').replace('\n', '')
 
             # Address
             fieldValue = self.getFieldValue(p_address, curLine)
