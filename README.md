@@ -36,6 +36,16 @@ sudo apt-get install python3-pip gpsd gpsd-clients python3-tk python3-setuptools
 sudo pip3 install QScintilla PyQtChart gps3 dronekit manuf python-dateutil numpy matplotlib
 ```
 
+Some folks have been running sparrow with a python virtualenv, if you'd like to run it in an isolated python environment, the following sequence should get you up and running:
+```
+git clone https://github.com/ghostop14/sparrow-wifi
+cd sparrow-wifi
+virtualenv --python=python3 $HOME/sparrow
+source $HOME/sparrow/bin/activate
+pip3 install gps3 python-dateutil requests pyqt5 pyqtchart numpy matplotlib
+sudo python3 sparrow-wifi.py
+```
+
 NOTE: If you're trying to run on a Raspberry Pi, see the Raspberry Pi section below.  Only the remote agent has been run on a Pi, some of the GUI components wouldn't install / set up on the ARM platform.
 
 
