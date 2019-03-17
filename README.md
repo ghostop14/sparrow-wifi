@@ -3,6 +3,9 @@
 ## Overview
 Sparrow-wifi has been built from the ground up to be the next generation 2.4 GHz and 5 GHz Wifi spectral awareness tool.  At its most basic it provides a more comprehensive GUI-based replacement for tools like inSSIDer and linssid that runs specifically on linux.  In its most comprehensive use cases, sparrow-wifi integrates wifi, software-defined radio (hackrf), advanced bluetooth tools (traditional and Ubertooth), traditional GPS (via gpsd), and drone/rover GPS via mavlink in one solution.
 
+[NOTE: Check the Raspberry Pi section for updates.  A setup script is now included to get the project running on Raspbian Stretch.]
+
+
 Written entirely in Python3, Sparrow-wifi has been designed for the following scenarios:
 - Basic wifi SSID identification
 - Wifi source hunt - Switch from normal to hunt mode to get multiple samples per second and use the telemetry windows to track a wifi source
@@ -15,8 +18,6 @@ Written entirely in Python3, Sparrow-wifi has been designed for the following sc
 - The remote agent is JSON-based so it can be integrated with other applications
 - Import/Export - Ability to import and export to/from CSV and JSON for easy integration and revisiualization.  You can also just run 'iw dev <interface> scan' and save it to a file and import that as well.
 - Produce Google maps when GPS coordinates are available for both discovered SSID's / bluetooth devices or to plot the wifi telemetry over time.
-
-[NOTE: This project is under active development so check back regularly for updates, bugfixes, and new features.]
 
 A few sample screenshots.  The first is the main window showing a basic wifi scan, the second shows the telemetry/tracking window used for both Wifi and bluetooth tracking.
 
@@ -196,6 +197,10 @@ Note: Without the mavlink setting, if using a local GPS module, the red LED will
 If you don't have a second set of hands while flying your drone and want to fly the Pi without having to worry about the agent, you can start the agent in auto-record mode.  There are a few scripts in the scripts directory that start with 'rpi' that can be scheduled for monitoring the agent and starting it as appropriate.  The overall intention is a headless configuration where the Pi starts up (you'll need to configure the wifi on the Pi ahead of time to automatically connect to the controller wifi network), the agent will be started and automatically go into wifi record mode using the drone's gps for recording.  Once you're done the sparrow-wifi agent menu gives you a screen to manage the files in the recordings directory on the agent and download or delete the files there.  These scripts in the scripts directory are just samples.  It is highly recommended that you customize them and the Pi integration to meet your specific needs, and by all means keep safety (and federal regulations) in mind when doing anything with a drone as you're responsible for both.
 
 ## Raspberry Pi Notes
+### Raspbian Stretch
+Raspbian Stretch now includes the correct version of Python, so no more custom python builds.  The only thing that has to be custom handled is that PyQTChart is not in the apt repository or available via pip to build on raspbian.  However, thanks to folks over at this thread: https://github.com/mu-editor/mu/issues/441, I've been able to reproduce their pyqtchart build process on Raspbian Stretch.  So to make everyone's life easier, there's now a script included with the project called rpi.setup_prerequisites.sh.  Sudo that script first, then Sparrow "should" work for you.  I tested it on a Pi 3B board with the 7" touchscreen and it works great.
+
+### Raspbian Jesse
 You can run the remote agent on a Raspberry pi, however the installation requirements are a bit different.  First, Python3 did not include some of the subprocess module capabilities in the initial 3.x versions prior to 3.5.  However they did put them back in from 3.5 forward.  In terms of Raspian builds, Raspbian Squeeze only has Python 3.4.x in the repository.  So the first step will be to download and build Python 3.5.  However if you're running on Debian Stretch (the latest as of now), you can skip the 3.5 build.  The repositories do have Python 3.5.
 
 You can use the following sequence to build python if you need to (you will need to apt-get install libsqlite3-dev prior to building Python since it's built in at compile time now):
