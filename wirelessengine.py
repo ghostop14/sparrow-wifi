@@ -523,8 +523,26 @@ class WirelessEngine(object):
                 if (printResults):
                     print(tmpStr)
         else:
+            # If we're on a pi or the driver is weird, it may not put IEEE and Mode:Monitor on the same line.
+            monLine = -1
+            i = 0
+            lines = wirelessResult.split('\n')
+            for curLine in lines:
+                if 'Mode:Monitor' in curLine:
+                    monLine = i - 1
+                    break
+                else:
+                    i = i + 1   
+            if monLine > -1:
+                p = re.compile('^(.*?) .*', re.MULTILINE)
+                tmpInterfaces = p.findall(lines[monLine])
+                if (len(tmpInterfaces) > 0):
+                    for curInterface in tmpInterfaces:
+                        tmpStr=curInterface.replace(' ','')
+                        retVal.append(tmpStr)
+
             # debug
-            if (printResults):
+            if (len(retVal) == 0 and printResults):
                 print("Error: No monitoring mode wireless interfaces found.")
 
         return retVal

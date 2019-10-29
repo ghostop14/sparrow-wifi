@@ -1710,7 +1710,7 @@ class mainWindow(QMainWindow):
             return
                     
         if not self.advancedScan:
-            self.advancedScan = AdvancedScanDialog(self.remoteAgentUp,  self.remoteAgentIP,  self.remoteAgentPort, self, None)  # Need to set parent to None to allow it to not always be on top
+            self.advancedScan = AdvancedScanDialog(self.remoteAgentUp,  self.remoteAgentIP,  self.remoteAgentPort, self, self)  # Need to set parent to None to allow it to not always be on top
 
         self.checkNotifyAdvancedScan()
             
