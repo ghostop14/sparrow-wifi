@@ -71,7 +71,7 @@ If you would like to scan for bluetooth, you'll need a few things:
 1. A bluetooth adapter (test with 'hcitool dev' to make sure it shows up).  With an adapter you can do basic BTLE advertisement and iBeacon scans.
 2. [Optional ] An Ubertooth for promiscuous discovery scans (BTLE and Classic Bluetooth)
 	- Ubertooth tools installed and functioning (you can test it with ubertooth-specan-ui)
-	- Blue Hydra installed into /opt/bluetooth/blue_hydra (mkdir /opt/bluetooth && cd /opt/bluetooth && git clone https://github.com/pwnieexpress/blue_hydra.git).  Then make sure you've followed the blue_hydra installation instructions.  You can test it with bin/blue_hydra.  This msut be in /opt/bluetooth/blue_hydra or the app won't find it.
+	- Blue Hydra installed into /opt/bluetooth/blue_hydra (mkdir /opt/bluetooth && cd /opt/bluetooth && git clone https://github.com/ZeroChaos-/blue_hydra.git).  Then make sure you've followed the blue_hydra installation instructions.  You can test it with bin/blue_hydra.  This must be in /opt/bluetooth/blue_hydra or the app won't find it.
 
 I strongly recommend running 'hcitool lescan' from the command-line first to make sure everything is working okay.  If you have an Ubertooth, run ubertooth-specan-ui and run blue_hydra to make sure those tools work properly before attempting in sparrow-wifi.
 
