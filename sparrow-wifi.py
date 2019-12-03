@@ -46,7 +46,7 @@ from wirelessengine import WirelessEngine, WirelessNetwork
 from sparrowcommon import BaseThreadClass, portOpen, stringtobool
 from sparrowgps import GPSEngine, GPSStatus, SparrowGPS
 from telemetry import TelemetryDialog
-from sparrowtablewidgets import IntTableWidgetItem, DateTableWidgetItem
+from sparrowtablewidgets import IntTableWidgetItem, DateTableWidgetItem, FloatTableWidgetItem
 from sparrowmap import MapMarker, MapEngine
 from sparrowdialogs import MapSettingsDialog, TelemetryMapSettingsDialog, AgentListenerDialog, GPSCoordDialog
 from sparrowdialogs import AgentConfigDialog, RemoteFilesDialog, BluetoothDialog
@@ -901,10 +901,11 @@ class mainWindow(QMainWindow):
         
         # Network Table
         self.networkTable = QTableWidget(self)
-        self.networkTable.setColumnCount(12)
+        self.networkTable.setColumnCount(14)
         # self.networkTable.setGeometry(10, 100, self.mainWidth-60, self.mainHeight/2-105)
         self.networkTable.setShowGrid(True)
-        self.networkTable.setHorizontalHeaderLabels(['macAddr', 'vendor','SSID', 'Security', 'Privacy', 'Channel', 'Frequency', 'Signal Strength', 'Bandwidth', 'Last Seen', 'First Seen', 'GPS'])
+        # self.networkTable.setHorizontalHeaderLabels(['macAddr', 'vendor','SSID', 'Security', 'Privacy', 'Channel', 'Frequency', 'Signal Strength', 'Bandwidth', 'Last Seen', 'First Seen', 'GPS'])
+        self.networkTable.setHorizontalHeaderLabels(['macAddr', 'vendor','SSID', 'Security', 'Privacy', 'Channel', 'Frequency', 'Signal Strength', 'Bandwidth', '% Utilization','Stations','Last Seen', 'First Seen', 'GPS'])
         self.networkTable.resizeColumnsToContents()
         self.networkTable.setRowCount(0)
         self.networkTable.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
@@ -2779,7 +2780,9 @@ class mainWindow(QMainWindow):
                                 curNet.secondaryChannelLocation = curData.secondaryChannelLocation
                                 
                             self.networkTable.item(curRow, 8).setText(str(curNet.bandwidth))
-                            self.networkTable.item(curRow, 9).setText(curNet.lastSeen.strftime("%m/%d/%Y %H:%M:%S"))
+                            self.networkTable.item(curRow, 9).setText(str(curNet.utilization))
+                            self.networkTable.item(curRow, 10).setText(str(curNet.stationcount))
+                            self.networkTable.item(curRow, 11).setText(curNet.lastSeen.strftime("%m/%d/%Y %H:%M:%S"))
                             
                             # Carry forward firstSeen
                             curNet.firstSeen = curData.firstSeen # This is one field to carry forward
@@ -2795,11 +2798,11 @@ class mainWindow(QMainWindow):
                                 curNet.strongestgps.speed = curData.gps.speed
                                 curNet.strongestgps.isValid = curData.gps.isValid
                             
-                            self.networkTable.item(curRow, 10).setText(curNet.firstSeen.strftime("%m/%d/%Y %H:%M:%S"))
+                            self.networkTable.item(curRow, 12).setText(curNet.firstSeen.strftime("%m/%d/%Y %H:%M:%S"))
                             if curNet.gps.isValid:
-                                self.networkTable.item(curRow, 11).setText('Yes')
+                                self.networkTable.item(curRow, 13).setText('Yes')
                             else:
-                                self.networkTable.item(curRow, 11).setText('No')
+                                self.networkTable.item(curRow, 13).setText('No')
                                 
                             curNet.foundInList = True
                             self.networkTable.item(curRow, 2).setData(Qt.UserRole+1, curNet)
@@ -2920,12 +2923,15 @@ class mainWindow(QMainWindow):
             self.networkTable.setItem(rowPosition, 6, IntTableWidgetItem(str(curNet.frequency)))
             self.networkTable.setItem(rowPosition, 7,  IntTableWidgetItem(str(curNet.signal)))
             self.networkTable.setItem(rowPosition, 8, IntTableWidgetItem(str(curNet.bandwidth)))
-            self.networkTable.setItem(rowPosition, 9, DateTableWidgetItem(curNet.lastSeen.strftime("%m/%d/%Y %H:%M:%S")))
-            self.networkTable.setItem(rowPosition, 10, DateTableWidgetItem(curNet.firstSeen.strftime("%m/%d/%Y %H:%M:%S")))
+            self.networkTable.setItem(rowPosition, 9, FloatTableWidgetItem(str(curNet.utilization)))
+            self.networkTable.setItem(rowPosition, 10, IntTableWidgetItem(str(curNet.stationcount)))
+            
+            self.networkTable.setItem(rowPosition, 11, DateTableWidgetItem(curNet.lastSeen.strftime("%m/%d/%Y %H:%M:%S")))
+            self.networkTable.setItem(rowPosition, 12, DateTableWidgetItem(curNet.firstSeen.strftime("%m/%d/%Y %H:%M:%S")))
             if curNet.gps.isValid:
-                self.networkTable.setItem(rowPosition, 11, QTableWidgetItem('Yes'))
+                self.networkTable.setItem(rowPosition, 13, QTableWidgetItem('Yes'))
             else:
-                self.networkTable.setItem(rowPosition, 11, QTableWidgetItem('No'))
+                self.networkTable.setItem(rowPosition, 13, QTableWidgetItem('No'))
 
         self.ageOut()
 
@@ -3178,6 +3184,11 @@ class mainWindow(QMainWindow):
                             newNet.strongestgps.altitude = float(raw_list[i][20])
                             newNet.strongestgps.speed = float(raw_list[i][21])
                             
+                            # Added utilization and station count on the end to not mess up any saved files.
+                            if (len(raw_list[i]) >= 24):
+                                newNet.utilization = float(raw_list[i][22])
+                                newNet.stationcount = int(raw_list[i][23])
+
                             wirelessNetworks[newNet.getKey()] = newNet
                 except:
                     QMessageBox.question(self, 'Error',"File format doesn't look like an exported scan.", QMessageBox.Ok)
@@ -3242,7 +3253,7 @@ class mainWindow(QMainWindow):
             QMessageBox.question(self, 'Error',"Unable to write to " + fileName, QMessageBox.Ok)
             return
             
-        outputFile.write('macAddr,vendor,SSID,Security,Privacy,Channel,Frequency,Signal Strength,Strongest Signal Strength,Bandwidth,Last Seen,First Seen,GPS Valid,Latitude,Longitude,Altitude,Speed,Strongest GPS Valid,Strongest Latitude,Strongest Longitude,Strongest Altitude,Strongest Speed\n')
+        outputFile.write('macAddr,vendor,SSID,Security,Privacy,Channel,Frequency,Signal Strength,Strongest Signal Strength,Bandwidth,Last Seen,First Seen,GPS Valid,Latitude,Longitude,Altitude,Speed,Strongest GPS Valid,Strongest Latitude,Strongest Longitude,Strongest Altitude,Strongest Speed,% Utilization,# of Stations\n')
 
         self.updateLock.acquire()
 
@@ -3262,7 +3273,8 @@ class mainWindow(QMainWindow):
             outputFile.write(',' + curData.getChannelString() + ',' + str(curData.frequency) + ',' + str(curData.signal) + ',' + str(curData.strongestsignal) + ',' + str(curData.bandwidth) + ',' +
                                     curData.lastSeen.strftime("%m/%d/%Y %H:%M:%S") + ',' + curData.firstSeen.strftime("%m/%d/%Y %H:%M:%S") + ',' + 
                                     str(curData.gps.isValid) + ',' + str(curData.gps.latitude) + ',' + str(curData.gps.longitude) + ',' + str(curData.gps.altitude) + ',' + str(curData.gps.speed) + ',' + 
-                                    str(curData.strongestgps.isValid) + ',' + str(curData.strongestgps.latitude) + ',' + str(curData.strongestgps.longitude) + ',' + str(curData.strongestgps.altitude) + ',' + str(curData.strongestgps.speed) + '\n')
+                                    str(curData.strongestgps.isValid) + ',' + str(curData.strongestgps.latitude) + ',' + str(curData.strongestgps.longitude) + ',' + str(curData.strongestgps.altitude) + ',' + str(curData.strongestgps.speed) + ',' +
+                                    str(curData.utilization) + ',' + str(curData.stationcount) + '\n')
             
         outputFile.close()
         

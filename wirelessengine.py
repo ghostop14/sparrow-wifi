@@ -264,6 +264,8 @@ class WirelessNetwork(object):
         self.channel = 0   # Channel #
         self.frequency = 0
         self.signal = -1000 # dBm
+        self.stationcount = -1
+        self.utilization = -1.0
         self.bandwidth = 20 # Default to 20.  we'll bump it up as we see params.  max BW in any protocol 20 or 40 or 80 or 160 MHz
         self.secondaryChannel = 0  # used for 40+ MHz
         self.thirdChannel = 0  # used for 80+ MHz channels
@@ -295,6 +297,8 @@ class WirelessNetwork(object):
         retVal += "Secondary Channel Location: " + self.secondaryChannelLocation + "\n"
         retVal += "Third Channel: " + str(self.thirdChannel) + "\n"
         retVal += "Signal: " + str(self.signal) + " dBm\n"
+        retVal += "Station Count: " + str(self.stationcount) + "\n"
+        retVal += "Utilization: " + str(self.utilization) + "\n"
         retVal += "Strongest Signal: " + str(self.strongestsignal) + " dBm\n"
         retVal += "Bandwidth: " + str(self.bandwidth) + "\n"
         retVal += "First Seen: " + str(self.firstSeen) + "\n"
@@ -353,6 +357,8 @@ class WirelessNetwork(object):
         self.secondaryChannelLocation = dictjson['secondaryChannelLocation']
         self.thirdChannel = int(dictjson['thirdChannel'])
         self.signal = int(dictjson['signal'])
+        self.stationcount = int(dictjson['stationcount'])
+        self.utilization = float(dictjson['utilization'])
         self.strongestsignal = int(dictjson['strongestsignal'])
         self.bandwidth = int(dictjson['bandwidth'])
         self.firstSeen = parser.parse(dictjson['firstseen'])
@@ -388,6 +394,9 @@ class WirelessNetwork(object):
         dictjson['secondaryChannelLocation'] = self.secondaryChannelLocation
         dictjson['thirdChannel'] = self.thirdChannel
         dictjson['signal'] = self.signal
+        dictjson['stationcount'] = self.stationcount
+        dictjson['utilization'] = self.utilization
+
         dictjson['strongestsignal'] = self.strongestsignal
         dictjson['bandwidth'] = self.bandwidth
         dictjson['firstseen'] = str(self.firstSeen)
@@ -674,7 +683,8 @@ class WirelessEngine(object):
         p_bw = re.compile('.*?\\* channel width:.*?([0-9]+) MHz.*')
         p_secondary = re.compile('^.*?secondary channel offset: *([^ \\t]+).*')
         p_thirdfreq = re.compile('^.*?center freq segment 1: *([^ \\t]+).*')
-        
+        p_stationcount = re.compile('.*station count: ([0-9]+)')
+        p_utilization = re.compile('.*channel utilisation: ([0-9]+)/255')
         # start
         retVal = {}
         curNetwork = None
@@ -746,7 +756,21 @@ class WirelessEngine(object):
                     curNetwork.privacy = "WEP"
                     
                 continue #Found the item
+
+            # Station count
+            fieldValue = WirelessEngine.getFieldValue(p_stationcount, curLine)
+            if (len(fieldValue) > 0):
+                curNetwork.stationcount = int(fieldValue)
+                continue #Found the item
                 
+            # Utilization
+            fieldValue = WirelessEngine.getFieldValue(p_utilization, curLine)
+            if (len(fieldValue) > 0):
+                utilization = round(float(fieldValue)  / 255.0 * 100.0 * 100.0) / 100.0
+                curNetwork.utilization = utilization
+                continue #Found the item
+                
+            # Auth suites
             fieldValue = WirelessEngine.getFieldValue(p_auth_suites, curLine)
                 
             if (len(fieldValue) > 0):
