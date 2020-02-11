@@ -30,7 +30,9 @@ A few sample screenshots.  The first is the main window showing a basic wifi sca
 </p>
 
 ## Installation
-sparrow-wifi uses python3, qt5, and qtchart for the UI.  On a standard debian variant you will may already have python3 and qt5 installed.  The only addition to run it is qtchart.  The following commands should get you up and running with wifi on both Ubuntu and Kali linux:
+sparrow-wifi uses python3, qt5, and qtchart for the UI.  On a standard debian variant you will may already have python3 and qt5 installed.  The only addition to run it is qtchart.  The following commands should get you up and running with wifi on both Ubuntu and Kali linux.
+
+NOTE: The latest version of PyQtChart has been giving folks issues if you don't "sudo pip3 install --upgrade pip" first.  If you get an error installing any of the modules, upgrade pip and try it again.  They must be using something in the newest pip that breaks older versions.
 
 ```
 sudo apt-get install python3-pip gpsd gpsd-clients python3-tk python3-setuptools
