@@ -20,7 +20,6 @@
 
 import os
 import subprocess
-import sys
 import re
 import signal
 from time import sleep
@@ -689,6 +688,11 @@ class SparrowBluetooth(object):
             self.btmonThread.stopAndWait()
             self.btmonThread = None
 
+    def clearDeviceList(self):
+        self.deviceLock.acquire()
+        self.devices = {}
+        self.deviceLock.release()                            
+        
     def updateDeviceList(self):
         # Because GPS comes from further up the stack, we maintain a local class list and have to
         # be sure to copy some fields like firstseen forward on updates

@@ -1304,6 +1304,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                                   '/bluetooth/discoverystartp', 
                                   '/bluetooth/discoverystarta', 
                                   '/bluetooth/discoverystop', 
+                                  '/bluetooth/discoveryclear', 
                                   '/bluetooth/discoverystatus', 
                                   '/spectrum/scanstart24', 
                                   '/spectrum/scanstart5', 
@@ -1757,6 +1758,19 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                         bluetooth.startDiscovery(False)
                     elif function == 'stop':
                         bluetooth.stopDiscovery()
+                    elif function == 'clear':
+                        # Device list accumulates in the bluetooth class over time
+                        # If you want a fresh list every time, you need to clear the old list.
+                        bluetooth.clearDeviceList()
+                        # Add in successful response
+                        responsedict['errcode'] = 0
+                        responsedict['errmsg'] = ""
+                        
+                        jsonstr = json.dumps(responsedict)
+                        try:
+                            s.wfile.write(jsonstr.encode("UTF-8"))
+                        except:
+                            pass
                     elif function == 'status':
                             # have to get the GPS:
                         gpsCoord = SparrowGPS()
