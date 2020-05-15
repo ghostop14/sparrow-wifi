@@ -68,6 +68,8 @@ falconWiFiRemoteAgent = None
 bluetooth = None
 hackrf = SparrowHackrf()
 
+debugHTTP = False
+
 # Lock list is a dictionary of thread locks for scanning interfaces
 lockList = {}
 
@@ -848,6 +850,14 @@ class MultithreadHTTPServer(ThreadingMixIn, HTTPServer.HTTPServer):
 # ---------------  HTTP Request Handler --------------------
 # Sample handler: https://wiki.python.org/moin/BaseHttpServer
 class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        global debugHTTP
+        
+        if not debugHTTP:
+            return
+        else:
+            HTTPServer.BaseHTTPRequestHandler(format, *args)
+    
     def do_HEAD(s):
         s.send_response(200)
         s.send_header("Content-type", "text/html")
@@ -2519,8 +2529,11 @@ if __name__ == '__main__':
     argparser.add_argument('--ignorecfg', help="Don't load any config files (useful for overriding and/or testing)", action='store_true', default=False, required=False)
     argparser.add_argument('--cfgfile', help="Use the specified config file rather than the default sparrowwifiagent.cfg file", default='', required=False)
     argparser.add_argument('--delaystart', help="Wait <delaystart> seconds before initializing", default=0, required=False)
+    argparser.add_argument('--debughttp', help="Print each URL request", action='store_true', default=False, required=False)
     args = argparser.parse_args()
 
+    debugHTTP = args.debughttp
+    
     if os.geteuid() != 0:
         print("ERROR: You need to have root privileges to run this script.  Please try again, this time using 'sudo'. Exiting.\n")
         exit(2)
