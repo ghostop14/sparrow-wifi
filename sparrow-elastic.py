@@ -344,8 +344,11 @@ def get_bluetooth_dict(btDevice):
         dictjson['address'] = btDevice.macAddress
         if len(btDevice.name) == 0:
             dictjson['name'] = btDevice.macAddress
+            dictjson['address_is_name'] = True
         else:
             dictjson['name'] = btDevice.name
+            dictjson['address_is_name'] = True
+            
         dictjson['company'] = btDevice.company
         dictjson['manufacturer'] = btDevice.manufacturer
         dictjson['bluetooth_description'] = btDevice.bluetoothDescription
