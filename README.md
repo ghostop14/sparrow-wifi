@@ -3,7 +3,7 @@
 ## Overview
 Sparrow-wifi has been built from the ground up to be the next generation 2.4 GHz and 5 GHz Wifi spectral awareness tool.  At its most basic it provides a more comprehensive GUI-based replacement for tools like inSSIDer and linssid that runs specifically on linux.  In its most comprehensive use cases, sparrow-wifi integrates wifi, software-defined radio (hackrf), advanced bluetooth tools (traditional and Ubertooth), traditional GPS (via gpsd), and drone/rover GPS via mavlink in one solution.
 
-[NOTE: Check the Raspberry Pi section for updates.  A setup script is now included to get the project running on Raspbian Stretch.]
+[NEW: An additional agent has been added that can feed wireless and bluetooth network scan results into an Elasticsearch database.  See the Elasticsearch section for details.]
 
 
 Written entirely in Python3, Sparrow-wifi has been designed for the following scenarios:
@@ -18,6 +18,7 @@ Written entirely in Python3, Sparrow-wifi has been designed for the following sc
 - The remote agent is JSON-based so it can be integrated with other applications
 - Import/Export - Ability to import and export to/from CSV and JSON for easy integration and revisiualization.  You can also just run 'iw dev <interface> scan' and save it to a file and import that as well.
 - Produce Google maps when GPS coordinates are available for both discovered SSID's / bluetooth devices or to plot the wifi telemetry over time.
+- Integration with Elasticsearch to feed wireless and optionally bluetooth scan data into an Elastic Common Schema compliant index
 
 A few sample screenshots.  The first is the main window showing a basic wifi scan, the second shows the telemetry/tracking window used for both Wifi and bluetooth tracking.
 
@@ -171,6 +172,43 @@ optional arguments:
                         sparrowwifiagent.cfg file
   --delaystart DELAYSTART
                         Wait <delaystart> seconds before initializing
+  --debughttp           The agent will print an HTTP request log entry to 
+                        stderr as it is received.
+```
+
+## Elasticsearch Integration
+A new Elasticsearch agent has been added called sparrow-elastic.py.  This agent, when combined with the sparrowwifiagent.py script allows wireless network discovery and bluetooth device discovery to be fed directly into an Elasticsearch database.  Each wireless and bluetooth data set is Elastic Common Schema (ECS) 1.5 compliant so the results can be integrated with other security solutions and dashboards.
+
+In order to use the new agent, first start the sparrowwifiagent.py as root.  Then run sparrow-elastic.py with the appropriate parameters.  Options are shown below.  At a minimum, the connection string for the Elasticsearch server and a wifi index must be specified.  Bluetooth scanning is off by default, but if you are sure Bluetooth capabilities exist on the system running the sparrowwifiagent.py script, you can specify a separate Bluetooth Elasticsearch index with the btindex parameter.  Note: The wifi and Bluetooth indices should be separate since they have different document schemas.  It is recommended to use something like sparrowwifi-<something unique> and sparrowbt-<something unique> to start.  If you are more familiar with Elasticsearch you get use more complex index naming schemes with lifecycle policies and automatic rollover for long-term retention requirements.
+
+```
+usage: sparrow-elastic.py [-h] --elasticserver ELASTICSERVER --wifiindex
+                          WIFIINDEX [--scandelay SCANDELAY]
+                          [--sparrowagent SPARROWAGENT]
+                          [--wifiinterface WIFIINTERFACE]
+                          [--sparrowport SPARROWPORT] [--btindex BTINDEX]
+
+Sparrow-wifi Agent/ElasticSearch Bridge
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --elasticserver ELASTICSERVER
+                        ElasticSearch server URL. Ex:
+                        https://user:secret@mysererver.somedomain.com:9200
+  --wifiindex WIFIINDEX
+                        ElasticSearch index to write wifi networks to
+  --scandelay SCANDELAY
+                        How frequently to rescan for networks. Default is
+                        every 15 seconds.
+  --sparrowagent SPARROWAGENT
+                        Sparrow agent IP
+  --wifiinterface WIFIINTERFACE
+                        Specific IP interface on agent to use. Default: Query
+                        and use the first one.
+  --sparrowport SPARROWPORT
+                        Port Sparrow agent server listens on
+  --btindex BTINDEX     ElasticSearch index to write bluetooth results to.
+                        Setting this enabled Bluetooth scanning.
 ```
 
 ## Drone / Rover Operations
