@@ -383,6 +383,16 @@ def get_wireless_dict(wirelessNetwork):
         wifi_details['mac_vendor'] = ouiLookupEngine.get_manuf(wirelessNetwork.macAddr)
         
     wifi_details['ssid'] = wirelessNetwork.ssid
+    
+    # This is required to search for names with spaces, dashes, or colons since Kibana won't allow them to 
+    # be used in wildcard search criteria
+    elastic_searchable_name = wirelessNetwork.ssid.replace("-", "^").replace(":", "%").replace(" ", "_")
+    wifi_details['searchable_ssid'] = elastic_searchable_name
+    if elastic_searchable_name == wirelessNetwork.ssid:
+        wifi_details['searchable_matches_ssid'] = True
+    else:
+        wifi_details['searchable_matches_ssid'] = False
+        
     wifi_details['mode'] = wirelessNetwork.mode
     wifi_details['security'] = wirelessNetwork.security
     wifi_details['privacy'] = wirelessNetwork.privacy
