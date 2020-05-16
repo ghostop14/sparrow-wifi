@@ -3,7 +3,7 @@
 ## Overview
 Sparrow-wifi has been built from the ground up to be the next generation 2.4 GHz and 5 GHz Wifi spectral awareness tool.  At its most basic it provides a more comprehensive GUI-based replacement for tools like inSSIDer and linssid that runs specifically on linux.  In its most comprehensive use cases, sparrow-wifi integrates wifi, software-defined radio (hackrf), advanced bluetooth tools (traditional and Ubertooth), traditional GPS (via gpsd), and drone/rover GPS via mavlink in one solution.
 
-[NEW: An additional agent has been added that can feed wireless and bluetooth network scan results into an Elasticsearch database.  See the Elasticsearch section for details.]
+**NEW: An additional agent has been added that can feed wireless and bluetooth network scan results into an Elasticsearch database.  See the Elasticsearch section for details.**
 
 
 Written entirely in Python3, Sparrow-wifi has been designed for the following scenarios:
@@ -18,7 +18,7 @@ Written entirely in Python3, Sparrow-wifi has been designed for the following sc
 - The remote agent is JSON-based so it can be integrated with other applications
 - Import/Export - Ability to import and export to/from CSV and JSON for easy integration and revisiualization.  You can also just run 'iw dev <interface> scan' and save it to a file and import that as well.
 - Produce Google maps when GPS coordinates are available for both discovered SSID's / bluetooth devices or to plot the wifi telemetry over time.
-- Integration with Elasticsearch to feed wireless and optionally bluetooth scan data into an Elastic Common Schema compliant index
+- Integration with Elasticsearch to feed wireless and optionally bluetooth scan data into Elastic Common Schema compliant indices.
 
 A few sample screenshots.  The first is the main window showing a basic wifi scan, the second shows the telemetry/tracking window used for both Wifi and bluetooth tracking.
 
