@@ -2539,8 +2539,10 @@ if __name__ == '__main__':
         if len(coord_array) < 3:
             print("ERROR: Provided static coordinates are not in the format latitude,longitude,altitude.")
             exit(1)
+        usingStaticGPS = True
         gpsEngine = GPSEngineStatic(float(coord_array[0]), float(coord_array[1]), float(coord_array[2]))
     else:
+        usingStaticGPS = False
         gpsEngine = GPSEngine()
         
     debugHTTP = args.debughttp
@@ -2737,7 +2739,10 @@ if __name__ == '__main__':
                 SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_HEARTBEAT)
                 
             gpsEngine.start()
-            print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] Local gpsd Found.  Providing GPS coordinates when synchronized.")
+            if usingStaticGPS:
+                print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] Using static lat/long/altitude(m): " + args.staticcoord)
+            else:
+                print('[' +curTime.strftime("%m/%d/%Y %H:%M:%S") + "] Local gpsd Found.  Providing GPS coordinates when synchronized.")
             
             if useRPILeds:
                 sleep(1)
