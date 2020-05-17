@@ -22,6 +22,7 @@ import sys
 import datetime
 import json
 import re
+
 import argparse
 import configparser
 # import subprocess
@@ -34,7 +35,7 @@ from http import server as HTTPServer
 from socketserver import ThreadingMixIn
 
 from wirelessengine import WirelessEngine
-from sparrowgps import GPSEngine, GPSStatus,  SparrowGPS
+from sparrowgps import GPSEngine, GPSEngineStatic,  GPSStatus,  SparrowGPS
 
 try:
     from sparrowdrone import SparrowDroneMavlink
@@ -54,7 +55,7 @@ except:
     hasOUILookup = False
 
 # ------   Global setup ------------
-gpsEngine = GPSEngine()
+gpsEngine = None
 curTime = datetime.datetime.now()
 
 useMavlink = False
@@ -2522,6 +2523,7 @@ if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description='Sparrow-wifi agent')
     argparser.add_argument('--port', help='Port for HTTP server to listen on.  Default is 8020.', default=8020, required=False)
     argparser.add_argument('--allowedips', help="IP addresses allowed to connect to this agent.  Default is any.  This can be a comma-separated list for multiple IP addresses", default='', required=False)
+    argparser.add_argument('--staticcoord', help="Use user-defined lat/long/altitude(m) rather than GPS.", default='', required=False)
     argparser.add_argument('--mavlinkgps', help="Use Mavlink (drone) for GPS.  Options are: '3dr' for a Solo, 'sitl' for local simulator, or full connection string ('udp/tcp:<ip>:<port>' such as: 'udp:10.1.1.10:14550')", default='', required=False)
     argparser.add_argument('--sendannounce', help="Send a UDP broadcast packet on the specified port to announce presence", action='store_true', default=False, required=False)
     argparser.add_argument('--userpileds', help="Use RPi LEDs to signal state.  Red=GPS [off=None,blinking=Unsynchronized,solid=synchronized], Green=Agent Running [On=Running, blinking=servicing HTTP request]", action='store_true', default=False, required=False)
@@ -2532,6 +2534,15 @@ if __name__ == '__main__':
     argparser.add_argument('--debughttp', help="Print each URL request", action='store_true', default=False, required=False)
     args = argparser.parse_args()
 
+    if len(args.staticcoord) > 0:
+        coord_array = args.staticcoord.split(",")
+        if len(coord_array) < 3:
+            print("ERROR: Provided static coordinates are not in the format latitude,longitude,altitude.")
+            exit(1)
+        gpsEngine = GPSEngineStatic(float(coord_array[0]), float(coord_array[1]), float(coord_array[2]))
+    else:
+        gpsEngine = GPSEngine()
+        
     debugHTTP = args.debughttp
     
     if os.geteuid() != 0:

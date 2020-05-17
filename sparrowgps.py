@@ -232,3 +232,51 @@ class GPSEngine(object):
         except:
             return False
            
+class GPSEngineStatic(GPSEngine):
+    def __init__(self, latitude, longitude, altitude):
+        super().__init__()
+        
+        self.lastCoord = SparrowGPS()
+        
+        self.lastCoord.latitude = latitude
+        self.lastCoord.longitude = longitude
+        self.lastCoord.altitude = altitude
+        self.lastCoord.speed = 0.0
+        self.lastCoord.isValid = True
+        
+        self.gpsAvailable = True
+
+    def getLastCoord(self):
+        return self.lastCoord
+        
+    def gpsValid(self):
+        return True
+        
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+            
+    def engineRunning(self):
+        return True
+        
+    def GPSDInstalled():
+        if os.path.isfile('/usr/sbin/gpsd'):
+            return True
+        else:
+            if os.path.isfile('/usr/local/sbin/gpsd'):
+                return True
+            else:
+                return False
+                
+    def GPSDRunning():
+        try:
+            with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
+                if sock.connect_ex(('127.0.0.1', 2947)) == 0:
+                    return True
+                else:
+                    return False
+        except:
+            return False
+           
