@@ -8,6 +8,7 @@ import requests
 import platform
 import datetime
 import pytz
+from datetime import timezone
 import os
 
 from sparrowcommon import stringtobool
@@ -454,7 +455,7 @@ def get_wireless_dict(wirelessNetwork):
 
     return wifi_details
     
-def addWirelessData(wirelessArray,  wirelessNetwork,  timestamp,  hour,  day_of_week):
+def addWirelessData(wirelessArray,  wirelessNetwork,  timestamp,  hour_utc,  day_of_week_utc,  hour_local,  day_of_week_local):
     ecs_event = {"kind":"event",  "module": "sparrow",  "type":"info",  "dataset": "sparrow.wifi"}
     
     ecs = {}
@@ -468,8 +469,10 @@ def addWirelessData(wirelessArray,  wirelessNetwork,  timestamp,  hour,  day_of_
     ecs['event'] = ecs_event
     ecs['wifi'] = get_wireless_dict(wirelessNetwork)
     ecs['wifi']['is_primary_channel'] = True
-    ecs['wifi']['hour_utc'] = hour
-    ecs['wifi']['day_of_week_utc'] = day_of_week
+    ecs['wifi']['hour_utc'] = hour_utc
+    ecs['wifi']['day_of_week_utc'] = day_of_week_utc
+    ecs['wifi']['hour_local'] = hour_local
+    ecs['wifi']['day_of_week_local'] = day_of_week_local
     
     if 'geo' in ecs['wifi']:
         ecs['host']['geo'] = ecs['wifi']['geo']
@@ -483,8 +486,10 @@ def addWirelessData(wirelessArray,  wirelessNetwork,  timestamp,  hour,  day_of_
         wirelessNetwork.channel= wirelessNetwork.secondaryChannel
         ecs['wifi'] = get_wireless_dict(wirelessNetwork)
         ecs['wifi']['is_primary_channel'] = False
-        ecs['wifi']['hour_utc'] = hour
-        ecs['wifi']['day_of_week_utc'] = day_of_week
+        ecs['wifi']['hour_utc'] = hour_utc
+        ecs['wifi']['day_of_week_utc'] = day_of_week_utc
+        ecs['wifi']['hour_local'] = hour_local
+        ecs['wifi']['day_of_week_local'] = day_of_week_local
         wirelessArray.append(ecs)
 
     if wirelessNetwork.thirdChannel > 0:
@@ -492,13 +497,15 @@ def addWirelessData(wirelessArray,  wirelessNetwork,  timestamp,  hour,  day_of_
         wirelessNetwork.channel= wirelessNetwork.thirdChannel
         ecs['wifi'] = get_wireless_dict(wirelessNetwork)
         ecs['wifi']['is_primary_channel'] = False
-        ecs['wifi']['hour_utc'] = hour
-        ecs['wifi']['day_of_week_utc'] = day_of_week
+        ecs['wifi']['hour_utc'] = hour_utc
+        ecs['wifi']['day_of_week_utc'] = day_of_week_utc
+        ecs['wifi']['hour_local'] = hour_local
+        ecs['wifi']['day_of_week_local'] = day_of_week_local
         wirelessArray.append(ecs)
 
     return wirelessArray
 
-def addBluetoothData(bluetoothArray,  btDevice,  timestamp,  hour,  day_of_week):
+def addBluetoothData(bluetoothArray,  btDevice,  timestamp,  hour_utc,  day_of_week_utc,  hour_local,  day_of_week_local):
     ecs_event = {"kind":"event",  "module": "sparrow",  "type":"info",  "dataset": "sparrow.bluetooth"}
     
     ecs = {}
@@ -515,8 +522,10 @@ def addBluetoothData(bluetoothArray,  btDevice,  timestamp,  hour,  day_of_week)
     ecs['agent'] = ecs_agent
     ecs['event'] = ecs_event
     ecs['bluetooth'] = get_bluetooth_dict(btDevice)
-    ecs['bluetooth']['hour_utc'] = hour
-    ecs['bluetooth']['day_of_week_utc'] = day_of_week
+    ecs['bluetooth']['hour_utc'] = hour_utc
+    ecs['bluetooth']['day_of_week_utc'] = day_of_week_utc
+    ecs['bluetooth']['hour_local'] = hour_local
+    ecs['bluetooth']['day_of_week_local'] = day_of_week_local
     
     if 'geo' in ecs['bluetooth']:
         ecs['host']['geo'] = ecs['bluetooth']['geo']
@@ -525,6 +534,28 @@ def addBluetoothData(bluetoothArray,  btDevice,  timestamp,  hour,  day_of_week)
     
     return bluetoothArray
 
+def getDayOfWeekName(day_of_week_num):
+    # Note: The returned number differs from C++.  Here 0=Monday
+    # With tm_wday, 0=Sunday
+    if day_of_week_num == 0:
+        day_of_week = "Monday"
+    elif day_of_week_num == 1:
+        day_of_week = "Tuesday"
+    elif day_of_week_num == 2:
+        day_of_week = "Wednesday"
+    elif day_of_week_num == 3:
+        day_of_week = "Thursday"
+    elif day_of_week_num == 4:
+        day_of_week = "Friday"
+    elif day_of_week_num == 5:
+        day_of_week = "Saturday"
+    elif day_of_week_num == 6:
+        day_of_week = "Sunday"
+    else:
+        day_of_week = ""
+        
+    return day_of_week
+    
 # ----------------- Main -----------------------------
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description='Sparrow-wifi Agent/ElasticSearch Bridge')
@@ -590,34 +621,22 @@ if __name__ == '__main__':
         while True:
             retCode, errString, wirelessNetworks = requestRemoteNetworks(remoteAgentIP, remoteAgentPort, remoteInterface)
             
-            dt = datetime.datetime.now(pytz.timezone("UTC"))
-            timestamp = str(dt)
+            # Get timestamp and UTC info
+            dt_utc = datetime.datetime.now(pytz.timezone("UTC"))
+            timestamp = str(dt_utc)
             timestamp = timestamp.replace("+00:00", "Z")
             timestamp = timestamp.replace(" ", "T")
-            hour = dt.hour
-            day_of_week_num = dt.weekday()
-            day_of_week = ""
-            # Note: The returned number differs from C++.  Here 0=Monday
-            # With tm_wday, 0=Sunday
-            if day_of_week_num == 0:
-                day_of_week = "Monday"
-            elif day_of_week_num == 1:
-                day_of_week = "Tuesday"
-            elif day_of_week_num == 2:
-                day_of_week = "Wednesday"
-            elif day_of_week_num == 3:
-                day_of_week = "Thursday"
-            elif day_of_week_num == 4:
-                day_of_week = "Friday"
-            elif day_of_week_num == 5:
-                day_of_week = "Saturday"
-            elif day_of_week_num == 6:
-                day_of_week = "Sunday"
+            hour_utc = dt_utc.hour
+            day_of_week_utc = getDayOfWeekName(dt_utc.weekday())
+            # Get local info
+            dt_local = dt_utc.replace(tzinfo=timezone.utc).astimezone(tz=None)
+            hour_local = dt_local.hour
+            day_of_week_local = getDayOfWeekName(dt_local.weekday())
                 
             if retCode == 0:
                 wirelessArray = []
                 for curKey in wirelessNetworks.keys():
-                    wirelessArray = addWirelessData(wirelessArray,  wirelessNetworks[curKey],  timestamp,  hour,  day_of_week)
+                    wirelessArray = addWirelessData(wirelessArray,  wirelessNetworks[curKey],  timestamp,  hour_utc,  day_of_week_utc,  hour_local,  day_of_week_local)
                     
                 writeDataToIndex(es, wifi_index,  wirelessArray)
             else:
@@ -635,7 +654,7 @@ if __name__ == '__main__':
                         
                         bluetoothArray = []
                         for curKey in btDevices.keys():
-                            bluetoothArray = addBluetoothData(bluetoothArray,  btDevices[curKey],  timestamp, hour,  day_of_week)
+                            bluetoothArray = addBluetoothData(bluetoothArray,  btDevices[curKey],  timestamp, hour_utc,  day_of_week_utc,  hour_local,  day_of_week_local)
                             
                         writeDataToIndex(es, bluetoothIndex,  bluetoothArray)
                     else:
