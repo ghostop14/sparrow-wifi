@@ -339,46 +339,60 @@ def getOUIDB():
     return ouidb
 
 def get_bluetooth_dict(btDevice):
-        dictjson = {}
-        dictjson['uuid'] = btDevice.uuid
-        dictjson['address'] = btDevice.macAddress
-        if len(btDevice.name) == 0:
-            dictjson['name'] = btDevice.macAddress
-            dictjson['address_is_name'] = True
-        else:
-            dictjson['name'] = btDevice.name
-            dictjson['address_is_name'] = True
-            
-        dictjson['company'] = btDevice.company
-        dictjson['manufacturer'] = btDevice.manufacturer
-        dictjson['bluetooth_description'] = btDevice.bluetoothDescription
-        if btDevice.btType == 1:
-            dictjson['type'] = "Classic"
-        else:
-            dictjson['type'] = "BT LE"
-            
-        dictjson['rssi'] = btDevice.rssi
-        dictjson['tx_power'] = btDevice.txPower
-        dictjson['tx_power_valid'] = btDevice.txPowerValid
-        dictjson['ibeacon_range'] = btDevice.iBeaconRange
-
-        if btDevice.gps.isValid and (btDevice.gps.latitude != 0.0 or btDevice.gps.longitude != 0.0):
-            wifi_geo = {}
-            wifi_geo_location = {}
-            wifi_geo_location ['lat'] = str(btDevice.gps.latitude)
-            wifi_geo_location ['lon'] = str(btDevice.gps.longitude)
-            wifi_geo['location'] = wifi_geo_location
-
-            wifi_geo['altitude'] = str(btDevice.gps.altitude)
-            wifi_geo['speed'] = str(btDevice.gps.speed)
-
-            dictjson['geo'] = wifi_geo
-            
-        return dictjson
+    dictjson = {}
+    dictjson['uuid'] = btDevice.uuid
+    
+    # Make mac address kibana searchable
+    dictjson['address'] = btDevice.macAddress.replace(":", "_")
+    if len(btDevice.name) == 0:
+        dictjson['name'] = btDevice.macAddress.replace(":", "_")
+        dictjson['address_is_name'] = True
+    else:
+        dictjson['name'] = btDevice.name
+        dictjson['address_is_name'] = False
         
+    # This is required to search for names with spaces, dashes, or colons since Kibana won't allow them to 
+    # be used in wildcard search criteria
+    elastic_searchable_name = btDevice.name.replace("-", "^").replace(":", "%").replace(" ", "_")
+    dictjson['searchable_name'] = elastic_searchable_name
+    if elastic_searchable_name == btDevice.name:
+        dictjson['searchable_matches_name'] = True
+    else:
+        dictjson['searchable_matches_name'] = False
+    
+    dictjson['company'] = btDevice.company
+    dictjson['manufacturer'] = btDevice.manufacturer
+    dictjson['bluetooth_description'] = btDevice.bluetoothDescription
+    if btDevice.btType == 1:
+        dictjson['type'] = "Classic"
+    else:
+        dictjson['type'] = "BT LE"
+        
+    dictjson['rssi'] = btDevice.rssi
+    dictjson['tx_power'] = btDevice.txPower
+    dictjson['tx_power_valid'] = btDevice.txPowerValid
+    dictjson['ibeacon_range'] = btDevice.iBeaconRange
+
+    if btDevice.gps.isValid and (btDevice.gps.latitude != 0.0 or btDevice.gps.longitude != 0.0):
+        wifi_geo = {}
+        wifi_geo_location = {}
+        wifi_geo_location ['lat'] = str(btDevice.gps.latitude)
+        wifi_geo_location ['lon'] = str(btDevice.gps.longitude)
+        wifi_geo['location'] = wifi_geo_location
+
+        wifi_geo['altitude'] = str(btDevice.gps.altitude)
+        wifi_geo['speed'] = str(btDevice.gps.speed)
+
+        dictjson['geo'] = wifi_geo
+        
+    return dictjson
+    
 def get_wireless_dict(wirelessNetwork):
     wifi_details = {}
-    wifi_details['mac_addr'] = wirelessNetwork.macAddr
+    
+    # Make mac address kibana searchable
+    wifi_details['mac_addr'] = wirelessNetwork.macAddr.replace(":", "_")
+    
     if ouiLookupEngine:
         wifi_details['mac_vendor'] = ouiLookupEngine.get_manuf(wirelessNetwork.macAddr)
         
