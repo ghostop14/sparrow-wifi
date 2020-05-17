@@ -151,6 +151,9 @@ optional arguments:
                         IP addresses allowed to connect to this agent. Default
                         is any. This can be a comma-separated list for
                         multiple IP addresses
+  --staticcoord STATICCOORD
+                        Use user-defined lat,long,altitude(m) rather than GPS.
+                        Ex: 40.1,-75.3,150
   --mavlinkgps MAVLINKGPS
                         Use Mavlink (drone) for GPS. Options are: '3dr' for a
                         Solo, 'sitl' for local simulator, or full connection

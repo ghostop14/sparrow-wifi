@@ -2523,7 +2523,7 @@ if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description='Sparrow-wifi agent')
     argparser.add_argument('--port', help='Port for HTTP server to listen on.  Default is 8020.', default=8020, required=False)
     argparser.add_argument('--allowedips', help="IP addresses allowed to connect to this agent.  Default is any.  This can be a comma-separated list for multiple IP addresses", default='', required=False)
-    argparser.add_argument('--staticcoord', help="Use user-defined lat/long/altitude(m) rather than GPS.", default='', required=False)
+    argparser.add_argument('--staticcoord', help="Use user-defined lat,long,altitude(m) rather than GPS.  Ex: 40.1,-75.3,150", default='', required=False)
     argparser.add_argument('--mavlinkgps', help="Use Mavlink (drone) for GPS.  Options are: '3dr' for a Solo, 'sitl' for local simulator, or full connection string ('udp/tcp:<ip>:<port>' such as: 'udp:10.1.1.10:14550')", default='', required=False)
     argparser.add_argument('--sendannounce', help="Send a UDP broadcast packet on the specified port to announce presence", action='store_true', default=False, required=False)
     argparser.add_argument('--userpileds', help="Use RPi LEDs to signal state.  Red=GPS [off=None,blinking=Unsynchronized,solid=synchronized], Green=Agent Running [On=Running, blinking=servicing HTTP request]", action='store_true', default=False, required=False)
