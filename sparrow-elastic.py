@@ -204,7 +204,11 @@ def writeDataToIndex(es,  es_index, entries, es_doc_type='_doc'):
 
         es_entries.append(entry)    
 
-    helpers.bulk(es, es_entries, refresh=True, request_timeout=60) 
+    try:
+        helpers.bulk(es, es_entries, refresh=True, request_timeout=60) 
+    except Exception as e:
+        # This can happen if the server is restarted or the connection becomes unavilable
+        print(str(e))
 
 # ------------------- Bluetooth routines ------------------------------------
 def startRemoteBluetoothDiscoveryScan(agentIP, agentPort, ubertooth):
