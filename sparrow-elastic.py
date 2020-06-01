@@ -133,7 +133,6 @@ def create_wifi_index(es, index_name = "sparrowwifi"):
                 "host.name":                  { "type": "keyword" },
                 "host.geo.location":   { "type": "geo_point" },
                 "process.name":             { "type": "keyword" },
-
                 "wifi.ssid":               { "type": "keyword" },
                 "wifi.mac_addr":       { "type": "keyword" },
                 "wifi.mac_vendor":       { "type": "keyword" },
@@ -146,7 +145,7 @@ def create_wifi_index(es, index_name = "sparrowwifi"):
                 "wifi.center_frequency_hz":  { "type": "double" },
                 "wifi.bandwidth":               { "type": "double" },
                 "wifi.geo.location":         { "type": "geo_point" },
-                "wifi.strongest_signal.location":        { "type": "geo_point" },
+                "wifi.strongest_signal.location":        { "type": "geo_point" }
             }
         }
     }
@@ -154,7 +153,7 @@ def create_wifi_index(es, index_name = "sparrowwifi"):
     create_index = es.indices.create(index = index_name, body = my_mapping,  ignore=400)
     # mapping_index = es.indices.put_mapping(index = index_name, doc_type = "en", body = my_mapping)
     if 'status' in create_index.keys() and create_index['status'] == 400:
-        if create_index['error']['root_cause'][0]['type'] != 'resource_already_exists_exception':
+        if create_index['error']['root_cause'][0]['type'] != 'resource_already_exists_exception' and not ('already exists as alias' in create_index['error']['root_cause'][0]['reason']):
             errString = create_index['error']['root_cause'][0]['type'] + ": " + create_index['error']['root_cause'][0]['reason']
             print(errString)
             raise Exception(errString)
@@ -176,13 +175,12 @@ def create_bluetooth_index(es, index_name = "sparrowbt"):
                 "host.name":                  { "type": "keyword" },
                 "host.geo.location":   { "type": "geo_point" },
                 "process.name":             { "type": "keyword" },
-
                 "bluetooth.uuid":               { "type": "keyword" },
                 "bluetooth.company":       { "type": "keyword" },
                 "bluetooth.manufacturer":               { "type": "keyword" },
                 "bluetooth.type":       { "type": "keyword" },
                 "bluetooth.geo.location":         { "type": "geo_point" },
-                "bluetooth.strongest_signal.location":        { "type": "geo_point" },
+                "bluetooth.strongest_signal.location":        { "type": "geo_point" }
             }
         }
     }
@@ -190,7 +188,7 @@ def create_bluetooth_index(es, index_name = "sparrowbt"):
     create_index = es.indices.create(index = index_name, body = my_mapping,  ignore=400)
     # mapping_index = es.indices.put_mapping(index = index_name, doc_type = "en", body = my_mapping)
     if 'status' in create_index.keys() and create_index['status'] == 400:
-        if create_index['error']['root_cause'][0]['type'] != 'resource_already_exists_exception':
+        if create_index['error']['root_cause'][0]['type'] != 'resource_already_exists_exception' and not ('already exists as alias' in create_index['error']['root_cause'][0]['reason']):
             errString = create_index['error']['root_cause'][0]['type'] + ": " + create_index['error']['root_cause'][0]['reason']
             print(errString)
             raise Exception(errString)
