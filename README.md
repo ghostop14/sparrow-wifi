@@ -33,11 +33,13 @@ A few sample screenshots.  The first is the main window showing a basic wifi sca
 ## Installation
 sparrow-wifi uses python3, qt5, and qtchart for the UI.  On a standard debian variant you will may already have python3 and qt5 installed.  The only addition to run it is qtchart.  The following commands should get you up and running with wifi on both Ubuntu and Kali linux.
 
-NOTE: The latest version of PyQtChart has been giving folks issues if you don't "sudo pip3 install --upgrade pip" first.  If you get an error installing any of the modules, upgrade pip and try it again.  They must be using something in the newest pip that breaks older versions.
+QTCHART NOTES: 
+- The latest version of PyQtChart has been giving folks issues if you don't "sudo pip3 install --upgrade pip" first.  If you get an error installing any of the modules, upgrade pip and try it again.  They must be using something in the newest pip that breaks older versions.
+- On Ubuntu 20.04+ do not pip3 install pyqtchart, rather, use 'sudo apt-get install python3-pyqt5.qtchart'
 
 ```
 sudo apt-get install python3-pip gpsd gpsd-clients python3-tk python3-setuptools
-sudo pip3 install QScintilla PyQtChart gps3 dronekit manuf python-dateutil numpy matplotlib
+sudo pip3 install QScintilla PyQtChart==5.13.1 gps3 dronekit manuf python-dateutil numpy matplotlib
 ```
 
 Some folks have been running sparrow with a python virtualenv, if you'd like to run it in an isolated python environment, the following sequence should get you up and running:
