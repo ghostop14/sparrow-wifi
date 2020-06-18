@@ -39,7 +39,7 @@ QTCHART NOTES:
 
 ```
 sudo apt-get install python3-pip gpsd gpsd-clients python3-tk python3-setuptools
-sudo pip3 install QScintilla PyQtChart==5.13.1 gps3 dronekit manuf python-dateutil numpy matplotlib
+sudo pip3 install QScintilla PyQtChart gps3 dronekit manuf python-dateutil numpy matplotlib
 ```
 
 Some folks have been running sparrow with a python virtualenv, if you'd like to run it in an isolated python environment, the following sequence should get you up and running:
