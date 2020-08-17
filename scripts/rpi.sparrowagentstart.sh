@@ -20,6 +20,3 @@ if [ "$GPSRUNNING" -eq 0 ]; then
 fi
 
 python sparrowwifiagent.py &
-
-
-
