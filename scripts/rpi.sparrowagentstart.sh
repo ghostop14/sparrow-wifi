@@ -9,7 +9,7 @@ if [ "$GPSDRUNNING" -eq 0 ]; then
 	service gpsd stop
 fi
 
-GPSRUNNING=$(pgrep gpsd | wc -l
+GPSRUNNING=$(pgrep gpsd | wc -l)
 
 # See if it was already started with the command below
 if [ "$GPSRUNNING" -eq 0 ]; then
