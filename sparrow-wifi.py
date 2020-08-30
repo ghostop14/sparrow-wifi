@@ -738,8 +738,8 @@ class mainWindow(QMainWindow):
         desktopSize = QApplication.desktop().screenGeometry()
         #self.mainWidth=1024
         #self.mainHeight=768
-        self.mainWidth = desktopSize.width() * 3 / 4
-        self.mainHeight = desktopSize.height() * 3 / 4
+        self.mainWidth = int(desktopSize.width() * 3 / 4)
+        self.mainHeight = int(desktopSize.height() * 3 / 4)
         
         self.initUI()
         
@@ -807,11 +807,11 @@ class mainWindow(QMainWindow):
         size = self.geometry()
         
         if self.initializingGUI:
-            self.horizontalDivider.setGeometry(1, size.height()/2+2, size.width()-2, 4)
+            self.horizontalDivider.setGeometry(1, int(size.height()/2+2), size.width()-2, 4)
 
-            self.networkTable.setGeometry(10, 103, size.width()-20, size.height()/2-105)
-            self.Plot24.setGeometry(10, size.height()/2+10, size.width()/2-10, size.height()/2-40)
-            self.Plot5.setGeometry(size.width()/2+5, size.height()/2+10,size.width()/2-15, size.height()/2-40)
+            self.networkTable.setGeometry(10, 103, size.width()-20, int(size.height()/2)-105)
+            self.Plot24.setGeometry(10, int(size.height()/2)+10, int(size.width()/2)-10, int(size.height()/2)-40)
+            self.Plot5.setGeometry(int(size.width()/2)+5, int(size.height()/2)+10, int(size.width()/2)-15, int(size.height()/2)-40)
             
             self.initializingGUI = False
         
@@ -833,8 +833,8 @@ class mainWindow(QMainWindow):
             
         self.horizontalDivider.setGeometry(dividerPos.x(), dividerPos.y(), size.width()-2, 5)
         self.networkTable.setGeometry(10, 103, size.width()-20, dividerPos.y()-105)
-        self.Plot24.setGeometry(10, dividerPos.y()+6, size.width()/2-10, size.height()-dividerPos.y()-30)
-        self.Plot5.setGeometry(size.width()/2+5, dividerPos.y()+6,size.width()/2-15, size.height()-dividerPos.y()-30)
+        self.Plot24.setGeometry(10, dividerPos.y()+6, int(size.width()/2)-10, size.height()-dividerPos.y()-30)
+        self.Plot5.setGeometry(int(size.width()/2)+5, dividerPos.y()+6,int(size.width()/2)-15, size.height()-dividerPos.y()-30)
 
     def createControls(self):
         # self.statusBar().setStyleSheet("QStatusBar{background:rgba(204,229,255,255);color:black;border: 1px solid blue; border-radius: 1px;}")
