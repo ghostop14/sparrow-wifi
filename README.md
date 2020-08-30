@@ -35,14 +35,14 @@ sparrow-wifi uses python3, qt5, and qtchart for the UI.  On a standard debian va
 
 QTCHART NOTES: 
 - The latest version of PyQtChart has been giving folks issues if you don't "sudo pip3 install --upgrade pip" first.  If you get an error installing any of the modules, upgrade pip and try it again.  They must be using something in the newest pip that breaks older versions.
-- On Ubuntu 20.04+ do not pip3 install pyqtchart, rather, use 'sudo apt-get install python3-pyqt5.qtchart'
+- On Ubuntu 20.04+ OR Kali 2020.3+ do not pip3 install pyqtchart, rather, use 'sudo apt-get install python3-pyqt5.qtchart' (see below)
 - If after installing below you still get some qtchart errors, some folks have had luck with pip3 install pyqtchart==5.13.1
 
 ```
 sudo apt-get install python3-pip gpsd gpsd-clients python3-tk python3-setuptools
 sudo pip3 install QScintilla PyQtChart gps3 dronekit manuf python-dateutil numpy matplotlib
 
-for Ubuntu 20+:
+**for Ubuntu 20+ AND Kali 2020.3 or later**:
 sudo apt-get install python3-pip gpsd gpsd-clients python3-tk python3-setuptools python3-pyqt5.qtchart
 sudo pip3 install QScintilla gps3 dronekit manuf python-dateutil numpy matplotlib
 ```
