@@ -3486,7 +3486,9 @@ class mainWindow(QMainWindow):
                     
                 # Okay, we have interfaces.  Let's load them
                 self.combo.clear()
-                if (len(interfaces) > 0):
+
+                # Double check your objects
+                if interfaces is not None and len(interfaces) > 0:
                     for curInterface in interfaces:
                         self.combo.addItem(curInterface)
                 else:
