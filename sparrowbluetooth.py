@@ -315,7 +315,7 @@ class BtmonThread(BaseThreadClass):
         subprocess.run(['hciconfig', 'hci0', 'up'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         
     def startBTMon(self):
-        self.btmonProc = subprocess.Popen(['btmon'],stdout=subprocess.PIPE,bufsize=1, stderr=subprocess.PIPE)
+        self.btmonProc = subprocess.Popen(['btmon'],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
 
     def startHCITool(self):
         self.hcitoolProc = subprocess.Popen(['hcitool', 'lescan', '--duplicates'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
