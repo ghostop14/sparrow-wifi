@@ -68,7 +68,8 @@ class GPSThread(Thread):
                     except:
                         gpsResult.speed = 0.0
                         
-                    gpsResult.isValid = True
+                    if gpsResult.latitude != 0.0 or gpsResult.longitude != 0.0 or gpsResult.speed != 0.0 or gpsResult.altitude != 0.0:
+                        gpsResult.isValid = True
                 except:
                     gpsResult.isValid = False
                     
