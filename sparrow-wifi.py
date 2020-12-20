@@ -622,6 +622,7 @@ class mainWindow(QMainWindow):
     advScanUpdateSSIDs = QtCore.pyqtSignal(dict)
     agentListenerClosed = QtCore.pyqtSignal()
     bluetoothDiscoveryClosed = QtCore.pyqtSignal()
+    rescanInterfaces = QtCore.pyqtSignal()
     
     # For help with qt5 GUI's this is a great tutorial:
     # http://zetcode.com/gui/pyqt5/
@@ -651,6 +652,8 @@ class mainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        self.rescanInterfaces.connect(self.onRescanInterfaces)
+        
         self.hackrf = SparrowHackrf()
         self.hackrfShowSpectrum24 = False
         self.hackrfLastSpectrumState24 = False
@@ -2771,9 +2774,9 @@ class mainWindow(QMainWindow):
                             self.networkTable.item(curRow, 6).setText(str(curNet.frequency))
                             self.networkTable.item(curRow, 7).setText(str(curNet.signal))
                             
-                            if not FromAdvanced:
-                                # There are some fields that are not passed forward from advanced.
-                                # So we only want to overwrite them if we're not updating from the advanced window
+                            if FromAdvanced:
+                                # There are some fields that are not passed forward from advanced.  So let's update our curNet
+                                # attributes in the net object that comes from advanced.
                                 curNet.bandwidth = curData.bandwidth
                                 curNet.secondaryChannel = curData.secondaryChannel
                                 curNet.thirdChannel = curData.thirdChannel
@@ -3664,6 +3667,15 @@ class mainWindow(QMainWindow):
         self.hackrf.stopScanning()
         
         event.accept()
+
+    def onRescanInterfaces(self):
+        self.combo.clear()
+        
+        interfaces=WirelessEngine.getInterfaces()
+        
+        if (len(interfaces) > 0):
+            for curInterface in interfaces:
+                self.combo.addItem(curInterface)
 
 # -------  Main Routine and Bluetooth Function -------------------------
 if __name__ == '__main__':
