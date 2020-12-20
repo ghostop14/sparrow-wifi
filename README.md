@@ -3,9 +3,6 @@
 ## Overview
 Sparrow-wifi has been built from the ground up to be the next generation 2.4 GHz and 5 GHz Wifi spectral awareness tool.  At its most basic it provides a more comprehensive GUI-based replacement for tools like inSSIDer and linssid that runs specifically on linux.  In its most comprehensive use cases, sparrow-wifi integrates wifi, software-defined radio (hackrf), advanced bluetooth tools (traditional and Ubertooth), traditional GPS (via gpsd), and drone/rover GPS via mavlink in one solution.
 
-**NEW: An additional agent has been added that can feed wireless and bluetooth network scan results into an Elasticsearch database.  See the Elasticsearch section for details.**
-
-
 Written entirely in Python3, Sparrow-wifi has been designed for the following scenarios:
 - Basic wifi SSID identification
 - Wifi source hunt - Switch from normal to hunt mode to get multiple samples per second and use the telemetry windows to track a wifi source
@@ -29,6 +26,21 @@ A few sample screenshots.  The first is the main window showing a basic wifi sca
 <p align="center">
   <img src="https://github.com/ghostop14/sparrow-wifi/blob/master/telemetry-screenshot.png" width="600"/>
 </p>
+
+## New Features
+**Falcon Plugin Released:** This has been a private plugin for years, and is finally being released due to demand.  It provides the following features in a new dialog from a "Falcon" main menu:
+- aircrack-ng integration which allows for the enumeration of hidden SSIDs
+- client station enumeration
+- client station probed SSID enumeration
+- client station connected access point and channel
+- deauthentication right-click capabilities (single and continuous, targeted and broadcast)
+- WEP IV captures
+- WPA password hash capture and hash capture detection
+
+See the Falcon/aircrack section for details.
+
+**Elasticsearch Database Integration:** An additional agent has been added that can feed wireless and bluetooth network scan results into an Elasticsearch database.  See the Elasticsearch section for details.
+
 
 ## Installation
 sparrow-wifi uses python3, qt5, and qtchart for the UI.  On a standard debian variant you will may already have python3 and qt5 installed.  The only addition to run it is qtchart.  The following commands should get you up and running with wifi on both Ubuntu and Kali linux.
@@ -185,6 +197,31 @@ optional arguments:
   --debughttp           The agent will print an HTTP request log entry to 
                         stderr as it is received.
 ```
+
+## Falcon / Aircrack-ng Integration
+There has been a private plugin I developed early on with Sparrow that provided more advanced integration geared towards wireless penetration testing.  This plugin, nicknamed "Falcon" provides advanced integration with aircrack-ng.  Specifically it wraps up features in airmon-ng and airodump-ng with point-and-click UI capabilities, and makes hidden network scanning, client device enumeration, deauthentication, and WEP and WPA cracking point-and-click.  
+
+### Disclaimer
+Using any active penetration testing tools is subject to all kinds of legal laws and regulations.  
+
+***It is your responsibility to get appropriate permission before using these tools, and it is your responsibility to ensure that your actions are in compliance with any laws/regulations***.
+
+Now that that's out of the way...
+
+### Important Points Before Using
+1. This capability requires a wireless card and driver capable of entering monitoring mode. The easiest way to test is with ```airmon-ng start <interface>``` and troubleshoot any issues there before opening an issue.  
+2. Not all wireless cards and drivers work as well as others.  Internal Intel laptop wifi cards tend to work well.  Alfa's dual-band AC1200 USB adapter also works well (Alfa part number AWUS036ACH).  However, others such as Alfa's AWUS036AC card has not worked well.  It misses access points, and client devices.  If you are having detection issues I strongly recommend getting Alfa's AWUS036ACH USB 3.0 long-range adapter.  If you have a different card setup, and are having detection issues, that's the first thing I would swap out (I wouldn't be able to help debug any card-specific hardware/driver issues for hardware I don't have, so try one of these [Intel, or AWUS036ACH] before opening any issues).
+3. This plugin requires that aircrack-ng be installed and working.  If you run into any UI issues, drop to a command-prompt and try ```airodump-ng <interface>``` and troubleshoot any issues there before opening an issue.
+4. While airodump-ng can uncover non-broadcasting SSID's, some additional metadata is not available from that tool.  Attributes such as bandwidth, secondary channels, and capacity are not provided.  The way I like to work is use the main Sparrow window first to run scans and let some of those attributes fill in.  Then run the Falcon dialog and run a scan from there.  It will also update the main window, and won't overwrite those attributes it doesn't receive.  That produces the best combined data set on the main window.
+5. **Important**:Unlike the main window scans, aircrack-ng's requirement for a monitoring mode interface will disconnect any wifi networks you're connected to and using for data.  So if you are connected to a network via wifi for other purposes while scanning, you will lose network access when the wifi adapter goes to monitoring mode.  The simple workaround is to be plugged into an ethernet jack, or have a second wifi adapter if you still need network connectivity. 
+
+### Use
+On the main window, a new "Falcon" menu item will be present. This will provide access to a new dialog window.  This window has buttons to create/destroy monitoring mode interfaces, run scans using the aircrack suite, and the ability to export client stations that are detected.  If you right-click on an access point or client station, some other options will be presented:
+- Deauth single or continuous
+- Capture WEP IV's (if the network is a WEP-protected network)
+- Capture WPA hash (if the network is a WPA-PSK protected network)
+
+For WPA hash captures, you can wait for new clients to connect, or you can force a deauth to try to get the password hash to pass between the station and the access point.  Some systems can be more resistant to deauths than others, so this may or may not always work (however, it will work more often than not, just be patient).
 
 ## Elasticsearch Integration
 A new Elasticsearch agent has been added called sparrow-elastic.py.  This agent, when combined with the sparrowwifiagent.py script allows wireless network discovery and bluetooth device discovery to be fed directly into an Elasticsearch database.  Each wireless and bluetooth data set is Elastic Common Schema (ECS) 1.5 compliant so the results can be integrated with other security solutions and dashboards.
