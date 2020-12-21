@@ -199,7 +199,7 @@ optional arguments:
 ```
 
 ## Falcon / Aircrack-ng Integration
-There has been a private plugin I developed early on with Sparrow that provided more advanced integration geared towards wireless penetration testing.  This plugin, nicknamed "Falcon" provides advanced integration with aircrack-ng.  Specifically it wraps up features in airmon-ng and airodump-ng with point-and-click UI capabilities, and makes hidden network scanning, client device enumeration, deauthentication, and WEP and WPA cracking point-and-click.  
+There has been a private plugin I developed early on with Sparrow that provided more advanced integration geared towards wireless penetration testing.  This plugin, nicknamed "Falcon" provides advanced integration with aircrack-ng.  Specifically it wraps up features in airmon-ng and airodump-ng with point-and-click UI capabilities, and makes hidden network scanning, client device enumeration, deauthentication, and WEP and WPA cracking point-and-click. For wpa cracking, you will also need john-the-ripper (JTR) password cracking tool (specifically the wpapcap2john tool) to be in /usr/bin or /usr/local/bin.  
 
 ### Disclaimer
 Using any active penetration testing tools is subject to all kinds of legal laws and regulations.  
@@ -207,6 +207,14 @@ Using any active penetration testing tools is subject to all kinds of legal laws
 ***It is your responsibility to get appropriate permission before using these tools, and it is your responsibility to ensure that your actions are in compliance with any laws/regulations***.
 
 Now that that's out of the way...
+
+### Prerequisites
+
+This UI wraps capabilities from the airacrack-ng and JTR toolsets.  You will need to install these first, and have the following binaries in either /usr/bin or /usr/local/bin:
+
+1. airmon-ng (from aircrack-ng)
+2. airodump-ng (from aircrack-ng)
+3. wpapcap2john (from JTR)
 
 ### Important Points Before Using
 1. This capability requires a wireless card and driver capable of entering monitoring mode. The easiest way to test is with ```airmon-ng start <interface>``` and troubleshoot any issues there before opening an issue.  

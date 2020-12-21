@@ -5,8 +5,8 @@
 #
 # Application: Sparrow-WiFi
 # Module: falconwifidialogs.py
-# Author: Michael Piscopo
-# Copyright 2017 Michael Piscopo, All Rights Reserved
+# Author: ghostop14
+# Copyright 2017 ghostop14, All Rights Reserved
 #
 ##################################################################
 #
