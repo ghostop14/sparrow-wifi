@@ -57,6 +57,9 @@ sudo pip3 install QScintilla PyQtChart gps3 dronekit manuf python-dateutil numpy
 **for Ubuntu 20+ AND Kali 2020.3 or later**:
 sudo apt-get install python3-pip gpsd gpsd-clients python3-tk python3-setuptools python3-pyqt5.qtchart
 sudo pip3 install QScintilla gps3 dronekit manuf python-dateutil numpy matplotlib
+
+**NOTE** If on Kali you get any mavlink errors, and you're not using drones, you can use dronekit out.
+
 ```
 
 Some folks have been running sparrow with a python virtualenv, if you'd like to run it in an isolated python environment, the following sequence should get you up and running:
