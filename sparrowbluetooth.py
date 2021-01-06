@@ -387,7 +387,7 @@ class BtmonThread(BaseThreadClass):
             if not self.btMonRunning():
                 self.startBTMon()
                 
-            curLine = self.btmonProc.stdout.readline().decode('ASCII').replace('\n', '')
+            curLine = self.btmonProc.stdout.readline().decode('UTF-8').replace('\n', '')
 
             # Address
             fieldValue = self.getFieldValue(p_address, curLine)
@@ -516,7 +516,7 @@ class specanThread(BaseThreadClass):
         rssi_offset = -54   # Note: This is direct from the Ubertooth bluetooth module.  I thought the RSSI's looked really high.
         
         while not specanProc.poll() and not self.signalStop:
-            dataline = specanProc.stdout.readline().decode('ASCII').replace('\n', '')
+            dataline = specanProc.stdout.readline().decode('UTF-8').replace('\n', '')
             dataline = dataline.replace(' ', '')
             data = dataline.split(',')
             if len(data) >= 3:
@@ -957,7 +957,7 @@ class SparrowBluetooth(object):
         if result.returncode != 0:
             return 0
             
-        hciResult = result.stdout.decode('ASCII')
+        hciResult = result.stdout.decode('UTF-8')
         p = re.compile('^.*(1d50)', re.MULTILINE)
         tmpInterfaces = p.findall(hciResult)
         
@@ -980,7 +980,7 @@ class SparrowBluetooth(object):
         if result.returncode != 0:
             return []
             
-        hciResult = result.stdout.decode('ASCII')
+        hciResult = result.stdout.decode('UTF-8')
         p = re.compile('^.*(hci[0-9])', re.MULTILINE)
         tmpInterfaces = p.findall(hciResult)
         
@@ -1003,7 +1003,7 @@ class SparrowBluetooth(object):
     def getUbertoothSpecanProcesses():
         # Returns a list of process id's
         result = subprocess.run(['pgrep', '-f','ubertooth-specan'], stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
-        testResult = result.stdout.decode('ASCII')
+        testResult = result.stdout.decode('UTF-8')
 
         retVal = []
         if result.returncode != 0:
@@ -1063,7 +1063,7 @@ class SparrowBluetooth(object):
         params = ['ubertooth-util', '-v']
         
         result = subprocess.run(params, stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-        testResult = result.stdout.decode('ASCII')
+        testResult = result.stdout.decode('UTF-8')
         if 'could not open Ubertooth device' in testResult:
             return -3, 'Unable to find Ubertooth device'
         

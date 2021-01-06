@@ -177,7 +177,7 @@ def restartAgent():
     os.system(newCommand)
     # subprocess.Popen(params, stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     # result = subprocess.run(params, stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-    # restartResult = result.stdout.decode('ASCII')
+    # restartResult = result.stdout.decode('UTF-8')
     os.kill(os.getpid(), 9)
     
 def updateRunningConfig(newCfg):

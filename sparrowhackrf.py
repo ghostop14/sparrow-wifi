@@ -90,7 +90,7 @@ class HackrfSweepThread(BaseThreadClass):
         iteration = 0
         
         while not hackrfsweepProc.poll() and not self.signalStop:
-            dataline = hackrfsweepProc.stdout.readline().decode('ASCII').replace('\n', '')
+            dataline = hackrfsweepProc.stdout.readline().decode('UTF-8').replace('\n', '')
             
             dataline = dataline.replace(' ', '')
             data = dataline.split(',')
@@ -163,7 +163,7 @@ class SparrowHackrf(object):
         if result.returncode != 0:
             return 0
             
-        hciResult = result.stdout.decode('ASCII')
+        hciResult = result.stdout.decode('UTF-8')
         p = re.compile('^.*(1d50)', re.MULTILINE)
         tmpInterfaces = p.findall(hciResult)
         

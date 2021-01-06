@@ -494,7 +494,7 @@ class WirelessEngine(object):
         
     def getInterfaces(printResults=False):
         result = subprocess.run(['iwconfig'], stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
-        wirelessResult = result.stdout.decode('ASCII')
+        wirelessResult = result.stdout.decode('UTF-8')
         p = re.compile('^(.*?) IEEE', re.MULTILINE)
         tmpInterfaces = p.findall(wirelessResult)
         
@@ -518,7 +518,7 @@ class WirelessEngine(object):
         # Note: for standard scans with iw, this isn't required.  Just root access.
         # This is only required for some of the more advanced pen testing capabilities
         result = subprocess.run(['iwconfig'], stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
-        wirelessResult = result.stdout.decode('ASCII')
+        wirelessResult = result.stdout.decode('UTF-8')
         p = re.compile('^(.*?) IEEE.*?Mode:Monitor', re.MULTILINE)
         tmpInterfaces = p.findall(wirelessResult)
         
@@ -626,7 +626,7 @@ class WirelessEngine(object):
 
         retCode = result.returncode
         errString = ""
-        wirelessResult = result.stdout.decode('ASCII')
+        wirelessResult = result.stdout.decode('UTF-8')
         
         # debug
         if (printResults):

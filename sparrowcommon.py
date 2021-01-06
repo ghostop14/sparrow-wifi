@@ -82,7 +82,7 @@ def gzipUncompress(inputBytes):
     with gzip.GzipFile(fileobj=inp, mode='rb') as ofile:
         gunzippedString = ofile.read()
         
-    return gunzippedString.decode('ASCII')
+    return gunzippedString.decode('UTF-8')
     
 # ------------------  Class Base Thread ----------------------------------
 class BaseThreadClass(Thread):

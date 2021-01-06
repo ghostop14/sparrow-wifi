@@ -214,7 +214,7 @@ class GPSEngine(object):
         # ps.stdout.close()
         # ps.wait()
 
-        # gpsResult = output.decode('ASCII')
+        # gpsResult = output.decode('UTF-8')
 
         # if re.search('/gpsd', gpsResult) is None:
         #    return False
