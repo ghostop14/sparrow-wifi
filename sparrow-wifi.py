@@ -41,7 +41,7 @@ from PyQt5.QtCore import Qt, QRect, QTimer
 from PyQt5.QtGui import QIcon, QRegion
 from PyQt5 import QtCore
 
-# from PyQt5.QtCore import QCoreApplication # programatic quit
+# from PyQt5.QtCore import QCoreApplication # programmatic quit
 from wirelessengine import WirelessEngine, WirelessNetwork
 from sparrowcommon import BaseThreadClass, portOpen, stringtobool
 from sparrowgps import GPSEngine, GPSStatus, SparrowGPS

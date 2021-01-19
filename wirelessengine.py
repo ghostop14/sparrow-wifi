@@ -708,7 +708,7 @@ class WirelessEngine(object):
                         # I did see incomplete output from iw where not all the data was there
                         retVal[curNetwork.getKey()] = curNetwork
 
-                # Create a new netowrk.  BSSID will be the header for each network
+                # Create a new network.  BSSID will be the header for each network
                 curNetwork = WirelessNetwork()
                 curNetwork.lastSeen = now
                 curNetwork.firstSeen = now

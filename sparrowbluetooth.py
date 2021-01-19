@@ -1080,7 +1080,7 @@ def testSpectrum():
             print('Spectrum Size: ' + str(len(bt.spectrum)))
 
             if bt.scanInitializing():
-                print('Scan intializing...')
+                print('Scan initializing...')
 
             sleep(1)
             

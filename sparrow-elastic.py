@@ -205,7 +205,7 @@ def writeDataToIndex(es,  es_index, entries, es_doc_type='_doc'):
     try:
         helpers.bulk(es, es_entries, refresh=True, request_timeout=60) 
     except Exception as e:
-        # This can happen if the server is restarted or the connection becomes unavilable
+        # This can happen if the server is restarted or the connection becomes unavailable
         print(str(e))
 
 # ------------------- Bluetooth routines ------------------------------------
