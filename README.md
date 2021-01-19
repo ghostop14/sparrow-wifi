@@ -270,7 +270,7 @@ optional arguments:
 ```
 
 ## Drone / Rover Operations
-Being able to "war fly" (the drone equivilent of "wardriving" popular in the wifi world) was another goal of the project.  As a result, being able to have a lightweight agent that could be run on a small platform such as a Raspberry Pi that could be mounted on a drone was incorporated into the design requirements.  The agent has been flown successfully on a Solo 3DR drone (keeping the overall weight under the 350 g payload weight).
+Being able to "war fly" (the drone equivalent of "wardriving" popular in the wifi world) was another goal of the project.  As a result, being able to have a lightweight agent that could be run on a small platform such as a Raspberry Pi that could be mounted on a drone was incorporated into the design requirements.  The agent has been flown successfully on a Solo 3DR drone (keeping the overall weight under the 350 g payload weight).
 
 The Solo was a perfect choice for the project because the controller acts as a wifi access point and communicates with the drone over a traditional IP network using the mavlink protocol.  This allows other devices such as laptops, tablets, and the Raspberry Pi to simply join the controller wifi network and have IP connectivity.  This was important for field operations as it kept the operational complexity down.
 
