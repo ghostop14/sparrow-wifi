@@ -598,7 +598,9 @@ if __name__ == '__main__':
 
     # Create indices if needed
     create_wifi_index(es, wifi_index)
-    create_bluetooth_index(es, bluetoothIndex)
+    
+    if bluetoothEnabled:
+        create_bluetooth_index(es, bluetoothIndex)
     
     # Get remote wireless interfaces
     if len(args.wifiinterface) > 0:
