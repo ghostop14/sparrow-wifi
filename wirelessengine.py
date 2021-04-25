@@ -512,6 +512,16 @@ class WirelessEngine(object):
             if (printResults):
                 print("Error: No wireless interfaces found.")
 
+        p = re.compile('^(.*?) unassociated', re.MULTILINE)
+        tmpInterfaces = p.findall(wirelessResult)
+        if (len(tmpInterfaces) > 0):
+            for curInterface in tmpInterfaces:
+                tmpStr=curInterface.replace(' ','')
+                retVal.append(tmpStr)
+                # debug
+                if (printResults):
+                    print(tmpStr)
+                    
         return retVal
 
     def getMonitoringModeInterfaces(printResults=False):
