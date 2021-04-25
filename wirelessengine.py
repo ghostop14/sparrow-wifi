@@ -495,7 +495,7 @@ class WirelessEngine(object):
     def getInterfaces(printResults=False):
         result = subprocess.run(['iwconfig'], stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
         wirelessResult = result.stdout.decode('UTF-8')
-        p = re.compile('^(.*?) IEEE', re.MULTILINE)
+        p = re.compile('^(w.*?) .*', re.MULTILINE)
         tmpInterfaces = p.findall(wirelessResult)
         
         retVal = []
@@ -512,16 +512,6 @@ class WirelessEngine(object):
             if (printResults):
                 print("Error: No wireless interfaces found.")
 
-        p = re.compile('^(.*?) unassociated', re.MULTILINE)
-        tmpInterfaces = p.findall(wirelessResult)
-        if (len(tmpInterfaces) > 0):
-            for curInterface in tmpInterfaces:
-                tmpStr=curInterface.replace(' ','')
-                retVal.append(tmpStr)
-                # debug
-                if (printResults):
-                    print(tmpStr)
-                    
         return retVal
 
     def getMonitoringModeInterfaces(printResults=False):
