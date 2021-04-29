@@ -8,6 +8,8 @@
 #
 # sendannounce=True
 #
+# allowcors=True
+#
 # recordinterface will automatically start recording on the specified interface at startup
 #recordinterface=wlan0
 #
