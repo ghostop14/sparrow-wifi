@@ -2714,7 +2714,7 @@ if __name__ == '__main__':
         allowCors = settings['allowcors']
 
     runningcfg.allowCors = allowCors
-    print(f"Allow CORS: {runningcfg.allowCors}")
+    print("Allow CORS: " + str(runningcfg.allowCors))
 
     # Now start logic
 
