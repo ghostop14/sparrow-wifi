@@ -638,11 +638,11 @@ class mainWindow(QMainWindow):
         self.hasRemoteBluetooth = False
         self.hasRemoteUbertooth = False
 
-        numBtAdapters = len(SparrowBluetooth.getBluetoothInterfaces())
+        numBtAdapters = len(self.spBth.getBluetoothInterfaces())
         if numBtAdapters > 0:
             self.hasBluetooth = True
 
-        if SparrowBluetooth.getNumUbertoothDevices() > 0:
+        if self.spBth.getNumUbertoothDevices() > 0:
             #SparrowBluetooth.ubertoothStopSpecan()
             errcode, errmsg = SparrowBluetooth.hasUbertoothTools()
             # errcode, errmsg = SparrowBluetooth.ubertoothOnline()
@@ -650,7 +650,7 @@ class mainWindow(QMainWindow):
                 self.hasUbertooth = True
 
         if self.hasBluetooth or self.hasUbertooth:
-            self.bluetooth = SparrowBluetooth()
+            self.bluetooth = self.spBth
         else:
             self.bluetooth = None
 
@@ -673,6 +673,8 @@ class mainWindow(QMainWindow):
         self.spectrum24Line = None
         self.spectrum5Line = None
 
+        ## Instantiate SparrowBluetooth for self purposes
+        self.spBth = SparrowBluetooth()
         self.checkForBluetooth()
 
         self.bluetoothWin = None
