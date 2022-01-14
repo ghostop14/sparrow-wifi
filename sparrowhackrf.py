@@ -42,7 +42,7 @@ class HackrfSweepThread(BaseThreadClass):
         self.gain = 40
         # mirror qspectrumanalyzer
         # In python3 / is a floating point operation whereas // is explicitly integer division.  Result is without remainder
-        self.lna_gain = 8 * (self.gain // 18)
+        self.lna_gain = 8 * (self.gain // 8)
         self.vga_gain = 2 * ((self.gain - self.lna_gain) // 2)
         
     def run(self):
