@@ -1,22 +1,22 @@
 #!/usr/bin/python3
-# 
+#
 # Copyright 2017 ghostop14
-# 
+#
 # This is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation; either version 3, or (at your option)
 # any later version.
-# 
+#
 # This software is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
-# 
+#
 # You should have received a copy of the GNU General Public License
 # along with this software; see the file COPYING.  If not, write to
 # the Free Software Foundation, Inc., 51 Franklin Street,
 # Boston, MA 02110-1301, USA.
-# 
+#
 
 import os
 import subprocess
@@ -103,7 +103,7 @@ channelToFreq['188'] = '4940'
 channelToFreq['189'] = '4945'
 channelToFreq['192'] = '4960'
 channelToFreq['196'] = '4980'
-   
+
 # ------------------  WirelessNetwork class ------------------------------------
 class WirelessClient(object):
     def __init__(self):
@@ -123,10 +123,10 @@ class WirelessClient(object):
         self.probedSSIDs = []
         # Used for tracking in network table
         self.foundInList = False
-        
+
     def __str__(self):
         retVal = ""
-        
+
         retVal += "MAC Address: " + self.macAddr + "\n"
         retVal += "Associated Access Point Mac Address: " + self.apMacAddr + "\n"
         retVal += "SSID: " + self.ssid + "\n"
@@ -136,33 +136,33 @@ class WirelessClient(object):
         retVal += "First Seen: " + str(self.firstSeen) + "\n"
         retVal += "Last Seen: " + str(self.lastSeen) + "\n"
         retVal += "Probed SSIDs:"
-        
+
         if (len(self.probedSSIDs) > 0):
             for curSSID in self.probedSSIDs:
                 retVal += " " + curSSID
-                
+
             retVal += "\n"
         else:
             retVal += " No probes observed\n"
-            
+
         retVal += "Last GPS:\n"
         retVal += str(self.gps)
         retVal += "Strongest GPS:\n"
         retVal += str(self.strongestgps)
-            
+
         return retVal
-        
+
     def copy(self):
         return copy.deepcopy(self)
-        
+
     def __eq__(self, obj):
         # This is equivance....   ==
         if not isinstance(obj, WirelessClient):
            return False
-          
+
         if self.macAddr != obj.macAddr:
             return False
-            
+
         if self.apMacAddr != obj.apMacAddr:
             return False
 
@@ -170,21 +170,21 @@ class WirelessClient(object):
 
     def __ne__(self, other):
             return not self.__eq__(other)
-        
+
     def getKey(self):
         return self.macAddr
-        
+
     def associated(self):
         if len(self.apMacAddr) == 0 or (self.apMacAddr == "(not associated)"):
             return False
-            
+
         return True
-        
+
     def createFromJsonDict(jsondict):
         retVal = WirelessClient()
         retVal.fromJsondict(jsondict)
         return retVal
-        
+
     def fromJsondict(self, dictjson):
         # Note: if the json dictionary isn't correct, this will naturally throw an exception that may
         # need to be caught for error detection
@@ -192,7 +192,7 @@ class WirelessClient(object):
         self.apMacAddr = dictjson['apMacAddr']
         self.ssid = dictjson['ssid']
         self.channel = int(dictjson['channel'])
-        
+
         self.signal = int(dictjson['signal'])
         self.strongestsignal = int(dictjson['strongestsignal'])
 
@@ -204,23 +204,23 @@ class WirelessClient(object):
         self.gps.altitude = float(dictjson['alt'])
         self.gps.speed = float(dictjson['speed'])
         self.gps.isValid = stringtobool(dictjson['gpsvalid'])
-        
+
         self.strongestgps.latitude = float(dictjson['strongestlat'])
         self.strongestgps.longitude = float(dictjson['strongestlon'])
         self.strongestgps.altitude = float(dictjson['strongestalt'])
         self.strongestgps.speed = float(dictjson['strongestspeed'])
         self.strongestgps.isValid = stringtobool(dictjson['strongestgpsvalid'])
-        
+
         self.probedSSIDs = dictjson['probedssids']
-            
+
     def fromJson(self, jsonstr):
         dictjson = json.loads(jsonstr)
         self.fromJsondict(dictjson)
-            
+
     def toJson(self):
         dictjson = self.toJsondict()
         return json.dumps(dictjson)
-        
+
     def toJsondict(self):
         dictjson = {}
         dictjson['type'] = 'wifi-client'
@@ -236,7 +236,7 @@ class WirelessClient(object):
         dictjson['alt'] = str(self.gps.altitude)
         dictjson['speed'] = str(self.gps.speed)
         dictjson['gpsvalid'] = str(self.gps.isValid)
-        
+
         dictjson['strongestsignal'] = self.strongestsignal
         dictjson['strongestlat'] = str(self.strongestgps.latitude)
         dictjson['strongestlon'] = str(self.strongestgps.longitude)
@@ -245,15 +245,15 @@ class WirelessClient(object):
         dictjson['strongestgpsvalid'] = str(self.strongestgps.isValid)
 
         dictjson['probedssids'] = self.probedSSIDs
-        
+
         return dictjson
-        
+
 class WirelessNetwork(object):
     ERR_NETDOWN = 156
     ERR_OPNOTSUPPORTED = 161
     ERR_DEVICEBUSY = 240
     ERR_OPNOTPERMITTED = 255
-    
+
     def __init__(self):
         self.macAddr = ""
         self.ssid = ""
@@ -276,15 +276,15 @@ class WirelessNetwork(object):
         self.gps = SparrowGPS()
         self.strongestsignal = self.signal
         self.strongestgps = SparrowGPS()
-        
+
         # Used for tracking in network table
         self.foundInList = False
-        
+
         super().__init__()
 
     def __str__(self):
         retVal = ""
-        
+
         retVal += "MAC Address: " + self.macAddr + "\n"
         retVal += "SSID: " + self.ssid + "\n"
         retVal += "Mode: " + self.mode + "\n"
@@ -312,12 +312,12 @@ class WirelessNetwork(object):
 
     def copy(self):
         return copy.deepcopy(self)
-        
+
     def __eq__(self, obj):
         # This is equivance....   ==
         if not isinstance(obj, WirelessNetwork):
            return False
-          
+
         if self.macAddr != obj.macAddr:
             return False
         if self.ssid != obj.ssid:
@@ -325,23 +325,23 @@ class WirelessNetwork(object):
 
         if self.mode != obj.mode:
             return False
-            
+
         if self.security != obj.security:
             return False
-            
+
         if self.channel != obj.channel:
             return False
-            
+
         return True
 
     def __ne__(self, other):
             return not self.__eq__(other)
-        
+
     def createFromJsonDict(jsondict):
         retVal = WirelessNetwork()
         retVal.fromJsondict(jsondict)
         return retVal
-        
+
     def fromJsondict(self, dictjson):
         # Note: if the json dictionary isn't correct, this will naturally throw an exception that may
         # need to be caught for error detection
@@ -368,17 +368,17 @@ class WirelessNetwork(object):
         self.gps.altitude = float(dictjson['alt'])
         self.gps.speed = float(dictjson['speed'])
         self.gps.isValid = stringtobool(dictjson['gpsvalid'])
-        
+
         self.strongestgps.latitude = float(dictjson['strongestlat'])
         self.strongestgps.longitude = float(dictjson['strongestlon'])
         self.strongestgps.altitude = float(dictjson['strongestalt'])
         self.strongestgps.speed = float(dictjson['strongestspeed'])
         self.strongestgps.isValid = stringtobool(dictjson['strongestgpsvalid'])
-            
+
     def fromJson(self, jsonstr):
         dictjson = json.loads(jsonstr)
         self.fromJsondict(dictjson)
-            
+
     def toJsondict(self):
         dictjson = {}
         dictjson['type'] = 'wifi-ap'
@@ -406,53 +406,52 @@ class WirelessNetwork(object):
         dictjson['alt'] = str(self.gps.altitude)
         dictjson['speed'] = str(self.gps.speed)
         dictjson['gpsvalid'] = str(self.gps.isValid)
-        
+
         dictjson['strongestlat'] = str(self.strongestgps.latitude)
         dictjson['strongestlon'] = str(self.strongestgps.longitude)
         dictjson['strongestalt'] = str(self.strongestgps.altitude)
         dictjson['strongestspeed'] = str(self.strongestgps.speed)
         dictjson['strongestgpsvalid'] = str(self.strongestgps.isValid)
-        
+
         return dictjson
-        
+
     def toJson(self):
         dictjson = self.toJsondict()
         return json.dumps(dictjson)
-        
+
     def getChannelString(self):
         if self.bandwidth == 40 and self.secondaryChannel > 0:
             retVal = str(self.channel) + '+' + str(self.secondaryChannel)
         else:
             retVal = str(self.channel)
-            
+
         return retVal
-        
+
     def getKey(self):
         return self.macAddr + self.ssid+str(self.channel)
-        
+
 class WirelessEngine(object):
     def __init__(self):
         super().__init__()
 
+        ## Store the regex compiles
+        self.regexCompiler()
+
     def getMacAddress(interface):
         macaddr = ""
-        
+
         try:
             f = open('/sys/class/net/'+interface+'/address', 'r')
             macaddr = f.readline().strip()
             f.close()
         except:
             pass
-            
+
         return macaddr
-        
+
     def getFrequencyForChannel(channelNumber):
-        channelStr = str(channelNumber)
-        if channelStr in channelToFreq:
-            return channelToFreq[channelStr]
-        else:
-            return None
-            
+        return channelToFreq.get(str(channelNumber))
+
     def getSignalQualityFromDB0To5(dBm):
         # Based on same scale tha Microsoft uses.
         # See https://stackoverflow.com/questions/15797920/how-to-convert-wifi-signal-strength-from-quality-percent-to-rssi-dbm
@@ -461,8 +460,8 @@ class WirelessEngine(object):
         elif dBm >= -50:
             quality = 100
         else:
-            quality = 2 * (dBm + 100)      
-        
+            quality = 2 * (dBm + 100)
+
         return int(4*quality/100)
 
     def getSignalQualityFromDB(dBm):
@@ -473,17 +472,17 @@ class WirelessEngine(object):
         elif dBm >= -50:
             quality = 100
         else:
-            quality = 2 * (dBm + 100)      
-        
+            quality = 2 * (dBm + 100)
+
         return quality
 
     def convertUnknownToString(ssid):
         if '\\x00' not in ssid:
             return ssid
-            
+
         retVal = ssid.replace('\\x00', '')
         numblanks = ssid.count('\\x00')
-        
+
         if len(retVal) == 0:
             if numblanks > 0:
                 return '<Unknown (' + str(numblanks )+ ')>'
@@ -491,15 +490,15 @@ class WirelessEngine(object):
                 return '<Unknown>'
         else:
             return ssid
-        
+
     def getInterfaces(printResults=False):
         result = subprocess.run(['iwconfig'], stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
         wirelessResult = result.stdout.decode('UTF-8')
         p = re.compile('^(w.*?) .*', re.MULTILINE)
         tmpInterfaces = p.findall(wirelessResult)
-        
+
         retVal = []
-        
+
         if (len(tmpInterfaces) > 0):
             for curInterface in tmpInterfaces:
                 tmpStr=curInterface.replace(' ','')
@@ -521,9 +520,9 @@ class WirelessEngine(object):
         wirelessResult = result.stdout.decode('UTF-8')
         p = re.compile('^(.*?) IEEE.*?Mode:Monitor', re.MULTILINE)
         tmpInterfaces = p.findall(wirelessResult)
-        
+
         retVal = []
-        
+
         if (len(tmpInterfaces) > 0):
             for curInterface in tmpInterfaces:
                 tmpStr=curInterface.replace(' ','')
@@ -541,7 +540,7 @@ class WirelessEngine(object):
                     monLine = i - 1
                     break
                 else:
-                    i = i + 1   
+                    i = i + 1
             if monLine > -1:
                 p = re.compile('^(.*?) .*', re.MULTILINE)
                 tmpInterfaces = p.findall(lines[monLine])
@@ -563,7 +562,7 @@ class WirelessEngine(object):
             # reports busy (it does happen if we query too fast.)
             retries = 0
             retCode = WirelessNetwork.ERR_DEVICEBUSY
-            
+
             while (retCode == WirelessNetwork.ERR_DEVICEBUSY) and (retries < 3):
                 # Handle retries in case we get a busy response
                 retCode, errString, wirelessNetworks = WirelessEngine.scanForNetworks(interfaceName)
@@ -582,43 +581,43 @@ class WirelessEngine(object):
                     retries += 1
                     if retCode == WirelessNetwork.ERR_DEVICEBUSY:
                         sleep(0.2)
-                
+
                 for curKey in tmpWirelessNetworks.keys():
                     curNet = tmpWirelessNetworks[curKey]
                     wirelessNetworks[curNet.getKey()] = tmpWirelessNetworks[curNet.getKey()]
-            
+
         retVal = {}
         retVal['errCode'] = retCode
         retVal['errString'] = errString
-        
+
         netList = []
-        
+
         for curKey in wirelessNetworks.keys():
             curNet = wirelessNetworks[curKey]
             if gpsData is not None:
                 curNet.gps.copy(gpsData)
             netList.append(curNet.toJsondict())
-            
+
         gpsdict = {}
-        
+
         gpsloc = SparrowGPS()
         if (gpsData is not None):
             gpsloc.copy(gpsData)
-        
+
         gpsdict['latitude'] = gpsloc.latitude
         gpsdict['longitude'] = gpsloc.longitude
         gpsdict['altitude'] = gpsloc.altitude
         gpsdict['speed'] = gpsloc.speed
         retVal['gps'] = gpsdict
-        
+
         retVal['networks'] = netList
-        
+
         jsonstr = json.dumps(retVal)
-        
+
         return retCode, errString, jsonstr
-        
-    def scanForNetworks(interfaceName, frequency=0, printResults=False):
-        
+
+    def scanForNetworks(self, interfaceName, frequency=0, printResults=False):
+
         if frequency == 0:
             result = subprocess.run(['iw', 'dev', interfaceName, 'scan'], stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
         else:
@@ -627,16 +626,16 @@ class WirelessEngine(object):
         retCode = result.returncode
         errString = ""
         wirelessResult = result.stdout.decode('UTF-8')
-        
+
         # debug
         if (printResults):
             print('Return Code ' + str(retCode))
             print(wirelessResult)
-        
+
         wirelessNetworks = {}
-        
+
         if (retCode == 0):
-            wirelessNetworks = WirelessEngine.parseIWoutput(wirelessResult)
+            wirelessNetworks = self.parseIWoutput(wirelessResult)
         else:
             # errCodes:
             # 156 = Network is down (i.e. switch may be turned off)
@@ -648,58 +647,58 @@ class WirelessEngine(object):
                 errString = 'Device is busy'
             elif (retCode == WirelessNetwork.ERR_OPNOTPERMITTED):
                 errString = errString + '. Did you run as root?'
-            
+
         return retCode, errString, wirelessNetworks
-        
+
     def getFieldValue(p, curLine):
         matchobj = p.search(curLine)
-        
+
         if not matchobj:
             return ""
-            
+
         try:
             retVal = matchobj.group(1)
         except:
             retVal = ""
-            
+
         return retVal
-        
-    def parseIWoutput(iwOutput):
-        
-        # Define search regexes once:
-        p_bss = re.compile('^BSS (.*?)\(')
-        p_ssid = re.compile('^.+?SSID: +(.*)')
-        p_ess = re.compile('^	capability:.*(ESS)')
-        p_ess_privacy = re.compile('^	capability:.*(ESS Privacy)')
-        p_ibss = re.compile('^	capability:.*(IBSS)')
-        p_ibss_privacy = re.compile('^	capability:.*(IBSS Privacy)')
-        p_auth_suites = re.compile('.*?Authentication suites: *(.*)')
-        p_pw_ciphers = re.compile('.*?Pairwise ciphers: *(.*)')
-        p_param_channel = re.compile('^.*?DS Parameter set: channel +([0-9]+).*')
-        p_primary_channel = re.compile('^.*?primary channel: +([0-9]+).*')
-        p_freq = re.compile('^.*?freq:.*?([0-9]+).*')
-        p_signal = re.compile('^.*?signal:.*?([\-0-9]+).*?dBm')
-        p_ht = re.compile('.*?HT20/HT40.*')
-        p_bw = re.compile('.*?\\* channel width:.*?([0-9]+) MHz.*')
-        p_secondary = re.compile('^.*?secondary channel offset: *([^ \\t]+).*')
-        p_thirdfreq = re.compile('^.*?center freq segment 1: *([^ \\t]+).*')
-        p_stationcount = re.compile('.*station count: ([0-9]+)')
-        p_utilization = re.compile('.*channel utilisation: ([0-9]+)/255')
+
+    def regexCompiler(self):
+        self.p_bss = re.compile('^BSS (.*?)\(')
+        self.p_ssid = re.compile('^.+?SSID: +(.*)')
+        self.p_ess = re.compile('^	capability:.*(ESS)')
+        self.p_ess_privacy = re.compile('^	capability:.*(ESS Privacy)')
+        self.p_ibss = re.compile('^	capability:.*(IBSS)')
+        self.p_ibss_privacy = re.compile('^	capability:.*(IBSS Privacy)')
+        self.p_auth_suites = re.compile('.*?Authentication suites: *(.*)')
+        self.p_pw_ciphers = re.compile('.*?Pairwise ciphers: *(.*)')
+        self.p_param_channel = re.compile('^.*?DS Parameter set: channel +([0-9]+).*')
+        self.p_primary_channel = re.compile('^.*?primary channel: +([0-9]+).*')
+        self.p_freq = re.compile('^.*?freq:.*?([0-9]+).*')
+        self.p_signal = re.compile('^.*?signal:.*?([\-0-9]+).*?dBm')
+        self.p_ht = re.compile('.*?HT20/HT40.*')
+        self.p_bw = re.compile('.*?\\* channel width:.*?([0-9]+) MHz.*')
+        self.p_secondary = re.compile('^.*?secondary channel offset: *([^ \\t]+).*')
+        self.p_thirdfreq = re.compile('^.*?center freq segment 1: *([^ \\t]+).*')
+        self.p_stationcount = re.compile('.*station count: ([0-9]+)')
+        self.p_utilization = re.compile('.*channel utilisation: ([0-9]+)/255')
+
+    def parseIWoutput(self, iwOutput):
         # start
         retVal = {}
         curNetwork = None
         now=datetime.datetime.now()
-        
+
         # This now supports direct from STDOUT via scanForNetworks,
         # and input from a file as f.readlines() which returns a list
         if type(iwOutput) == str:
             inputLines = iwOutput.splitlines()
         else:
             inputLines = iwOutput
-            
+
         for curLine in inputLines:
-            fieldValue = WirelessEngine.getFieldValue(p_bss, curLine)
-                
+            fieldValue = WirelessEngine.getFieldValue(self.p_bss, curLine)
+
             if (len(fieldValue) > 0):
                 # New object
                 if curNetwork is not None:
@@ -714,119 +713,119 @@ class WirelessEngine(object):
                 curNetwork.firstSeen = now
                 curNetwork.macAddr = fieldValue
                 continue
-            
+
             if curNetwork is None:
                 # If we don't have a network object yet, then we haven't
                 # seen a BSSID so just keep going through the lines.
                 continue
 
-            fieldValue = WirelessEngine.getFieldValue(p_ssid, curLine)
-                
+            fieldValue = WirelessEngine.getFieldValue(self.p_ssid, curLine)
+
             if (len(fieldValue) > 0):
                 curNetwork.ssid = WirelessEngine.convertUnknownToString(fieldValue)
-                
-            fieldValue = WirelessEngine.getFieldValue(p_ess, curLine)
-                
+
+            fieldValue = WirelessEngine.getFieldValue(self.p_ess, curLine)
+
             if (len(fieldValue) > 0):
                 curNetwork.mode = "AP"
                 # Had issue with WEP not showing up.
                 # If capability has "ESS Privacy" there's something there.
                 # If it's PSK, etc. there will be other RSN fields, etc.
                 # So for now start by assuming WEP
-                
+
                 # See: https://wiki.archlinux.org/index.php/Wireless_network_configuration
-                fieldValue = WirelessEngine.getFieldValue(p_ess_privacy, curLine)
-                    
+                fieldValue = WirelessEngine.getFieldValue(self.p_ess_privacy, curLine)
+
                 if (len(fieldValue) > 0):
                     curNetwork.security = "WEP"
                     curNetwork.privacy = "WEP"
-                    
+
                 continue #Found the item
-                
-            fieldValue = WirelessEngine.getFieldValue(p_ibss, curLine)
-                
+
+            fieldValue = WirelessEngine.getFieldValue(self.p_ibss, curLine)
+
             if (len(fieldValue) > 0):
                 curNetwork.mode = "Ad Hoc"
                 curNetwork.security = "[Ad-Hoc] Open"
 
-                fieldValue = WirelessEngine.getFieldValue(p_ibss_privacy, curLine)
-                    
+                fieldValue = WirelessEngine.getFieldValue(self.p_ibss_privacy, curLine)
+
                 if (len(fieldValue) > 0):
                     curNetwork.security = "[Ad-Hoc] WEP"
                     curNetwork.privacy = "WEP"
-                    
+
                 continue #Found the item
 
             # Station count
-            fieldValue = WirelessEngine.getFieldValue(p_stationcount, curLine)
+            fieldValue = WirelessEngine.getFieldValue(self.p_stationcount, curLine)
             if (len(fieldValue) > 0):
                 curNetwork.stationcount = int(fieldValue)
                 continue #Found the item
-                
+
             # Utilization
-            fieldValue = WirelessEngine.getFieldValue(p_utilization, curLine)
+            fieldValue = WirelessEngine.getFieldValue(self.p_utilization, curLine)
             if (len(fieldValue) > 0):
                 utilization = round(float(fieldValue)  / 255.0 * 100.0 * 100.0) / 100.0
                 curNetwork.utilization = utilization
                 continue #Found the item
-                
+
             # Auth suites
-            fieldValue = WirelessEngine.getFieldValue(p_auth_suites, curLine)
-                
+            fieldValue = WirelessEngine.getFieldValue(self.p_auth_suites, curLine)
+
             if (len(fieldValue) > 0):
                 curNetwork.security = fieldValue
                 continue #Found the item
-                
+
             # p = re.compile('.*?Group cipher: *(.*)')
-            fieldValue = WirelessEngine.getFieldValue(p_pw_ciphers, curLine)
+            fieldValue = WirelessEngine.getFieldValue(self.p_pw_ciphers, curLine)
             fieldValue = fieldValue.replace(' ', '/')
-                
+
             if (len(fieldValue) > 0):
                 curNetwork.privacy = fieldValue
                 curNetwork.cipher = fieldValue
                 continue #Found the item
-                
-            fieldValue = WirelessEngine.getFieldValue(p_param_channel, curLine)
-                
+
+            fieldValue = WirelessEngine.getFieldValue(self.p_param_channel, curLine)
+
             if (len(fieldValue) > 0):
                 curNetwork.channel = int(fieldValue)
                 continue #Found the item
-                
-            fieldValue = WirelessEngine.getFieldValue(p_primary_channel, curLine)
-                
+
+            fieldValue = WirelessEngine.getFieldValue(self.p_primary_channel, curLine)
+
             if (len(fieldValue) > 0):
                 curNetwork.channel = int(fieldValue)
                 continue #Found the item
-                
-            fieldValue = WirelessEngine.getFieldValue(p_freq, curLine)
-                
+
+            fieldValue = WirelessEngine.getFieldValue(self.p_freq, curLine)
+
             if (len(fieldValue) > 0):
                 curNetwork.frequency = int(fieldValue)
                 continue #Found the item
-                
-            fieldValue = WirelessEngine.getFieldValue(p_signal, curLine)
-                
+
+            fieldValue = WirelessEngine.getFieldValue(self.p_signal, curLine)
+
             # This test is different.  dBm is negative so can't test > 0.  10dBm is really high so lets use that
             if (len(fieldValue) > 0):
                 curNetwork.signal = int(fieldValue)
                 curNetwork.strongestsignal = curNetwork.signal
                 continue #Found the item
-                
-            fieldValue = WirelessEngine.getFieldValue(p_ht, curLine)
-                
+
+            fieldValue = WirelessEngine.getFieldValue(self.p_ht, curLine)
+
             if (len(fieldValue) > 0):
                 if (curNetwork.bandwidth == 20):
                     curNetwork.bandwidth = 40
                 continue #Found the item
-                
-            fieldValue = WirelessEngine.getFieldValue(p_bw, curLine)
-                
+
+            fieldValue = WirelessEngine.getFieldValue(self.p_bw, curLine)
+
             if (len(fieldValue) > 0):
                 curNetwork.bandwidth = int(fieldValue)
                 continue #Found the item
-                
-            fieldValue = WirelessEngine.getFieldValue(p_secondary, curLine)
-                
+
+            fieldValue = WirelessEngine.getFieldValue(self.p_secondary, curLine)
+
             if (len(fieldValue) > 0):
                 curNetwork.secondaryChannelLocation = fieldValue
                 if (fieldValue == 'above'):
@@ -834,58 +833,58 @@ class WirelessEngine(object):
                 elif (fieldValue == 'below'):
                     curNetwork.secondaryChannel = curNetwork.channel - 4
                 # else it'll say 'no secondary'
-                    
+
                 continue #Found the item
-                
-            fieldValue = WirelessEngine.getFieldValue(p_thirdfreq, curLine)
-                
+
+            fieldValue = WirelessEngine.getFieldValue(self.p_thirdfreq, curLine)
+
             if (len(fieldValue) > 0):
                 curNetwork.thirdChannel = int(fieldValue)
-                    
+
                 continue #Found the item
-                
+
         # #### End loop ######
-        
+
         # Add the last network
         if curNetwork is not None:
             if curNetwork.channel > 0:
                 # I did see incomplete output from iw where not all the data was there
                 retVal[curNetwork.getKey()] = curNetwork
-        
+
         return retVal
-        
+
 if __name__ == '__main__':
     # WirelessEngine.getMacAddress('wlan0mon')
     if os.geteuid() != 0:
         print("ERROR: You need to have root privileges to run this script.  Please try again, this time using 'sudo'. Exiting.\n")
         exit(2)
     # for debugging
-    
+
     # change this interface name to test it.
     wirelessInterfaces = WirelessEngine.getInterfaces()
-    
+
     if len(wirelessInterfaces) == 0:
         print("ERROR: Unable to find wireless interface.\n")
         exit(1)
-        
+
     winterface = wirelessInterfaces[0]
     print('Scanning for wireless networks on ' + winterface + '...')
-    
+
     # Testing to/from Json
     # convert to Json
     retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(winterface, None)
     # Convert back
     j=json.loads(jsonstr)
-    
+
     # print results
     print('Error Code: ' + str(j['errCode']) + '\n')
-    
+
     if j['errCode'] == 0:
         for curNetDict in j['networks']:
             newNet = WirelessNetwork.createFromJsonDict(curNetDict)
             print(newNet)
-            
-    else:    
+
+    else:
         print('Error String: ' + j['errString'] + '\n')
-    
+
     print('Done.\n')
