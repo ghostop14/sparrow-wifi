@@ -357,7 +357,11 @@ class WirelessNetwork(object):
         self.secondaryChannelLocation = dictjson['secondaryChannelLocation']
         self.thirdChannel = int(dictjson['thirdChannel'])
         self.signal = int(dictjson['signal'])
-        self.stationcount = int(dictjson['stationcount'])
+        if 'stationcount' in dictjson.keys():
+            self.stationcount = int(dictjson['stationcount'])
+        else:
+            self.stationcount = -1
+            
         self.utilization = float(dictjson['utilization'])
         self.strongestsignal = int(dictjson['strongestsignal'])
         self.bandwidth = int(dictjson['bandwidth'])
