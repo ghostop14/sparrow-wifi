@@ -36,9 +36,9 @@ from urllib.request import urlretrieve
 
 import os
 
-from sparrowmap import MapEngine
+from sparrowmap import MapEngineBase,  MapEngineOSM
 from sparrowwifiagent import FileSystemFile
-from sparrowbluetooth import SparrowBluetooth, BluetoothDevice
+from sparrowbluetooth import BluetoothDevice
 from telemetry import BluetoothTelemetry
 from sparrowmap import MapMarker
 from wirelessengine import WirelessEngine
@@ -448,7 +448,7 @@ class DBSettingsDialog(QDialog):
 class MapSettings(object):
     def __init__(self):
         super().__init__()
-        self.maptype = MapEngine.MAP_TYPE_DEFAULT
+        self.maptype = MapEngineBase.MAP_TYPE_DEFAULT
         self.plotstrongest = True
         self.outputfile = ""
         self.title = ""
@@ -470,9 +470,9 @@ class MapSettingsDialog(QDialog):
         self.combo = QComboBox(self)
         self.combo.setGeometry(115, 30, 140, 30)
         self.combo.addItem("Standard Street")
-        self.combo.addItem("Hybrid Satellite")
-        self.combo.addItem("Satellite Only")
-        self.combo.addItem("Terrain")
+        #self.combo.addItem("Hybrid Satellite")
+        #self.combo.addItem("Satellite Only")
+        #self.combo.addItem("Terrain")
 
         # Plot strongest or last
         self.lblMapType = QLabel("Coord Set", self)
@@ -491,7 +491,8 @@ class MapSettingsDialog(QDialog):
         self.btnOpen = QPushButton("&Save", self)
         self.btnOpen.move(380, 120)
         self.btnOpen.clicked.connect(self.onFileClicked)
-
+        self.fileinput.setText('/tmp/wifi_map.html')
+        
         spacing = 35
         # Table name
         self.lblTitle = QLabel("Map Title: ", self)
@@ -499,14 +500,6 @@ class MapSettingsDialog(QDialog):
         self.title = QLineEdit(self)
         self.title.setText("Access Point Map")
         self.title.setGeometry(115, 124+spacing, 200, 20)
-
-        self.lblMaxLen = QLabel("Max Label Length: ", self)
-        self.lblMaxLen.move(30, 133+spacing*2)
-        self.spinMaxLen = QSpinBox(self)
-        self.spinMaxLen.setRange(1, 100)
-
-        self.spinMaxLen.setValue(15)
-        self.spinMaxLen.setGeometry(150, 125+spacing*2, 50, 28)
 
         # OK and Cancel buttons
         buttons = QDialogButtonBox(
@@ -562,13 +555,13 @@ class MapSettingsDialog(QDialog):
         strType = self.combo.currentText()
 
         if (strType == 'Hybrid Satellite'):
-            mapSettings.mapType = MapEngine.MAP_TYPE_HYBRID
+            mapSettings.mapType = MapEngineBase.MAP_TYPE_HYBRID
         elif (strType == 'Satellite Only'):
-            mapSettings.mapType = MapEngine.MAP_TYPE_SATELLITE_ONLY
+            mapSettings.mapType = MapEngineBase.MAP_TYPE_SATELLITE_ONLY
         elif (strType == 'Terrain'):
-            mapSettings.mapType = MapEngine.MAP_TYPE_TERRAIN
+            mapSettings.mapType = MapEngineBase.MAP_TYPE_TERRAIN
         else:
-            mapSettings.mapType = MapEngine.MAP_TYPE_DEFAULT
+            mapSettings.mapType = MapEngineBase.MAP_TYPE_DEFAULT
 
         if (self.comboplot.currentText() == 'Strongest Signal'):
             mapSettings.plotstrongest = True
@@ -577,7 +570,7 @@ class MapSettingsDialog(QDialog):
 
         mapSettings.title = self.title.text()
         mapSettings.outputfile = self.fileinput.text()
-        mapSettings.maxLabelLength = self.spinMaxLen.value()
+        mapSettings.maxLabelLength = 255
 
         return mapSettings
 
@@ -607,9 +600,6 @@ class TelemetryMapSettingsDialog(MapSettingsDialog):
         self.combo = QComboBox(self)
         self.combo.setGeometry(115, 30, 140, 30)
         self.combo.addItem("Standard Street")
-        self.combo.addItem("Hybrid Satellite")
-        self.combo.addItem("Satellite Only")
-        self.combo.addItem("Terrain")
 
         # Input File:
         self.lblInputFile = QLabel("Input File: ", self)
@@ -628,6 +618,7 @@ class TelemetryMapSettingsDialog(MapSettingsDialog):
         self.btnOpen = QPushButton("&Save", self)
         self.btnOpen.move(380, 120)
         self.btnOpen.clicked.connect(self.onFileClicked)
+        self.fileinput.setText('/tmp/wifi_map.html')
 
         spacing = 35
         # Map Title
@@ -636,14 +627,6 @@ class TelemetryMapSettingsDialog(MapSettingsDialog):
         self.title = QLineEdit(self)
         self.title.setText("SSID Map")
         self.title.setGeometry(115, 124+spacing, 200, 20)
-
-        # Max label length
-        self.lblMaxLen = QLabel("Max Label Length: ", self)
-        self.lblMaxLen.move(30, 133+spacing*2)
-        self.spinMaxLen = QSpinBox(self)
-        self.spinMaxLen.setRange(1, 100)
-        self.spinMaxLen.setValue(15)
-        self.spinMaxLen.setGeometry(145, 126+spacing*2, 50, 28)
 
         # Nth Point
         self.lblplot = QLabel("Plot every ", self)
@@ -702,17 +685,17 @@ class TelemetryMapSettingsDialog(MapSettingsDialog):
         strType = self.combo.currentText()
 
         if (strType == 'Hybrid Satellite'):
-            mapSettings.mapType = MapEngine.MAP_TYPE_HYBRID
+            mapSettings.mapType = MapEngineBase.MAP_TYPE_HYBRID
         elif (strType == 'Satellite Only'):
-            mapSettings.mapType = MapEngine.MAP_TYPE_SATELLITE_ONLY
+            mapSettings.mapType = MapEngineBase.MAP_TYPE_SATELLITE_ONLY
         elif (strType == 'Terrain'):
-            mapSettings.mapType = MapEngine.MAP_TYPE_TERRAIN
+            mapSettings.mapType = MapEngineBase.MAP_TYPE_TERRAIN
         else:
-            mapSettings.mapType = MapEngine.MAP_TYPE_DEFAULT
+            mapSettings.mapType = MapEngineBase.MAP_TYPE_DEFAULT
 
         mapSettings.title = self.title.text()
         mapSettings.outputfile = self.fileinput.text()
-        mapSettings.maxLabelLength = self.spinMaxLen.value()
+        mapSettings.maxLabelLength = 255
 
         mapSettings.inputfile = self.inputfileinput.text()
 
@@ -1651,10 +1634,12 @@ class BluetoothDialog(QDialog):
             markers.append(markerDict[curKey])
 
         if len(markers) > 0:
-            retVal = MapEngine.createMap(mapSettings.outputfile,mapSettings.title,markers, connectMarkers=False, openWhenDone=True, mapType=mapSettings.mapType)
+            retVal = MapEngineOSM.createMap(mapSettings.outputfile,mapSettings.title,markers, connectMarkers=False, openWhenDone=False, mapType=mapSettings.mapType)
 
             if not retVal:
                 QMessageBox.question(self, 'Error',"Unable to generate map to " + mapSettings.outputfile, QMessageBox.Ok)
+            else:
+                QMessageBox.question(self, 'Info',"Map saved to " + mapSettings.outputfile, QMessageBox.Ok)
 
     def onExportClicked(self):
         fileName = saveFileDialog()

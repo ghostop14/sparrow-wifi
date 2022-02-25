@@ -47,7 +47,7 @@ from sparrowcommon import BaseThreadClass, portOpen, stringtobool
 from sparrowgps import GPSEngine, GPSStatus, SparrowGPS
 from telemetry import TelemetryDialog
 from sparrowtablewidgets import IntTableWidgetItem, DateTableWidgetItem, FloatTableWidgetItem
-from sparrowmap import MapMarker, MapEngine
+from sparrowmap import MapMarker, MapEngineOSM
 from sparrowdialogs import MapSettingsDialog, TelemetryMapSettingsDialog, AgentListenerDialog, GPSCoordDialog
 from sparrowdialogs import AgentConfigDialog, RemoteFilesDialog, BluetoothDialog
 from sparrowwifiagent import AgentConfigSettings
@@ -88,6 +88,7 @@ def getOUIDB():
         try:
             ouidb = manuf.MacParser(update=updateflag)
         except:
+            print("Error updating the MAC address database.  Please check if the manuf module needs updating with 'sudo pip3 install --upgrade manuf'.")
             ouidb = None
     else:
         ouidb = None
@@ -2104,10 +2105,12 @@ class mainWindow(QMainWindow):
             markers.append(markerDict[curKey])
         
         if len(markers) > 0:
-            retVal = MapEngine.createMap(mapSettings.outputfile,mapSettings.title,markers, connectMarkers=False, openWhenDone=True, mapType=mapSettings.mapType)
+            retVal = MapEngineOSM.createMap(mapSettings.outputfile,mapSettings.title,markers, connectMarkers=False, openWhenDone=False, mapType=mapSettings.mapType)
             
             if not retVal:
                 QMessageBox.question(self, 'Error',"Unable to generate map to " + mapSettings.outputfile, QMessageBox.Ok)
+            else:
+                QMessageBox.question(self, 'Info',"Map saved to " + mapSettings.outputfile, QMessageBox.Ok)
 
     def onGoogleMapTelemetry(self):
         mapSettings, ok = TelemetryMapSettingsDialog.getSettings()
@@ -3187,6 +3190,13 @@ class mainWindow(QMainWindow):
                             newNet.strongestgps.altitude = float(raw_list[i][20])
                             newNet.strongestgps.speed = float(raw_list[i][21])
                             
+                            if not newNet.strongestgps.isValid and newNet.gps.isValid:
+                                newNet.strongestgps.isValid = True
+                                newNet.strongestgps.latitude = newNet.gps.latitude
+                                newNet.strongestgps.longitude = newNet.gps.longitude
+                                newNet.strongestgps.altitude = newNet.gps.altitude
+                                newNet.strongestgps.speed = newNet.gps.speed
+                                
                             # Added utilization and station count on the end to not mess up any saved files.
                             if (len(raw_list[i]) >= 24):
                                 newNet.utilization = float(raw_list[i][22])
