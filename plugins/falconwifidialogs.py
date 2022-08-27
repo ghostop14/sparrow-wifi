@@ -888,17 +888,17 @@ class AdvancedScanDialog(QDialog):
         # return super(mainWin, self).resizeEvent(event)
         size = self.geometry()
         self.statBar.setGeometry(0, size.height()-30, size.width(), 30)
-        self.networkTable.setGeometry(10, 132, size.width()-20, size.height()/2-105)
+        self.networkTable.setGeometry(10, 132, size.width()-20, size.height()//2-105)
        
-        self.lblClients.move(10, size.height()/2+45)
-        self.clientTable.setGeometry(10, size.height()/2+70, size.width()-20, size.height()/2-110)
+        self.lblClients.move(10, size.height()//2+45)
+        self.clientTable.setGeometry(10, size.height()//2+70, size.width()-20, size.height()//2-110)
         # self.console.setGeometry(10, 150, size.width()-20, size.height()-150)
         # self.btnScan.setGeometry(size.width()-110,30, 100, 30)
         
         #if (self.mainWin):
         #    self.btnUpdate.setGeometry(size.width()-160, 90, 150, 30)
             
-        self.btnExport.setGeometry(size.width()-130, size.height()/2+33, 120, 30)
+        self.btnExport.setGeometry(size.width()-130, size.height()//2+33, 120, 30)
         
     def center(self):
         # Get our geometry
