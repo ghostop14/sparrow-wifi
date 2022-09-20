@@ -144,24 +144,13 @@ class TelemetryDialog(QDialog):
         self.linesBeforeFlush = 10
         self.currentLine = 0
         
-        # OK and Cancel buttons
-        #buttons = QDialogButtonBox(QDialogButtonBox.Ok,Qt.Horizontal, self)
-        #buttons.accepted.connect(self.accept)
-        #buttons.move(170, 280)
-        
         desktopSize = QApplication.desktop().screenGeometry()
-        #self.mainWidth=1024
-        #self.mainHeight=768
-        #self.mainWidth = desktopSize.width() * 3 / 4
-        #self.mainHeight = desktopSize.height() * 3 / 4
-
-        self.setGeometry(self.geometry().x(), self.geometry().y(), desktopSize.width() /2,desktopSize.height() /2)
-        
+        self.setGeometry(self.geometry().x(), self.geometry().y(), desktopSize.width() // 2,desktopSize.height() // 2)
         
         self.setWindowTitle(winTitle)
 
         self.radar = RadarWidget(self)
-        self.radar.setGeometry(self.geometry().width()/2, 10, self.geometry().width()/2-20, self.geometry().width()/2-20)
+        self.radar.setGeometry(self.geometry().width()//2, 10, self.geometry().width()//2-20, self.geometry().width()//2-20)
         
         self.createTable()
        

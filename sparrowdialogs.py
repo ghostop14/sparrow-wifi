@@ -1182,8 +1182,8 @@ class BluetoothDialog(QDialog):
 
         # self.setGeometry(self.geometry().x(), self.geometry().y(), 700,500)
         desktopSize = QApplication.desktop().screenGeometry()
-        self.mainWidth = desktopSize.width() * 2 / 3
-        self.mainHeight = desktopSize.height() / 2
+        self.mainWidth = desktopSize.width() * 2 // 3
+        self.mainHeight = desktopSize.height() // 2
         self.resize(self.mainWidth, self.mainHeight)
 
         self.center()

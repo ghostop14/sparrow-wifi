@@ -742,8 +742,8 @@ class mainWindow(QMainWindow):
         desktopSize = QApplication.desktop().screenGeometry()
         #self.mainWidth=1024
         #self.mainHeight=768
-        self.mainWidth = int(desktopSize.width() * 3 / 4)
-        self.mainHeight = int(desktopSize.height() * 3 / 4)
+        self.mainWidth = desktopSize.width() * 3 // 4
+        self.mainHeight = desktopSize.height() * 3 // 4
         
         self.initUI()
         
