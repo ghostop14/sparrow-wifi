@@ -181,7 +181,7 @@ class TelemetryDialog(QDialog):
         # Set up location table
         self.locationTable = QTableWidget(self)
         self.locationTable.setColumnCount(8)
-        self.locationTable.setGeometry(10, 10, self.geometry().width()/2-20, self.geometry().height()/2)
+        self.locationTable.setGeometry(10, 10, self.geometry().width()//2-20, self.geometry().height()//2)
         self.locationTable.setShowGrid(True)
         self.locationTable.setHorizontalHeaderLabels(['macAddr','SSID', 'Strength', 'Timestamp','GPS', 'Latitude', 'Longitude', 'Altitude'])
         self.locationTable.resizeColumnsToContents()
