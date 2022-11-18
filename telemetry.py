@@ -221,19 +221,20 @@ class TelemetryDialog(QDialog):
         if hDim < smallerDim:
             smallerDim = hDim
 
+        smallerDim = int(smallerDim)
         # Radar
-        self.radar.setGeometry(self.geometry().width() - smallerDim - 10, 10, smallerDim, smallerDim)
+        self.radar.setGeometry(int(self.geometry().width() - smallerDim - 10), 10, smallerDim, smallerDim)
 
         # chart
-        self.timePlot.setGeometry(10, 10, self.geometry().width() - smallerDim - 30, smallerDim)
+        self.timePlot.setGeometry(10, 10, int(self.geometry().width() - smallerDim - 30), smallerDim)
 
         # Buttons
-        self.btnPause.setGeometry(10, self.geometry().height()/2+18, 110, 25)
-        self.btnExport.setGeometry(150, self.geometry().height()/2+18, 110, 25)
-        self.btnStream.setGeometry(290, self.geometry().height()/2+18, 110, 25)
+        self.btnPause.setGeometry(10, int(self.geometry().height()/2+18), 110, 25)
+        self.btnExport.setGeometry(150, int(self.geometry().height()/2+18), 110, 25)
+        self.btnStream.setGeometry(290, int(self.geometry().height()/2+18), 110, 25)
         
         # Table
-        self.locationTable.setGeometry(10, self.geometry().height()/2 + 50, self.geometry().width()-20, self.geometry().height()/2-60)
+        self.locationTable.setGeometry(10, int(self.geometry().height()/2 + 50), int(self.geometry().width()-20), int(self.geometry().height()/2-60))
 
     def center(self):
         # Get our geometry
