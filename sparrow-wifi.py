@@ -2428,6 +2428,8 @@ class mainWindow(QMainWindow):
                     self.remoteScanThread = RemoteScanThread(curInterface, self, self.huntChannelList)
                     
                 self.remoteScanThread.scanDelay = self.remoteScanDelay
+                self.remoteScanThread.remoteAgentIP = self.remoteAgentIP
+                self.remoteScanThread.remoteAgentPort = self.remoteAgentPort
                 self.remoteScanThread.start()
             else:
                 QMessageBox.question(self, 'Error',"No wireless adapters found.", QMessageBox.Ok)
