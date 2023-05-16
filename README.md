@@ -58,7 +58,9 @@ sudo pip3 install QScintilla PyQtChart gps3 dronekit manuf python-dateutil numpy
 sudo apt-get install python3-pip gpsd gpsd-clients python3-tk python3-setuptools python3-pyqt5.qtchart
 sudo pip3 install QScintilla gps3 dronekit manuf python-dateutil numpy matplotlib
 
-**NOTE** If on Kali you get any mavlink errors, and you're not using drones, you can use dronekit out.
+**NOTES** 
+- If on Ubuntu 22.04 you get an error "MOduleNOtFoundError: NO module named 'PyQt5.QtWidgets'", run sudo apt-get install --reinstall python3-pyqt5
+- If on Kali you get any mavlink errors, and you're not using drones, you can use dronekit out.
 
 ```
 
