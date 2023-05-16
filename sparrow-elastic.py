@@ -197,7 +197,7 @@ def writeDataToIndex(es,  es_index, entries, es_doc_type='_doc'):
     es_entries = []
     for doc in entries:
         entry = {"_index": es_index,
-                 "_type": es_doc_type, 
+                '_op_type': 'create',
                  "_source": doc }
 
         es_entries.append(entry)    
@@ -568,6 +568,7 @@ if __name__ == '__main__':
     argparser.add_argument('--wifiinterface', help="Specific IP interface on agent to use.  Default: Query and use the first one.", default='', required=False)
     argparser.add_argument('--sparrowport', help='Port Sparrow agent server listens on', default=8020, required=False)
     argparser.add_argument('--btindex', help="ElasticSearch index to write bluetooth results to.  Setting this enabled Bluetooth scanning.", default='', required=False)
+    argparser.add_argument('--dont-create-indices', help="Skip index creation (e.g. templates and datastreams are already set up)", action='store_true', default=False, required=False)
     args = argparser.parse_args()
 
     if len(args.btindex) > 0:
@@ -597,10 +598,12 @@ if __name__ == '__main__':
         exit(2)
 
     # Create indices if needed
-    create_wifi_index(es, wifi_index)
+    if not args.dont_create_indices:
+        create_wifi_index(es, wifi_index)
     
     if bluetoothEnabled:
-        create_bluetooth_index(es, bluetoothIndex)
+        if not args.dont_create_indices:
+            create_bluetooth_index(es, bluetoothIndex)
     
     # Get remote wireless interfaces
     if len(args.wifiinterface) > 0:
