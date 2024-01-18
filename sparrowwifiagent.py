@@ -1804,13 +1804,13 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     if function=='startp':
                         # Promiscuous with ubertooth
                         if hasUbertooth:
-                            bluetooth.startDiscovery(True)
+                            bluetooth.startDiscovery(False)
                         else:
                             responsedict['errcode'] = 2
                             responsedict['errmsg'] = 'Ubertooth not supported on this agent'
                     elif function == 'starta':
                         # Normal with Bluetooth
-                        bluetooth.startDiscovery(False)
+                        bluetooth.startDiscovery(True)
                     elif function == 'stop':
                         bluetooth.stopDiscovery()
                     elif function == 'clear':
