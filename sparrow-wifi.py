@@ -2169,7 +2169,7 @@ class mainWindow(QMainWindow):
 		                markers.append(newMarker)
 		            
 		if len(markers) > 0:
-		    retVal = MapEngine.createMap(mapSettings.outputfile,mapSettings.title,markers, connectMarkers=True, openWhenDone=True, mapType=mapSettings.mapType)
+		    retVal = MapEngineOSM.createMap(mapSettings.outputfile,mapSettings.title,markers, connectMarkers=True, openWhenDone=True, mapType=mapSettings.mapType)
 		    
 		    if not retVal:
 		        QMessageBox.question(self, 'Error',"Unable to generate map to " + mapSettings.outputfile, QMessageBox.Ok)
