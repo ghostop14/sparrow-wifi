@@ -282,7 +282,7 @@ def buildAllowedIPs(allowedIPstr):
     allowedIPs = []
 
     if len(allowedIPstr) > 0:
-        ippattern = re.compile('([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})')
+        ippattern = re.compile(r'([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})')
         if ',' in allowedIPstr:
             tmpList = allowedIPstr.split(',')
             for curItem in tmpList:

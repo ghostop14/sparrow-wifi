@@ -1796,7 +1796,7 @@ class mainWindow(QMainWindow):
         text, okPressed = QInputDialog.getText(self, "Remote Agent","Please provide gpsd IP:", QLineEdit.Normal, "127.0.0.1:2947")
         if okPressed and text != '':
             # Validate the input
-            p = re.compile('^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]{1,5})')
+            p = re.compile(r'^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]{1,5})')
             specIsGood = True
             try:
                 agentSpec = p.search(text).group(1)
@@ -3346,7 +3346,7 @@ class mainWindow(QMainWindow):
                 return False, "", 0
             
             # Validate the input
-            p = re.compile('^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]{1,5})')
+            p = re.compile(r'^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]{1,5})')
             specIsGood = True
             try:
                 agentSpec = p.search(text).group(1)
@@ -3443,7 +3443,7 @@ class mainWindow(QMainWindow):
             text, okPressed = QInputDialog.getText(self, "Remote Agent","Please provide the <IP>:<port> of the remote agent\nor specify 'auto' to launch agent listener\n(auto requires agent to be on the same subnet and started with the --sendannounce flag):", QLineEdit.Normal, "127.0.0.1:8020")
             if okPressed and text != '':
                 # Validate the input
-                p = re.compile('^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]{1,5})')
+                p = re.compile(r'^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]{1,5})')
                 specIsGood = True
                 try:
                     agentSpec = p.search(text).group(1)
