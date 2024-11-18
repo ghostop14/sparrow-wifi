@@ -671,7 +671,7 @@ class WirelessEngine(object):
     def parseIWoutput(iwOutput):
         
         # Define search regexes once:
-        p_bss = re.compile('^BSS (.*?)\(')
+        p_bss = re.compile(r'^BSS (.*?)\(')
         p_ssid = re.compile('^.+?SSID: +(.*)')
         p_ess = re.compile('^	capability:.*(ESS)')
         p_ess_privacy = re.compile('^	capability:.*(ESS Privacy)')
@@ -682,7 +682,7 @@ class WirelessEngine(object):
         p_param_channel = re.compile('^.*?DS Parameter set: channel +([0-9]+).*')
         p_primary_channel = re.compile('^.*?primary channel: +([0-9]+).*')
         p_freq = re.compile('^.*?freq:.*?([0-9]+).*')
-        p_signal = re.compile('^.*?signal:.*?([\-0-9]+).*?dBm')
+        p_signal = re.compile(r'^.*?signal:.*?([\-0-9]+).*?dBm')
         p_ht = re.compile('.*?HT20/HT40.*')
         p_bw = re.compile('.*?\\* channel width:.*?([0-9]+) MHz.*')
         p_secondary = re.compile('^.*?secondary channel offset: *([^ \\t]+).*')
