@@ -366,7 +366,7 @@ class BtmonThread(BaseThreadClass):
         self.startBTMon()
         
         p_address = re.compile('Address: ([0-9A-F]{2,2}:[0-9A-F]{2,2}:[0-9A-F]{2,2}:[0-9A-F]{2,2}:[0-9A-F]{2,2}:[0-9A-F]{2,2})')
-        p_company = re.compile('Company: (.*) \(')
+        p_company = re.compile(r'Company: (.*) \(')
         # p_type = re.compile('Type: (.*?) (')
         p_rssi = re.compile('RSSI: (.*?) dB.*')
         p_txpower = re.compile('TX power: (.*?) dB.*')
