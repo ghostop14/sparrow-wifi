@@ -699,7 +699,7 @@ class FalconWirelessEngine(object):
         if result.returncode == 0 and 'KEY FOUND' in testResult:
             passwords = []
             
-            p = re.compile('KEY FOUND\! \[(.*?)\].*')
+            p = re.compile(r'KEY FOUND\! \[(.*?)\].*')
 
             lines = testResult.split('\n')
             
@@ -777,7 +777,7 @@ class FalconWirelessEngine(object):
             if result.returncode == 0 and 'KEY FOUND' in testResult:
                 passwords = []
                 
-                p = re.compile('KEY FOUND\! \[(.*?)\].*')
+                p = re.compile(r'KEY FOUND\! \[(.*?)\].*')
 
                 lines = testResult.split('\n')
                 
