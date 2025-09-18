@@ -1,0 +1,9 @@
+QScintilla
+PyQtChart
+gps3
+dronekit
+manuf
+python-dateutil
+numpy
+matplotlib
+requests
