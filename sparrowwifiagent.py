@@ -1678,7 +1678,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     responsedict['errmsg'] = ''
                     responsedict['hasbluetooth'] = hasBluetooth
                     if hasBluetooth:
-                        responsedict['scanrunning'] = bluetooth.scanRunnning()
+                        responsedict['scanrunning'] = bluetooth.scanRunning()
                     else:
                         responsedict['scanrunning'] = False
 
