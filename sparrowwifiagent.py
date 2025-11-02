@@ -818,6 +818,12 @@ class SparrowWiFiAgent(object):
         global bluetooth
         global falconWiFiRemoteAgent
 
+        try:
+            port = int(port)
+            assert 1 <= port <= 65535
+        except Exception as e:
+            raise SystemExit(f"Invalid port '{port}': must be 1–65535 integer") from e
+            
         server_address = ('', port)
         try:           # httpd = HTTPServer.HTTPServer(server_address, SparrowWiFiAgentRequestHandler)
             httpd = MultithreadHTTPServer(server_address, SparrowWiFiAgentRequestHandler)
@@ -2565,7 +2571,7 @@ def checkForBluetooth():
 # ----------------- Main -----------------------------
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description='Sparrow-wifi agent')
-    argparser.add_argument('--port', help='Port for HTTP server to listen on.  Default is 8020.', default=8020, required=False)
+    argparser.add_argument('--port', type=int, help='Port for HTTP server to listen on.  Default is 8020.', default=8020, required=False)
     argparser.add_argument('--allowedips', help="IP addresses allowed to connect to this agent.  Default is any.  This can be a comma-separated list for multiple IP addresses", default='', required=False)
     argparser.add_argument('--staticcoord', help="Use user-defined lat,long,altitude(m) rather than GPS.  Ex: 40.1,-75.3,150", default='', required=False)
     argparser.add_argument('--mavlinkgps', help="Use Mavlink (drone) for GPS.  Options are: '3dr' for a Solo, 'sitl' for local simulator, or full connection string ('udp/tcp:<ip>:<port>' such as: 'udp:10.1.1.10:14550')", default='', required=False)
