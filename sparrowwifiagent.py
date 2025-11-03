@@ -871,12 +871,13 @@ class MultithreadHTTPServer(ThreadingMixIn, HTTPServer.HTTPServer):
 # ---------------  HTTP Request Handler --------------------
 # Sample handler: https://wiki.python.org/moin/BaseHttpServer
 class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.0"
     def log_message(self, format, *args):
+        global debugHTTP
+        
         if not debugHTTP:
             return
         else:
-            HTTPServer.BaseHTTPRequestHandler.log_message(self, format, *args)
+            HTTPServer.BaseHTTPRequestHandler(format, *args)
 
     def do_HEAD(s):
         global allowCors
