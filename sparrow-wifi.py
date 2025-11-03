@@ -1743,8 +1743,24 @@ class mainWindow(QMainWindow):
             (self.remoteAgentUp and (self.remoteAgentIP !=self.bluetoothWin.remoteAgentIP or self.remoteAgentPort !=self.bluetoothWin.remoteAgentPort))) :
             if self.remoteAgentUp:
                 self.bluetoothWin.setRemoteAgent(self.remoteAgentIP, self.remoteAgentPort)
+                self.refreshRemoteBtCaps()
             else:
                 self.bluetoothWin.setLocal()
+
+    def refreshRemoteBtCaps(self):
+        """Query the remote agent for BT/Ubertooth capability and repaint the menu."""
+        if not self.remoteAgentUp:
+            return
+        errcode, errmsg, self.hasRemoteBluetooth, self.hasRemoteUbertooth, _scan, _disc, _beacon = \
+            getRemoteBluetoothRunningServices(self.remoteAgentIP, self.remoteAgentPort)
+        # Optional status surfacing
+        if errcode != 0:
+            try:
+                self.statusBar().showMessage(errmsg)
+            except Exception:
+                pass
+        # Re-evaluate the Bluetooth menu based on freshly-fetched flags
+        self.setBluetoothMenu()
         
     def onScanModeChanged(self):
         self.scanMode = str(self.scanModeCombo.currentText())
@@ -3450,6 +3466,7 @@ class mainWindow(QMainWindow):
                     self.remoteAgentIP = agentSpec.split(':')[0]
                     self.remoteAgentPort = int(agentSpec.split(':')[1])
                     
+                    
                     if self.remoteAgentPort < 1 or self.remoteAgentPort > 65535:
                         QMessageBox.question(self, 'Error',"Port must be in an acceptable IP range (1-65535)", QMessageBox.Ok)
                         self.menuRemoteAgent.setChecked(False)
@@ -3515,6 +3532,7 @@ class mainWindow(QMainWindow):
                 self.missedAgentCycles = 0
                 
                 self.lastRemoteState = self.menuRemoteAgent.isChecked() 
+                self.refreshRemoteBtCaps()
 
                 # HackRF spectrum
                 errcode, errmsg, hashackrf, scan24running, scan5running = remoteHackrfStatus(self.remoteAgentIP, self.remoteAgentPort)
@@ -3613,7 +3631,7 @@ class mainWindow(QMainWindow):
             self.menuHackrfSpectrum24.setEnabled(self.hackrf.hasHackrf)
             self.menuHackrfSpectrum5.setEnabled(self.hackrf.hasHackrf)
                     
-            self.btBeacon = self.bluetooth.beaconRunning()
+            self.btBeacon = self.bluetooth.beaconRunning() if self.bluetooth else False
             self.menuBtBeacon.setChecked(self.btBeacon)
             self.btLastBeaconState = self.btBeacon
 
