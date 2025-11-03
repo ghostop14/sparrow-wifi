@@ -1211,22 +1211,23 @@ class mainWindow(QMainWindow):
         self.menuBtBeacon.setEnabled(True)
         self.menuBtSpectrum.setEnabled(True)
         self.menuBtSpectrumGain.setEnabled(True)
-        
-        if not self.remoteAgentUp:
-            # Local
-            if not self.hasUbertooth:
+        self.menuBtBluetooth.setEnabled(True)
+    
+        if not getattr(self, "remoteAgentUp", False):
+            # Local mode
+            if not getattr(self, "hasUbertooth", False):
                 self.menuBtSpectrum.setEnabled(False)
-                # self.menuBtSpectrumGain.setEnabled(False)
-            if not self.hasBluetooth:
+            if not getattr(self, "hasBluetooth", False):
                 self.menuBtBluetooth.setEnabled(False)
                 self.menuBtBeacon.setEnabled(False)
         else:
-            if not self.hasRemoteUbertooth:
+            # Remote mode
+            if not getattr(self, "hasRemoteUbertooth", False):
                 self.menuBtSpectrum.setEnabled(False)
-                # self.menuBtSpectrumGain.setEnabled(False)
-            if not self.hasRemoteBluetooth:
+            if not getattr(self, "hasRemoteBluetooth", False):
                 self.menuBtBluetooth.setEnabled(False)
                 self.menuBtBeacon.setEnabled(False)
+
             
     def createCharts(self):
         self.chart24 = QChart()
