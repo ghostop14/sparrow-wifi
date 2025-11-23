@@ -1,0 +1,1386 @@
+const elements = {};
+
+const API_BASE = '/api';
+const state = {
+    agentCache: new Map(),
+    agentInterfaces: new Map(),
+    agentMonitorMap: new Map(),
+    agentMarkers: new Map(),
+    falconData: new Map(),
+    selectedAgentId: null,
+    map: null,
+    networkIndex: new Map(),
+    networkList: [],
+    networkMarkers: new Map(),
+    bluetoothIndex: new Map(),
+    bluetoothList: [],
+    bluetoothMarkers: new Map(),
+    continuousScans: [],
+    showWifiLayers: true,
+    showBluetoothLayers: true,
+    showAgentLayers: true,
+    networkPage: 1,
+    bluetoothPage: 1,
+    pageSize: 25,
+    ws: null,
+    falconNetworkPage: 1,
+    falconClientPage: 1,
+    falconPageSize: 15,
+    falconNetworkTotalPages: 1,
+    falconClientTotalPages: 1,
+    networkObservations: new Map(),
+    bluetoothObservations: new Map(),
+};
+
+function bootstrap() {
+    elements.agentList = document.getElementById('agent-list');
+    elements.sidebar = document.getElementById('control-panel');
+    elements.sidebarToggle = document.getElementById('sidebar-toggle');
+    elements.tabsOverlay = document.getElementById('tabs-overlay');
+    elements.tabsCollapse = document.getElementById('tabs-collapse');
+    elements.scanForm = document.getElementById('scan-form');
+    elements.scanAgentSelect = document.getElementById('scan-agent');
+    elements.scanType = document.getElementById('scan-type');
+    elements.scanContinuous = document.getElementById('scan-continuous');
+    elements.scanInterval = document.getElementById('scan-interval');
+    elements.continuousList = document.getElementById('continuous-list');
+    elements.networkTableBody = document.querySelector('#network-table tbody');
+    elements.wifiPrev = document.getElementById('wifi-prev');
+    elements.wifiNext = document.getElementById('wifi-next');
+    elements.wifiPage = document.getElementById('wifi-page');
+    elements.wifiCount = document.getElementById('wifi-count');
+    elements.bluetoothTableBody = document.querySelector('#bluetooth-table tbody');
+    elements.bluetoothPrev = document.getElementById('bluetooth-prev');
+    elements.bluetoothNext = document.getElementById('bluetooth-next');
+    elements.bluetoothPage = document.getElementById('bluetooth-page');
+    elements.bluetoothCount = document.getElementById('bluetooth-count');
+    elements.toggleWifi = document.getElementById('toggle-wifi');
+    elements.toggleBluetooth = document.getElementById('toggle-bluetooth');
+    elements.toggleAgents = document.getElementById('toggle-agents');
+    elements.scansTableBody = document.querySelector('#scans-table tbody');
+    elements.falconStatusLog = document.getElementById('falcon-status-log');
+    elements.falconAgentSelect = document.getElementById('falcon-agent');
+    elements.falconMonitorForm = document.getElementById('falcon-monitor-form');
+    elements.falconMonitorStop = document.getElementById('falcon-monitor-stop');
+    elements.falconScanForm = document.getElementById('falcon-scan-form');
+    elements.falconScanStop = document.getElementById('falcon-scan-stop');
+    elements.falconScanStatus = document.getElementById('falcon-scan-status');
+    elements.tabButtons = document.querySelectorAll('.tab-button');
+    elements.tabPanels = document.querySelectorAll('.tab-panel');
+    elements.sidebarTabButtons = document.querySelectorAll('.sidebar-tab-button');
+    elements.sidebarTabPanels = document.querySelectorAll('.sidebar-tab-panel');
+    elements.detailDrawer = document.getElementById('detail-drawer');
+    elements.detailContent = document.getElementById('detail-content');
+    elements.detailClose = document.getElementById('detail-close');
+    elements.agentModal = document.getElementById('agent-modal');
+    elements.agentForm = document.getElementById('agent-form');
+    elements.openAgentModal = document.getElementById('open-agent-modal');
+    elements.closeAgentModal = document.getElementById('close-agent-modal');
+    initMap();
+    initTabs();
+    initModal();
+    bindEvents();
+    handleScanTypeChange();
+    loadAgents();
+    loadScans();
+    setInterval(loadAgents, 30000);
+    setInterval(loadScans, 10000);
+    loadContinuousScans();
+    setInterval(loadContinuousScans, 15000);
+    initWebSocket();
+}
+
+function initMap() {
+    state.map = L.map('map').setView([20, 0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors',
+        maxZoom: 19,
+    }).addTo(state.map);
+}
+
+function initTabs() {
+    elements.tabButtons.forEach(button => {
+        button.addEventListener('click', () => {
+            elements.tabButtons.forEach(btn => btn.classList.remove('active'));
+            elements.tabPanels.forEach(panel => panel.classList.remove('active'));
+            button.classList.add('active');
+            document.getElementById(button.dataset.tab).classList.add('active');
+        });
+    });
+
+    elements.sidebarTabButtons.forEach(button => {
+        button.addEventListener('click', () => {
+            elements.sidebarTabButtons.forEach(btn => btn.classList.remove('active'));
+            elements.sidebarTabPanels.forEach(panel => panel.classList.remove('active'));
+            button.classList.add('active');
+            document.getElementById(button.dataset.sidebarTab).classList.add('active');
+        });
+    });
+}
+
+function initModal() {
+    elements.openAgentModal?.addEventListener('click', () => {
+        elements.agentModal?.classList.remove('hidden');
+    });
+    elements.closeAgentModal?.addEventListener('click', () => {
+        elements.agentModal?.classList.add('hidden');
+    });
+}
+
+function bindEvents() {
+    elements.scanForm?.addEventListener('submit', onQuickScanSubmit);
+    elements.agentForm?.addEventListener('submit', onAgentFormSubmit);
+    elements.sidebarToggle?.addEventListener('click', toggleSidebar);
+    elements.tabsCollapse?.addEventListener('click', toggleTabsOverlay);
+    elements.scanAgentSelect?.addEventListener('change', (event) => {
+        const agentId = parseInt(event.target.value, 10);
+        if (Number.isInteger(agentId)) {
+            selectAgent(agentId);
+        }
+    });
+    elements.scanType?.addEventListener('change', handleScanTypeChange);
+    elements.falconAgentSelect?.addEventListener('change', (event) => {
+        const agentId = parseInt(event.target.value, 10);
+        if (Number.isInteger(agentId)) {
+            selectAgent(agentId);
+        }
+    });
+    elements.wifiPrev?.addEventListener('click', () => changeNetworkPage(-1));
+    elements.wifiNext?.addEventListener('click', () => changeNetworkPage(1));
+    elements.bluetoothPrev?.addEventListener('click', () => changeBluetoothPage(-1));
+    elements.bluetoothNext?.addEventListener('click', () => changeBluetoothPage(1));
+    elements.detailClose?.addEventListener('click', () => hideDetailDrawer());
+    elements.falconMonitorForm?.addEventListener('submit', onFalconMonitorStart);
+    elements.falconMonitorStop?.addEventListener('click', onFalconMonitorStop);
+    elements.falconScanForm?.addEventListener('submit', onFalconScanStart);
+    elements.falconScanStop?.addEventListener('click', onFalconScanStop);
+    elements.falconScanStatus?.addEventListener('click', onFalconScanStatus);
+    elements.toggleWifi?.addEventListener('change', (event) => {
+        state.showWifiLayers = event.target.checked;
+        updateLayerVisibility();
+    });
+    elements.toggleBluetooth?.addEventListener('change', (event) => {
+        state.showBluetoothLayers = event.target.checked;
+        updateLayerVisibility();
+    });
+    elements.toggleAgents?.addEventListener('change', (event) => {
+        state.showAgentLayers = event.target.checked;
+        updateLayerVisibility();
+    });
+    elements.continuousList?.addEventListener('click', (event) => {
+        const button = event.target.closest('.btn-stop-continuous');
+        if (!button) return;
+        const agentId = parseInt(button.dataset.agentId, 10);
+        const interfaceName = button.dataset.interface;
+        const scanType = button.dataset.scanType;
+        if (!Number.isInteger(agentId)) return;
+        stopContinuousScan(agentId, interfaceName, scanType);
+    });
+}
+
+function handleScanTypeChange() {
+    const type = elements.scanType?.value || 'wifi';
+    const allowContinuous = type === 'wifi';
+    if (elements.scanContinuous) {
+        elements.scanContinuous.disabled = !allowContinuous;
+        if (!allowContinuous) {
+            elements.scanContinuous.checked = false;
+        }
+    }
+    if (elements.scanInterval) {
+        elements.scanInterval.disabled = !allowContinuous;
+    }
+}
+
+async function fetchJSON(path, options = {}) {
+    const response = await fetch(path, options);
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || response.statusText);
+    }
+    if (response.status === 204) return null;
+    return response.json();
+}
+
+async function postJSON(path, payload) {
+    return fetchJSON(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+}
+
+async function loadAgents() {
+    const agents = await fetchJSON(`${API_BASE}/agents`);
+    updateAgentCache(agents);
+    renderAgentList(agents);
+    renderAgentSelects(agents);
+    if (!state.selectedAgentId && agents.length) {
+        selectAgent(agents[0].id);
+    }
+}
+
+function updateAgentCache(agents) {
+    state.agentCache.clear();
+    state.agentInterfaces.clear();
+    state.agentMonitorMap.clear();
+    agents.forEach(agent => {
+        state.agentCache.set(agent.id, agent);
+        const ifaceDict = agent.interfaces || {};
+        state.agentInterfaces.set(agent.id, Object.keys(ifaceDict));
+        state.agentMonitorMap.set(agent.id, agent.monitor_map || {});
+        updateAgentMarker(agent);
+    });
+}
+
+function renderAgentList(agents) {
+    elements.agentList.innerHTML = '';
+    if (!agents.length) {
+        elements.agentList.innerHTML = '<p class="agent-card">No agents registered</p>';
+        return;
+    }
+    agents.forEach(agent => {
+        const card = document.createElement('div');
+        card.className = 'agent-card' + (agent.id === state.selectedAgentId ? ' active' : '');
+        card.innerHTML = `
+            <div class="agent-name">${agent.name}</div>
+            <div class="agent-url">${agent.base_url}</div>
+            <div class="agent-capabilities">${agent.capabilities.join(', ') || 'No capabilities'}</div>
+        `;
+        card.addEventListener('click', () => selectAgent(agent.id));
+        elements.agentList.appendChild(card);
+    });
+}
+
+function renderAgentSelects(agents) {
+    const selects = [elements.scanAgentSelect, elements.falconAgentSelect];
+    selects.forEach(select => {
+        if (!select) return;
+        select.innerHTML = '';
+        agents.forEach(agent => {
+            const option = document.createElement('option');
+            option.value = agent.id;
+            option.textContent = agent.name;
+            if (agent.id === state.selectedAgentId) option.selected = true;
+            select.appendChild(option);
+        });
+    });
+    updateInterfaceControls();
+}
+
+async function selectAgent(agentId) {
+    if (!state.agentCache.has(agentId)) return;
+    state.selectedAgentId = agentId;
+    renderAgentList(Array.from(state.agentCache.values()));
+    renderAgentSelects(Array.from(state.agentCache.values()));
+    updateInterfaceControls();
+    await showAgentDetail(agentId);
+}
+
+async function showAgentDetail(agentId) {
+    try {
+        const falconPromise = fetchJSON(`${API_BASE}/falcon/${agentId}/scan/results`).catch(() => null);
+        const [agent, status, falconResults] = await Promise.all([
+            fetchJSON(`${API_BASE}/agents/${agentId}`),
+            fetchJSON(`${API_BASE}/agents/${agentId}/status`),
+            falconPromise,
+        ]);
+        state.agentCache.set(agentId, agent);
+        state.falconData.set(agentId, falconResults);
+        state.agentInterfaces.set(agentId, Object.keys(agent.interfaces || {}));
+        state.agentMonitorMap.set(agentId, agent.monitor_map || {});
+        updateInterfaceControls();
+        updateAgentMarker(agent);
+        const html = buildAgentDetailHtml(agent, status);
+        showDetailDrawer(html);
+        renderFalconTab(agentId, falconResults);
+        attachFalconActionHandlers(agentId, falconResults);
+    } catch (err) {
+        showDetailDrawer(`<p>Error loading agent status: ${err.message}</p>`);
+    }
+}
+
+function updateAgentMarker(agent) {
+    if (!state.map || !agent.gps || !agent.gps.gpspos) return;
+    const gps = agent.gps.gpspos;
+    if (gps.latitude === undefined || gps.longitude === undefined) return;
+    const lat = parseFloat(gps.latitude);
+    const lon = parseFloat(gps.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    let marker = state.agentMarkers.get(agent.id);
+    if (!marker) {
+        marker = L.circleMarker([lat, lon], {
+            radius: 8,
+            color: '#00c8d7',
+            weight: 2,
+            fillColor: '#00c8d7',
+            fillOpacity: 0.8,
+        });
+        state.agentMarkers.set(agent.id, marker);
+    } else {
+        marker.setLatLng([lat, lon]);
+    }
+    marker.bindPopup(`<strong>${agent.name}</strong><br/>${agent.base_url}`);
+    applyMarkerVisibility(marker, state.showAgentLayers);
+}
+
+function showDetailDrawer(html) {
+    elements.detailContent.innerHTML = html;
+    elements.detailDrawer.classList.add('open');
+    document.body.classList.remove('detail-collapsed');
+    requestMapResize();
+}
+
+function hideDetailDrawer() {
+    elements.detailDrawer.classList.remove('open');
+    document.body.classList.add('detail-collapsed');
+    requestMapResize();
+}
+
+function buildAgentDetailHtml(agent, status) {
+    return `
+        <h3>${agent.name}</h3>
+        <div class="detail-content-section">
+            <strong>Base URL:</strong> ${agent.base_url}<br>
+            <strong>Capabilities:</strong> ${agent.capabilities.join(', ')}
+        </div>
+        <details class="detail-content-section" open>
+            <summary>Interfaces</summary>
+            <pre>${JSON.stringify(status.interfaces, null, 2)}</pre>
+        </details>
+        <details class="detail-content-section">
+            <summary>Bluetooth</summary>
+            <pre>${JSON.stringify(status.bluetooth, null, 2)}</pre>
+        </details>
+        <details class="detail-content-section">
+            <summary>Monitor Map</summary>
+            <pre>${JSON.stringify(agent.monitor_map || {}, null, 2)}</pre>
+        </details>
+    `;
+}
+
+function renderFalconSection(falconResults) {
+    if (!falconResults) {
+        return '<p>No Falcon data available.</p>';
+    }
+    const networks = falconResults.networks || [];
+    const clients = falconResults.clients || [];
+    const netPageSize = state.falconPageSize;
+    const clientPageSize = state.falconPageSize;
+    const netTotalPages = Math.max(1, Math.ceil(networks.length / netPageSize));
+    const clientTotalPages = Math.max(1, Math.ceil(clients.length / clientPageSize));
+    const netStart = (state.falconNetworkPage - 1) * netPageSize;
+    const clientStart = (state.falconClientPage - 1) * clientPageSize;
+    const pagedNetworks = networks.slice(netStart, netStart + netPageSize);
+    const pagedClients = clients.slice(clientStart, clientStart + clientPageSize);
+    const hasData = networks.length || clients.length;
+    if (!hasData) {
+        return '<div class="detail-content-section"><strong>Falcon</strong><p>No Falcon scan results yet.</p></div>';
+    }
+    const clientCounts = clients.reduce((acc, client) => {
+        const key = (client.apMacAddr || '').toLowerCase();
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+    }, {});
+    const networkRows = pagedNetworks.map(net => {
+        const key = (net.macAddr || '').toLowerCase();
+        const hasClient = !!clientCounts[key];
+        return `
+            <tr>
+                <td>${escapeHtml(net.ssid || '')}</td>
+                <td>${net.macAddr || ''}</td>
+                <td>${net.channel || ''}</td>
+                <td>${net.signal || ''}</td>
+                <td>${net.security || ''}</td>
+                <td>
+                    <button class="btn-falcon-capture" data-ap="${net.macAddr || ''}" data-ssid="${escapeHtml(net.ssid || '')}" data-channel="${net.channel || 0}" data-hasclient="${hasClient}">Start WPA Capture</button>
+                    <button class="btn-falcon-deauth-ap" data-ap="${net.macAddr || ''}" data-channel="${net.channel || 0}">Deauth AP</button>
+                </td>
+            </tr>`;
+    }).join('') || '<tr><td colspan="6">No networks</td></tr>';
+
+    const clientRows = pagedClients.map(client => `
+            <tr>
+                <td>${client.macAddr || ''}</td>
+                <td>${client.apMacAddr || ''}</td>
+                <td>${client.channel || ''}</td>
+                <td>${client.signal || ''}</td>
+                <td><button class="btn-falcon-deauth" data-ap="${client.apMacAddr || ''}" data-client="${client.macAddr || ''}" data-channel="${client.channel || 0}">Deauth</button></td>
+            </tr>`).join('') || '<tr><td colspan="5">No clients</td></tr>';
+
+    return `
+        <div class="falcon-results-panel">
+            <div class="falcon-actions">
+                <div class="falcon-buttons">
+                    <button class="btn-falcon-refresh">Refresh Falcon Data</button>
+                    <button class="btn-falcon-stop-all">Stop All Deauths</button>
+                </div>
+                <span class="falcon-note">Use monitor interface dropdown before launching actions.</span>
+            </div>
+            <h4>Access Points</h4>
+            <table class="falcon-table">
+                <thead>
+                    <tr>
+                        <th>SSID</th>
+                        <th>BSSID</th>
+                        <th>Ch</th>
+                        <th>Signal</th>
+                        <th>Security</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>${networkRows}</tbody>
+            </table>
+            <div class="falcon-pagination">
+                <button id="falcon-net-prev">Prev</button>
+                <span>Page ${state.falconNetworkPage} / ${netTotalPages}</span>
+                <button id="falcon-net-next">Next</button>
+            </div>
+            <h4>Clients</h4>
+            <table class="falcon-table">
+                <thead>
+                    <tr>
+                        <th>Client</th>
+                        <th>Access Point</th>
+                        <th>Ch</th>
+                        <th>Signal</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>${clientRows}</tbody>
+            </table>
+            <div class="falcon-pagination">
+                <button id="falcon-client-prev">Prev</button>
+                <span>Page ${state.falconClientPage} / ${clientTotalPages}</span>
+                <button id="falcon-client-next">Next</button>
+            </div>
+        </div>
+    `;
+}
+
+function renderFalconTab(agentId, falconResults) {
+    const container = document.getElementById('falcon-results');
+    if (!container) return;
+    if (!falconResults) {
+        container.innerHTML = '<p>No Falcon data available.</p>';
+        return;
+    }
+    state.falconNetworkPage = 1;
+    state.falconClientPage = 1;
+    container.innerHTML = renderFalconSection(falconResults);
+    attachFalconPaginationHandlers(falconResults);
+}
+
+function attachFalconActionHandlers(agentId, falconResults) {
+    const root = elements.detailContent;
+    if (!root) return;
+    root.querySelector('.btn-falcon-refresh')?.addEventListener('click', () => showAgentDetail(agentId));
+    root.querySelector('.btn-falcon-stop-all')?.addEventListener('click', () => stopAllFalconDeauths(agentId));
+    root.querySelectorAll('.btn-falcon-deauth').forEach(button => {
+        button.addEventListener('click', () => {
+            const ap = button.dataset.ap;
+            const client = button.dataset.client;
+            const channel = parseInt(button.dataset.channel, 10) || 0;
+            triggerFalconDeauth(agentId, ap, client, channel);
+        });
+    });
+    root.querySelectorAll('.btn-falcon-capture').forEach(button => {
+        button.addEventListener('click', () => {
+            const ap = button.dataset.ap;
+            const ssid = button.dataset.ssid || '';
+            const channel = parseInt(button.dataset.channel, 10) || 0;
+            const hasClient = button.dataset.hasclient === 'true';
+            triggerFalconCapture(agentId, ap, ssid, channel, hasClient);
+        });
+    });
+    root.querySelectorAll('.btn-falcon-deauth-ap').forEach(button => {
+        button.addEventListener('click', () => {
+            const ap = button.dataset.ap;
+            const channel = parseInt(button.dataset.channel, 10) || 0;
+            triggerFalconDeauth(agentId, ap, '', channel);
+        });
+    });
+}
+
+function attachFalconPaginationHandlers(falconResults) {
+    const networkPrev = document.getElementById('falcon-net-prev');
+    const networkNext = document.getElementById('falcon-net-next');
+    const clientPrev = document.getElementById('falcon-client-prev');
+    const clientNext = document.getElementById('falcon-client-next');
+    networkPrev?.addEventListener('click', () => changeFalconPage('network', -1, falconResults));
+    networkNext?.addEventListener('click', () => changeFalconPage('network', 1, falconResults));
+    clientPrev?.addEventListener('click', () => changeFalconPage('client', -1, falconResults));
+    clientNext?.addEventListener('click', () => changeFalconPage('client', 1, falconResults));
+}
+
+function changeFalconPage(type, delta, falconResults) {
+    if (type === 'network') {
+        const totalPages = Math.max(1, Math.ceil((falconResults.networks?.length || 0) / state.falconPageSize));
+        state.falconNetworkPage = Math.min(totalPages, Math.max(1, state.falconNetworkPage + delta));
+    } else {
+        const totalPages = Math.max(1, Math.ceil((falconResults.clients?.length || 0) / state.falconPageSize));
+        state.falconClientPage = Math.min(totalPages, Math.max(1, state.falconClientPage + delta));
+    }
+    const container = document.getElementById('falcon-results');
+    if (!container) return;
+    container.innerHTML = renderFalconSection(falconResults);
+    attachFalconPaginationHandlers(falconResults);
+    attachFalconActionHandlers(state.selectedAgentId, falconResults);
+}
+
+function onQuickScanSubmit(event) {
+    event.preventDefault();
+    try {
+        const { body, continuous, interval_seconds } = buildScanPayload();
+        if (continuous) {
+            body.interval_seconds = interval_seconds;
+            postJSON(`${API_BASE}/scans/continuous`, body)
+                .then(() => loadContinuousScans())
+                .catch(err => alert(`Failed to start continuous scan: ${err.message}`));
+        } else {
+            postJSON(`${API_BASE}/scans`, body)
+                .then(loadScans)
+                .catch(err => alert(`Failed to launch scan: ${err.message}`));
+        }
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+function buildScanPayload() {
+    const channelsText = document.getElementById('scan-channels').value;
+    const extrasText = document.getElementById('scan-extras').value;
+    let channels = null;
+    if (channelsText.trim()) {
+        channels = channelsText.split(',').map(v => parseInt(v.trim(), 10)).filter(Number.isFinite);
+    }
+    let extras = null;
+    if (extrasText.trim()) {
+        try {
+            extras = JSON.parse(extrasText);
+        } catch (err) {
+            throw new Error('Extras must be valid JSON');
+        }
+    }
+    const body = {
+        agent_id: parseInt(elements.scanAgentSelect.value, 10),
+        scan_type: document.getElementById('scan-type').value,
+        interface: document.getElementById('scan-interface').value || null,
+        channels,
+        extras,
+    };
+    const intervalInput = elements.scanInterval ? parseInt(elements.scanInterval.value, 10) : 10;
+    const allowContinuous = body.scan_type === 'wifi';
+    return {
+        body,
+        continuous: allowContinuous ? (elements.scanContinuous?.checked ?? false) : false,
+        interval_seconds: Number.isFinite(intervalInput) ? Math.max(intervalInput, 2) : 10,
+    };
+}
+
+function onAgentFormSubmit(event) {
+    event.preventDefault();
+    const payload = {
+        name: document.getElementById('agent-name').value,
+        base_url: document.getElementById('agent-url').value,
+        description: document.getElementById('agent-description').value,
+        capabilities: document.getElementById('agent-capabilities').value.split(',').map(c => c.trim()).filter(Boolean),
+    };
+    postJSON(`${API_BASE}/agents`, payload)
+        .then(() => {
+            elements.agentForm.reset();
+            elements.agentModal.classList.add('hidden');
+            return loadAgents();
+        })
+        .catch(err => alert(`Failed to register agent: ${err.message}`));
+}
+
+async function loadScans() {
+    const scans = await fetchJSON(`${API_BASE}/scans?limit=20`);
+    renderScans(scans);
+    scans.forEach(scan => ingestScanPayload(scan.agent_id, scan.scan_type, scan.response_payload, scan.id));
+}
+
+async function loadContinuousScans() {
+    try {
+        const loops = await fetchJSON(`${API_BASE}/scans/continuous`);
+        state.continuousScans = loops;
+        renderContinuousList();
+    } catch (err) {
+        console.error('Unable to load continuous scans', err);
+    }
+}
+
+function renderScans(scans) {
+    elements.scansTableBody.innerHTML = '';
+    scans.forEach(scan => {
+        const row = document.createElement('tr');
+        const agentName = state.agentCache.get(scan.agent_id)?.name || scan.agent_id;
+        const statusBadge = `<span class="status-badge status-${scan.status}">${scan.status}</span>`;
+        row.innerHTML = `
+            <td>${scan.id}</td>
+            <td>${agentName}</td>
+            <td>${scan.scan_type}</td>
+            <td>${statusBadge}</td>
+            <td>${new Date(scan.created_at).toLocaleString()}</td>
+            <td><pre>${summarizeScan(scan)}</pre></td>
+        `;
+        elements.scansTableBody.appendChild(row);
+    });
+}
+
+function summarizeScan(scan) {
+    if (scan.response_payload) {
+        const payload = scan.response_payload;
+        if (Array.isArray(payload.networks)) {
+            return `${payload.networks.length} networks`;
+        }
+        if (Array.isArray(payload.clients)) {
+            return `${payload.clients.length} clients`;
+        }
+        if (Array.isArray(payload.devices)) {
+            return `${payload.devices.length} devices`;
+        }
+        return JSON.stringify(payload, null, 2);
+    }
+    if (scan.error) return scan.error;
+    return '';
+}
+
+function ingestScanPayload(agentId, scanType, payload, scanId) {
+    if (!payload) return;
+    if (Array.isArray(payload.networks)) {
+        addOrUpdateNetworks(payload.networks, agentId, scanId, scanType);
+    }
+    if (Array.isArray(payload.clients)) {
+        addOrUpdateNetworks(payload.clients, agentId, scanId, scanType, { label: 'client' });
+    }
+    if (Array.isArray(payload.devices)) {
+        addOrUpdateBluetooth(payload.devices, agentId, scanId, scanType);
+    }
+}
+
+function addOrUpdateNetworks(items, agentId, scanId, scanType) {
+    const agentName = state.agentCache.get(agentId)?.name || `Agent ${agentId}`;
+    const agentGps = state.agentCache.get(agentId)?.gps?.gpspos || null;
+    const now = Date.now();
+    items.forEach(item => {
+        const mac = (item.macAddr || item.macaddr || '').toLowerCase();
+        if (!mac) return;
+        const rawLat = parseFloat(item.lat ?? item.latitude);
+        const rawLon = parseFloat(item.lon ?? item.longitude);
+        const gpsValid = interpretBool(item.gpsvalid ?? item.gpsValid ?? true);
+        let sampleLat = Number.isFinite(rawLat) ? rawLat : null;
+        let sampleLon = Number.isFinite(rawLon) ? rawLon : null;
+        let locationSource = 'device';
+        if (!gpsValid || sampleLat === null || sampleLon === null) {
+            if (agentGps && Number.isFinite(parseFloat(agentGps.latitude)) && Number.isFinite(parseFloat(agentGps.longitude))) {
+                sampleLat = parseFloat(agentGps.latitude);
+                sampleLon = parseFloat(agentGps.longitude);
+                locationSource = 'agent';
+            } else {
+                sampleLat = null;
+                sampleLon = null;
+                locationSource = 'none';
+            }
+        }
+        const signal = item.signal ?? item.power ?? null;
+        if (sampleLat !== null && sampleLon !== null) {
+            recordNetworkSample(mac, {
+                agentId,
+                agentName,
+                lat: sampleLat,
+                lon: sampleLon,
+                signal,
+                source: locationSource,
+                timestamp: now,
+            });
+        }
+        const loc = computeNetworkLocation(mac);
+        const prev = state.networkIndex.get(mac);
+        const finalLat = loc.hasPosition ? loc.lat : prev?.lat ?? null;
+        const finalLon = loc.hasPosition ? loc.lon : prev?.lon ?? null;
+        const finalSource = loc.hasPosition ? loc.source : prev?.locationSource ?? 'none';
+        const contributors = loc.hasPosition ? loc.contributors : prev?.contributors ?? 0;
+        const info = {
+            mac,
+            ssid: item.ssid || item.name || 'Unknown',
+            channel: item.channel || '',
+            signal: item.signal || item.power || '',
+            lat: finalLat,
+            lon: finalLon,
+            hasGps: finalLat !== null && finalLon !== null,
+            locationSource: finalSource,
+            contributors,
+            lastSeen: new Date().toISOString(),
+            agentId,
+            agentName,
+            scanId,
+            scanType,
+        };
+        state.networkIndex.set(mac, info);
+        if (info.hasGps) {
+            upsertMarker(info);
+        } else {
+            removeNetworkMarker(mac);
+        }
+    });
+    updateNetworkList();
+}
+
+function interpretBool(value) {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') return value.toLowerCase() === 'true';
+    return Boolean(value);
+}
+
+function upsertMarker(info) {
+    if (!state.map) return;
+    const existing = state.networkMarkers.get(info.mac);
+    const popup = `
+        <strong>${info.ssid}</strong><br/>
+        MAC: ${info.mac}<br/>
+        Agent: ${info.agentName}<br/>
+        Channel: ${info.channel}<br/>
+        Signal: ${info.signal}<br/>
+        Last seen: ${new Date(info.lastSeen).toLocaleString()}`;
+    if (existing) {
+        existing.setLatLng([info.lat, info.lon]);
+        existing.setPopupContent(popup);
+        applyMarkerVisibility(existing, state.showWifiLayers);
+    } else {
+        const marker = L.marker([info.lat, info.lon]);
+        marker.bindPopup(popup);
+        state.networkMarkers.set(info.mac, marker);
+        applyMarkerVisibility(marker, state.showWifiLayers);
+    }
+}
+
+function removeNetworkMarker(mac) {
+    if (!state.map) return;
+    const marker = state.networkMarkers.get(mac);
+    if (marker) {
+        if (state.map.hasLayer(marker)) {
+            state.map.removeLayer(marker);
+        }
+        state.networkMarkers.delete(mac);
+    }
+}
+
+function upsertBluetoothMarker(info) {
+    if (!state.map) return;
+    if (!info.gpsValid || !Number.isFinite(info.lat) || !Number.isFinite(info.lon)) return;
+    const existing = state.bluetoothMarkers.get(info.mac);
+    const popup = `
+        <strong>${info.name}</strong><br/>
+        MAC: ${info.mac}<br/>
+        Agent: ${info.agentName}<br/>
+        RSSI: ${info.rssi}<br/>
+        Last seen: ${new Date(info.lastSeen).toLocaleString()}`;
+    if (existing) {
+        existing.setLatLng([info.lat, info.lon]);
+        existing.setPopupContent(popup);
+        applyMarkerVisibility(existing, state.showBluetoothLayers);
+    } else {
+        const marker = L.circleMarker([info.lat, info.lon], {
+            radius: 6,
+            color: '#ff9d00',
+            weight: 2,
+            fillColor: '#ff9d00',
+            fillOpacity: 0.8,
+        });
+        marker.bindPopup(popup);
+        state.bluetoothMarkers.set(info.mac, marker);
+        applyMarkerVisibility(marker, state.showBluetoothLayers);
+    }
+}
+
+function updateNetworkList() {
+    state.networkList = Array.from(state.networkIndex.values()).sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen));
+    elements.wifiCount.textContent = state.networkList.length;
+    if ((state.networkPage - 1) * state.pageSize >= state.networkList.length) {
+        state.networkPage = 1;
+    }
+    renderNetworkTable();
+}
+
+function addOrUpdateBluetooth(devices, agentId, scanId, scanType) {
+    const agentName = state.agentCache.get(agentId)?.name || `Agent ${agentId}`;
+    devices.forEach(device => {
+        const mac = (device.mac || device.macAddr || '').toLowerCase();
+        if (!mac) return;
+        const sampleLat = parseFloat(device.lat ?? device.latitude);
+        const sampleLon = parseFloat(device.lon ?? device.longitude);
+        const gpsValid = interpretBool(device.gpsvalid ?? device.gpsValid ?? false);
+        let finalLat = Number.isFinite(sampleLat) ? sampleLat : null;
+        let finalLon = Number.isFinite(sampleLon) ? sampleLon : null;
+        let source = gpsValid && finalLat !== null && finalLon !== null ? 'device' : 'none';
+        const agentGps = state.agentCache.get(agentId)?.gps?.gpspos;
+        if (source === 'none' && agentGps && Number.isFinite(parseFloat(agentGps.latitude)) && Number.isFinite(parseFloat(agentGps.longitude))) {
+            finalLat = parseFloat(agentGps.latitude);
+            finalLon = parseFloat(agentGps.longitude);
+            source = 'agent';
+        }
+        if (finalLat !== null && finalLon !== null) {
+            recordBluetoothSample(mac, {
+                agentId,
+                agentName,
+                lat: finalLat,
+                lon: finalLon,
+                signal: device.rssi ?? device.signal ?? null,
+                source,
+                timestamp: Date.now(),
+            });
+        }
+        const loc = computeBluetoothLocation(mac);
+        const prev = state.bluetoothIndex.get(mac);
+        const hasGps = loc.hasPosition || (prev?.lat !== undefined && prev.lat !== null);
+        const info = {
+            mac,
+            name: device.name || 'Unknown',
+            rssi: device.rssi ?? device.signal ?? '',
+            lastSeen: new Date().toISOString(),
+            agentId,
+            agentName,
+            scanId,
+            scanType,
+            lat: loc.hasPosition ? loc.lat : prev?.lat ?? null,
+            lon: loc.hasPosition ? loc.lon : prev?.lon ?? null,
+            gpsValid: hasGps,
+            locationSource: loc.hasPosition ? loc.source : prev?.locationSource ?? 'none',
+            contributors: loc.hasPosition ? loc.contributors : prev?.contributors ?? 0,
+        };
+        state.bluetoothIndex.set(mac, info);
+        if (info.lat !== null && info.lon !== null) {
+            upsertBluetoothMarker(info);
+        }
+    });
+    updateBluetoothList();
+}
+
+function updateBluetoothList() {
+    state.bluetoothList = Array.from(state.bluetoothIndex.values()).sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen));
+    elements.bluetoothCount.textContent = state.bluetoothList.length;
+    if ((state.bluetoothPage - 1) * state.pageSize >= state.bluetoothList.length) {
+        state.bluetoothPage = 1;
+    }
+    renderBluetoothTable();
+}
+
+function renderNetworkTable() {
+    elements.networkTableBody.innerHTML = '';
+    const start = (state.networkPage - 1) * state.pageSize;
+    const rows = state.networkList.slice(start, start + state.pageSize);
+    rows.forEach(net => {
+        const row = document.createElement('tr');
+        const locationLabel = net.hasGps ? formatLocationLabel(net.locationSource) : 'No';
+        row.innerHTML = `
+            <td>${net.ssid}</td>
+            <td>${net.mac}</td>
+            <td>${net.agentName}</td>
+            <td>${net.channel}</td>
+            <td>${net.signal}</td>
+            <td>${locationLabel}</td>
+            <td>${new Date(net.lastSeen).toLocaleString()}</td>`;
+        row.addEventListener('click', () => showNetworkDetail(net));
+        elements.networkTableBody.appendChild(row);
+    });
+    elements.wifiPage.textContent = `${state.networkPage}`;
+}
+
+function showNetworkDetail(net) {
+    const coords = formatCoordinates(net.lat, net.lon);
+    const html = `
+        <h3>${net.ssid}</h3>
+        <div class="detail-content-section">
+            <strong>MAC:</strong> ${net.mac}<br>
+            <strong>Agent:</strong> ${net.agentName}<br>
+            <strong>Signal:</strong> ${net.signal} dBm<br>
+            <strong>Channel:</strong> ${net.channel}<br>
+            <strong>Location Source:</strong> ${formatLocationLabel(net.locationSource)}<br>
+            <strong>Contributors:</strong> ${net.contributors || 0}<br>
+            <strong>Location:</strong> ${coords || 'N/A'}
+        </div>
+        <div class="detail-content-section">
+            <strong>Last seen:</strong> ${new Date(net.lastSeen).toLocaleString()}<br>
+            <strong>Scan:</strong> #${net.scanId} (${net.scanType})
+        </div>`;
+    showDetailDrawer(html);
+}
+
+function changeNetworkPage(delta) {
+    const maxPage = Math.max(1, Math.ceil(state.networkList.length / state.pageSize));
+    state.networkPage = Math.min(maxPage, Math.max(1, state.networkPage + delta));
+    renderNetworkTable();
+}
+
+function renderBluetoothTable() {
+    elements.bluetoothTableBody.innerHTML = '';
+    const start = (state.bluetoothPage - 1) * state.pageSize;
+    const rows = state.bluetoothList.slice(start, start + state.pageSize);
+    rows.forEach(device => {
+        const row = document.createElement('tr');
+        const locationLabel = device.gpsValid ? formatLocationLabel(device.locationSource) : 'No';
+        row.innerHTML = `
+            <td>${device.name}</td>
+            <td>${device.mac}</td>
+            <td>${device.agentName}</td>
+            <td>${device.rssi}</td>
+            <td>${locationLabel}</td>
+            <td>${new Date(device.lastSeen).toLocaleString()}</td>`;
+        row.addEventListener('click', () => showBluetoothDetail(device));
+        elements.bluetoothTableBody.appendChild(row);
+    });
+    elements.bluetoothPage.textContent = `${state.bluetoothPage}`;
+}
+
+function showBluetoothDetail(device) {
+    const coords = formatCoordinates(device.lat, device.lon);
+    const html = `
+        <h3>${device.name}</h3>
+        <div class="detail-content-section">
+            <strong>MAC:</strong> ${device.mac}<br>
+            <strong>Agent:</strong> ${device.agentName}<br>
+            <strong>RSSI:</strong> ${device.rssi}<br>
+            <strong>Location Source:</strong> ${formatLocationLabel(device.locationSource)}<br>
+            <strong>Contributors:</strong> ${device.contributors || 0}<br>
+            <strong>Location:</strong> ${coords || 'N/A'}
+        </div>
+        <div class="detail-content-section">
+            <strong>Last seen:</strong> ${new Date(device.lastSeen).toLocaleString()}<br>
+            <strong>Scan:</strong> #${device.scanId} (${device.scanType})
+        </div>`;
+    showDetailDrawer(html);
+}
+
+function changeBluetoothPage(delta) {
+    const maxPage = Math.max(1, Math.ceil(state.bluetoothList.length / state.pageSize));
+    state.bluetoothPage = Math.min(maxPage, Math.max(1, state.bluetoothPage + delta));
+    renderBluetoothTable();
+}
+
+function formatCoordinates(lat, lon) {
+    if (lat === undefined || lon === undefined) return '';
+    const parsedLat = parseFloat(lat);
+    const parsedLon = parseFloat(lon);
+    if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLon)) return '';
+    return `${parsedLat.toFixed(5)}, ${parsedLon.toFixed(5)}`;
+}
+
+function formatLocationLabel(source) {
+    switch (source) {
+        case 'device':
+            return 'Direct';
+        case 'agent':
+            return 'Agent GPS';
+        case 'centroid':
+            return 'Centroid';
+        default:
+            return 'No';
+    }
+}
+
+function recordNetworkSample(mac, sample) {
+    const existing = state.networkObservations.get(mac) || [];
+    const cutoff = Date.now() - 120000;
+    const filtered = existing.filter(entry => entry.timestamp >= cutoff);
+    filtered.push(sample);
+    state.networkObservations.set(mac, filtered);
+}
+
+function computeNetworkLocation(mac) {
+    const samples = state.networkObservations.get(mac) || [];
+    const cutoff = Date.now() - 120000;
+    const recent = samples.filter(entry => entry.timestamp >= cutoff && Number.isFinite(entry.lat) && Number.isFinite(entry.lon));
+    state.networkObservations.set(mac, recent);
+    if (!recent.length) {
+        return { hasPosition: false, contributors: 0 };
+    }
+    const latestPerAgent = new Map();
+    recent.forEach(sample => {
+        const existing = latestPerAgent.get(sample.agentId);
+        if (!existing || sample.timestamp > existing.timestamp) {
+            latestPerAgent.set(sample.agentId, sample);
+        }
+    });
+    const values = Array.from(latestPerAgent.values());
+    if (!values.length) {
+        return { hasPosition: false, contributors: 0 };
+    }
+    if (values.length === 1) {
+        const single = values[0];
+        return {
+            hasPosition: true,
+            lat: single.lat,
+            lon: single.lon,
+            source: single.source,
+            contributors: 1,
+        };
+    }
+    let weightedLat = 0;
+    let weightedLon = 0;
+    let totalWeight = 0;
+    values.forEach(sample => {
+        const signal = Number(sample.signal);
+        const weight = Number.isFinite(signal) ? Math.max(0.1, (120 + signal) / 60) : 1;
+        weightedLat += sample.lat * weight;
+        weightedLon += sample.lon * weight;
+        totalWeight += weight;
+    });
+    if (!totalWeight) {
+        return { hasPosition: false, contributors: values.length };
+    }
+    return {
+        hasPosition: true,
+        lat: weightedLat / totalWeight,
+        lon: weightedLon / totalWeight,
+        source: 'centroid',
+        contributors: values.length,
+    };
+}
+
+function recordBluetoothSample(mac, sample) {
+    const existing = state.bluetoothObservations.get(mac) || [];
+    const cutoff = Date.now() - 120000;
+    const filtered = existing.filter(entry => entry.timestamp >= cutoff);
+    filtered.push(sample);
+    state.bluetoothObservations.set(mac, filtered);
+}
+
+function computeBluetoothLocation(mac) {
+    const samples = state.bluetoothObservations.get(mac) || [];
+    const cutoff = Date.now() - 120000;
+    const recent = samples.filter(entry => entry.timestamp >= cutoff && Number.isFinite(entry.lat) && Number.isFinite(entry.lon));
+    state.bluetoothObservations.set(mac, recent);
+    if (!recent.length) {
+        return { hasPosition: false, contributors: 0 };
+    }
+    const latestPerAgent = new Map();
+    recent.forEach(sample => {
+        const existing = latestPerAgent.get(sample.agentId);
+        if (!existing || sample.timestamp > existing.timestamp) {
+            latestPerAgent.set(sample.agentId, sample);
+        }
+    });
+    const values = Array.from(latestPerAgent.values());
+    if (!values.length) return { hasPosition: false, contributors: 0 };
+    if (values.length === 1) {
+        const single = values[0];
+        return {
+            hasPosition: true,
+            lat: single.lat,
+            lon: single.lon,
+            source: single.source,
+            contributors: 1,
+        };
+    }
+    let weightedLat = 0;
+    let weightedLon = 0;
+    let totalWeight = 0;
+    values.forEach(sample => {
+        const rssi = Number(sample.signal);
+        const weight = Number.isFinite(rssi) ? Math.max(0.1, (100 + rssi) / 60) : 1;
+        weightedLat += sample.lat * weight;
+        weightedLon += sample.lon * weight;
+        totalWeight += weight;
+    });
+    if (!totalWeight) return { hasPosition: false, contributors: values.length };
+    return {
+        hasPosition: true,
+        lat: weightedLat / totalWeight,
+        lon: weightedLon / totalWeight,
+        source: 'centroid',
+        contributors: values.length,
+    };
+}
+
+function escapeHtml(value) {
+    if (!value) return '';
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function renderContinuousList() {
+    if (!elements.continuousList) return;
+    if (!state.continuousScans.length) {
+        elements.continuousList.innerHTML = '<p>No continuous scans running.</p>';
+        return;
+    }
+    const rows = state.continuousScans
+        .map(item => {
+            const agentName = state.agentCache.get(item.agent_id)?.name || item.agent_id;
+            return `<div class="continuous-row">
+                <div>
+                    <strong>${agentName}</strong><br/>
+                    ${item.scan_type.toUpperCase()} on ${item.interface} every ${item.interval_seconds}s
+                </div>
+                <button class="btn-stop-continuous" data-agent-id="${item.agent_id}" data-interface="${item.interface}" data-scan-type="${item.scan_type}">Stop</button>
+            </div>`;
+        })
+        .join('');
+    elements.continuousList.innerHTML = rows;
+}
+
+async function stopContinuousScan(agentId, interfaceName, scanType) {
+    try {
+        await postJSON(`${API_BASE}/scans/continuous/stop`, {
+            agent_id: agentId,
+            interface: interfaceName,
+            scan_type: scanType,
+        });
+        loadContinuousScans();
+    } catch (err) {
+        alert(`Unable to stop continuous scan: ${err.message}`);
+    }
+}
+
+function applyMarkerVisibility(marker, shouldShow) {
+    if (!state.map || !marker) return;
+    if (shouldShow) {
+        if (!state.map.hasLayer(marker)) {
+            marker.addTo(state.map);
+        }
+    } else if (state.map.hasLayer(marker)) {
+        state.map.removeLayer(marker);
+    }
+}
+
+function updateLayerVisibility() {
+    state.networkMarkers.forEach(marker => applyMarkerVisibility(marker, state.showWifiLayers));
+    state.bluetoothMarkers.forEach(marker => applyMarkerVisibility(marker, state.showBluetoothLayers));
+    state.agentMarkers.forEach(marker => applyMarkerVisibility(marker, state.showAgentLayers));
+}
+
+function initWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const wsUrl = `${protocol}://${window.location.host}/ws/scans`;
+    state.ws = new WebSocket(wsUrl);
+    state.ws.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            handleScanEvent(data);
+        } catch (err) {
+            console.error('invalid scan event', err);
+        }
+    };
+    state.ws.onclose = () => setTimeout(initWebSocket, 3000);
+}
+
+function handleScanEvent(event) {
+    if (event.event === 'scan.progress' && event.update?.snapshot) {
+        ingestScanPayload(event.agent_id, event.scan_type, event.update.snapshot, event.scan_id);
+    } else if (event.event === 'scan.completed') {
+        ingestScanPayload(event.agent_id, event.scan_type, event.response, event.scan_id);
+        loadScans().catch(err => console.error(err));
+    } else if (event.event === 'scan.started' || event.event === 'scan.failed') {
+        loadScans().catch(err => console.error(err));
+    }
+}
+
+function logFalcon(message) {
+    const timestamp = new Date().toLocaleTimeString();
+    elements.falconStatusLog.textContent = `[${timestamp}] ${message}\n` + elements.falconStatusLog.textContent;
+}
+
+function getSelectedAgentId() {
+    const raw = elements.falconAgentSelect.value || elements.scanAgentSelect.value || `${state.selectedAgentId || ''}`;
+    const id = parseInt(raw, 10);
+    if (Number.isNaN(id)) {
+        throw new Error('Select an agent first');
+    }
+    return id;
+}
+
+function getMonitorInterfaceValue() {
+    const select = document.getElementById('falcon-scan-interface');
+    if (!select || !select.value) {
+        throw new Error('Select a monitor interface first');
+    }
+    return select.value;
+}
+
+function onFalconMonitorStart(event) {
+    event.preventDefault();
+    try {
+        const agentId = getSelectedAgentId();
+        const iface = document.getElementById('falcon-monitor-interface').value.trim();
+        if (!iface) return alert('Enter a managed interface');
+        postJSON(`${API_BASE}/falcon/${agentId}/monitor/start`, { interface: iface })
+            .then(resp => {
+                logFalcon(`Monitor start ${iface} on ${agentId}: ${JSON.stringify(resp)}`);
+                return loadAgents();
+            })
+            .catch(err => alert(`Unable to start monitor mode: ${err.message}`));
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+function onFalconMonitorStop() {
+    try {
+        const agentId = getSelectedAgentId();
+        const iface = document.getElementById('falcon-monitor-interface').value.trim();
+        if (!iface) return alert('Enter interface');
+        postJSON(`${API_BASE}/falcon/${agentId}/monitor/stop`, { interface: iface })
+            .then(resp => {
+                logFalcon(`Monitor stop ${iface} on ${agentId}: ${JSON.stringify(resp)}`);
+                return loadAgents();
+            })
+            .catch(err => alert(`Unable to stop monitor mode: ${err.message}`));
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+function onFalconScanStart(event) {
+    event.preventDefault();
+    try {
+        const agentId = getSelectedAgentId();
+        const iface = document.getElementById('falcon-scan-interface').value.trim();
+        if (!iface) return alert('Enter monitor interface');
+        postJSON(`${API_BASE}/falcon/${agentId}/scan/start`, { interface: iface })
+            .then(resp => {
+                logFalcon(`Falcon scan start ${iface} on ${agentId}: ${JSON.stringify(resp)}`);
+                return Promise.all([loadScans(), loadAgents()]);
+            })
+            .catch(err => alert(`Unable to start Falcon scan: ${err.message}`));
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+function onFalconScanStop() {
+    try {
+        const agentId = getSelectedAgentId();
+        const iface = document.getElementById('falcon-scan-interface').value.trim();
+        if (!iface) return alert('Enter monitor interface');
+        postJSON(`${API_BASE}/falcon/${agentId}/scan/stop`, { interface: iface })
+            .then(resp => {
+                logFalcon(`Falcon scan stop ${iface} on ${agentId}: ${JSON.stringify(resp)}`);
+                return Promise.all([loadScans(), loadAgents()]);
+            })
+            .catch(err => alert(`Unable to stop Falcon scan: ${err.message}`));
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+function onFalconScanStatus() {
+    try {
+        const agentId = getSelectedAgentId();
+        const iface = document.getElementById('falcon-scan-interface').value.trim();
+        if (!iface) return alert('Enter monitor interface');
+        fetchJSON(`${API_BASE}/falcon/${agentId}/scan/status?interface=${encodeURIComponent(iface)}`)
+            .then(resp => logFalcon(`Falcon status ${iface} on ${agentId}: ${JSON.stringify(resp)}`))
+            .catch(err => alert(`Unable to fetch status: ${err.message}`));
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+async function triggerFalconDeauth(agentId, apMac, clientMac, channel) {
+    try {
+        const iface = getMonitorInterfaceValue();
+        const payload = {
+            interface: iface,
+            apmacaddr: apMac,
+            stationmacaddr: clientMac || '',
+            channel,
+            continuous: true,
+        };
+        const resp = await postJSON(`${API_BASE}/falcon/${agentId}/deauth`, payload);
+        logFalcon(`Deauth ${apMac}/${clientMac || 'broadcast'} on ${agentId}: ${JSON.stringify(resp)}`);
+    } catch (err) {
+        alert(`Unable to start deauth: ${err.message}`);
+    }
+}
+
+async function triggerFalconCapture(agentId, apMac, ssid, channel, hasClient) {
+    try {
+        const iface = getMonitorInterfaceValue();
+        const payload = {
+            interface: iface,
+            apmacaddr: apMac,
+            ssid,
+            channel,
+            cracktype: 'wpapsk',
+            hasclient: hasClient,
+        };
+        const resp = await postJSON(`${API_BASE}/falcon/${agentId}/crack`, payload);
+        logFalcon(`Capture ${ssid || apMac} on ${agentId}: ${JSON.stringify(resp)}`);
+    } catch (err) {
+        alert(`Unable to start capture: ${err.message}`);
+    }
+}
+
+async function stopAllFalconDeauths(agentId) {
+    try {
+        const iface = getMonitorInterfaceValue();
+        const resp = await postJSON(`${API_BASE}/falcon/${agentId}/deauth/stopall`, { interface: iface });
+        logFalcon(`Stop all deauths (${iface}) on ${agentId}: ${JSON.stringify(resp)}`);
+    } catch (err) {
+        alert(`Unable to stop deauths: ${err.message}`);
+    }
+}
+
+window.addEventListener('load', bootstrap, { once: true });
+
+function updateInterfaceControls() {
+    const agentId = state.selectedAgentId;
+    const interfaces = state.agentInterfaces.get(agentId) || [];
+    const monitorMap = state.agentMonitorMap.get(agentId) || {};
+    populateSelect(document.getElementById('scan-interface'), interfaces, 'Select interface');
+    populateSelect(document.getElementById('falcon-monitor-interface'), interfaces, 'Select managed interface');
+    const monitorInterfaces = Object.values(monitorMap);
+    const fallback = interfaces.map(iface => monitorMap[iface] || `${iface}mon`);
+    populateSelect(document.getElementById('falcon-scan-interface'), monitorInterfaces.length ? monitorInterfaces : fallback, 'Select monitor interface');
+}
+
+function populateSelect(select, options, placeholder) {
+    if (!select) return;
+    const previous = select.value;
+    select.innerHTML = '';
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = placeholder || 'Select';
+    select.appendChild(defaultOption);
+    options.forEach(opt => {
+        const option = document.createElement('option');
+        option.value = opt;
+        option.textContent = opt;
+        select.appendChild(option);
+    });
+    if (options.includes(previous)) {
+        select.value = previous;
+    } else if (options.length) {
+        select.value = options[0];
+    }
+}
+
+function toggleSidebar() {
+    if (!elements.sidebarToggle) return;
+    const willCollapse = !document.body.classList.contains('sidebar-collapsed');
+    document.body.classList.toggle('sidebar-collapsed', willCollapse);
+    elements.sidebarToggle.textContent = willCollapse ? 'Show Panel' : 'Hide Panel';
+    requestMapResize();
+}
+
+function toggleTabsOverlay() {
+    if (!elements.tabsOverlay) return;
+    elements.tabsOverlay.classList.toggle('collapsed');
+    const collapsed = elements.tabsOverlay.classList.contains('collapsed');
+    document.body.classList.toggle('tabs-collapsed', collapsed);
+    elements.tabsCollapse.textContent = collapsed ? 'Expand' : 'Collapse';
+    requestMapResize();
+}
+
+function requestMapResize() {
+    if (!state.map) return;
+    setTimeout(() => {
+        state.map.invalidateSize();
+    }, 150);
+}

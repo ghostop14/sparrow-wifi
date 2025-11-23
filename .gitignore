@@ -11,3 +11,5 @@ cur/
 tmp/
 __pycache__/
 *.DS_Store
+controller/.venv/
+controller/state/controller.db
