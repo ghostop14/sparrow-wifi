@@ -493,6 +493,53 @@ th {
     width: 420px;
 }
 
+.modal-content.spectrum-modal {
+    width: 780px;
+    max-width: 95vw;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-close {
+    border: none;
+    background: transparent;
+    color: #fff;
+    font-size: 1.4rem;
+    cursor: pointer;
+}
+
+.spectrum-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.spectrum-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.spectrum-status {
+    margin: 0;
+    font-size: 0.9rem;
+    color: #9acfe1;
+}
+
+.spectrum-chart-wrapper {
+    background: #0b121b;
+    border: 1px solid #143240;
+    border-radius: 8px;
+    padding: 0.5rem;
+}
+
 .modal-content form {
     display: flex;
     flex-direction: column;

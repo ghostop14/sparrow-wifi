@@ -7,7 +7,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
-from fastapi import FastAPI
+import gzip
+import json
+
+from fastapi import FastAPI, Response
 from pydantic import BaseModel
 
 app = FastAPI(title="Mock Sparrow WiFi Agent")
@@ -22,6 +25,8 @@ class AgentState:
     falcon_running: Dict[str, bool] = field(default_factory=dict)
     last_scan_snapshot: Dict[str, List[Dict]] = field(default_factory=dict)
     bluetooth_devices: List[Dict] = field(default_factory=list)
+    hackrf_band: str | None = None
+    hackrf_running: bool = False
 
     def networks(self) -> List[Dict]:
         lat, lon = self.location
@@ -237,6 +242,58 @@ def generate_bt_devices() -> List[Dict]:
             }
         )
     return devices
+
+
+@app.get("/spectrum/hackrfstatus")
+def hackrf_status():
+    return {
+        "errcode": 0,
+        "errmsg": "",
+        "hashackrf": True,
+        "scan24running": state.hackrf_running and state.hackrf_band == '24',
+        "scan5running": state.hackrf_running and state.hackrf_band == '5',
+    }
+
+
+@app.get("/spectrum/scan/{action}")
+def hackrf_scan(action: str):
+    if action == 'start24':
+        state.hackrf_band = '24'
+        state.hackrf_running = True
+        return {"errcode": 0, "errmsg": ""}
+    if action == 'start5':
+        state.hackrf_band = '5'
+        state.hackrf_running = True
+        return {"errcode": 0, "errmsg": ""}
+    if action == 'stop':
+        state.hackrf_running = False
+        state.hackrf_band = None
+        return {"errcode": 0, "errmsg": ""}
+    if action == 'status':
+        band = state.hackrf_band or '24'
+        data = fake_channel_data(band)
+        payload = {
+            "scanrunning": state.hackrf_running,
+            "channeldata": data,
+        }
+        json_bytes = json.dumps(payload).encode('utf-8')
+        compressed = gzip.compress(json_bytes)
+        return Response(content=compressed, media_type='application/json', headers={"Content-Encoding": "gzip"})
+    return {"errcode": 1, "errmsg": "Unknown action"}
+
+
+def fake_channel_data(band: str) -> Dict[int, float]:
+    if band == '5':
+        channels = range(36, 64, 2)
+    else:
+        channels = range(1, 15)
+    data = {}
+    for ch in channels:
+        baseline = -90 + 5 * random.random()
+        if random.random() < 0.2:
+            baseline += random.uniform(10, 25)
+        data[ch] = round(baseline, 1)
+    return data
 
 
 def parse_args() -> argparse.Namespace:

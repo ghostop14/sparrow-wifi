@@ -1,1 +1,1 @@
-from . import agents, falcon, scans, stream  # noqa: F401
+from . import agents, falcon, scans, spectrum, stream  # noqa: F401

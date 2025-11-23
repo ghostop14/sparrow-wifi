@@ -30,7 +30,14 @@ const state = {
     falconClientTotalPages: 1,
     networkObservations: new Map(),
     bluetoothObservations: new Map(),
+    spectrumPollHandle: null,
+    spectrumChart: null,
+    spectrumAgentId: null,
+    spectrumBand: null,
+    spectrumSnapshotting: false,
 };
+
+const SPECTRUM_SNAPSHOT_DELAY_MS = 1200;
 
 function bootstrap() {
     elements.agentList = document.getElementById('agent-list');
@@ -76,6 +83,17 @@ function bootstrap() {
     elements.agentForm = document.getElementById('agent-form');
     elements.openAgentModal = document.getElementById('open-agent-modal');
     elements.closeAgentModal = document.getElementById('close-agent-modal');
+    elements.openSpectrumModal = document.getElementById('open-spectrum-modal');
+    elements.spectrumModal = document.getElementById('spectrum-modal');
+    elements.closeSpectrumModal = document.getElementById('close-spectrum-modal');
+    elements.spectrumAgentSelect = document.getElementById('spectrum-agent');
+    elements.spectrumStatus = document.getElementById('spectrum-status');
+    elements.spectrumStart24 = document.getElementById('spectrum-start-24');
+    elements.spectrumStart5 = document.getElementById('spectrum-start-5');
+    elements.spectrumStop = document.getElementById('spectrum-stop');
+    elements.spectrumSnapshot24 = document.getElementById('spectrum-snapshot-24');
+    elements.spectrumSnapshot5 = document.getElementById('spectrum-snapshot-5');
+    elements.spectrumChartCanvas = document.getElementById('spectrum-chart');
     initMap();
     initTabs();
     initModal();
@@ -176,6 +194,34 @@ function bindEvents() {
         if (!Number.isInteger(agentId)) return;
         stopContinuousScan(agentId, interfaceName, scanType);
     });
+    elements.openSpectrumModal?.addEventListener('click', openSpectrumModal);
+    elements.closeSpectrumModal?.addEventListener('click', closeSpectrumModal);
+elements.spectrumStart24?.addEventListener('click', () => startSpectrumScan('24'));
+elements.spectrumStart5?.addEventListener('click', () => startSpectrumScan('5'));
+elements.spectrumStop?.addEventListener('click', () => stopSpectrumScan());
+elements.spectrumSnapshot24?.addEventListener('click', () => spectrumSnapshot('24'));
+elements.spectrumSnapshot5?.addEventListener('click', () => spectrumSnapshot('5'));
+    elements.spectrumAgentSelect?.addEventListener('change', (event) => {
+        const id = parseInt(event.target.value, 10);
+        state.spectrumAgentId = Number.isFinite(id) ? id : null;
+        if (state.spectrumPollHandle && state.spectrumAgentId) {
+            beginSpectrumPolling(state.spectrumAgentId);
+        }
+    });
+}
+
+function handleScanTypeChange() {
+    const type = elements.scanType?.value || 'wifi';
+    const allowContinuous = type === 'wifi';
+    if (elements.scanContinuous) {
+        elements.scanContinuous.disabled = !allowContinuous;
+        if (!allowContinuous) {
+            elements.scanContinuous.checked = false;
+        }
+    }
+    if (elements.scanInterval) {
+        elements.scanInterval.disabled = !allowContinuous;
+    }
 }
 
 function handleScanTypeChange() {
@@ -208,6 +254,10 @@ async function postJSON(path, payload) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
     });
+}
+
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 async function loadAgents() {
@@ -266,6 +316,27 @@ function renderAgentSelects(agents) {
         });
     });
     updateInterfaceControls();
+    syncSpectrumAgentOptions(agents);
+}
+
+function syncSpectrumAgentOptions(agents) {
+    if (!elements.spectrumAgentSelect) return;
+    const previous = state.spectrumAgentId;
+    elements.spectrumAgentSelect.innerHTML = '';
+    agents.forEach(agent => {
+        const option = document.createElement('option');
+        option.value = agent.id;
+        option.textContent = agent.name;
+        elements.spectrumAgentSelect.appendChild(option);
+    });
+    if (!agents.length) {
+        state.spectrumAgentId = null;
+        return;
+    }
+    const match = agents.find(agent => agent.id === previous);
+    const selectedId = match ? match.id : agents[0].id;
+    elements.spectrumAgentSelect.value = `${selectedId}`;
+    state.spectrumAgentId = selectedId;
 }
 
 async function selectAgent(agentId) {
@@ -978,6 +1049,229 @@ function formatLocationLabel(source) {
         default:
             return 'No';
     }
+}
+
+function openSpectrumModal() {
+    if (!elements.spectrumModal) return;
+    const quickAgent = parseInt(elements.scanAgentSelect?.value ?? '', 10);
+    if (Number.isInteger(quickAgent)) {
+        elements.spectrumAgentSelect.value = `${quickAgent}`;
+        state.spectrumAgentId = quickAgent;
+    }
+    elements.spectrumModal.classList.remove('hidden');
+    ensureSpectrumChart();
+    setSpectrumStatus('Idle');
+    updateSpectrumControls(Boolean(state.spectrumBand));
+}
+
+function closeSpectrumModal() {
+    if (!elements.spectrumModal) return;
+    stopSpectrumPolling();
+    state.spectrumBand = null;
+    state.spectrumSnapshotting = false;
+    updateSpectrumControls(false);
+    elements.spectrumModal.classList.add('hidden');
+}
+
+function labelForBand(band) {
+    return band === '5' ? '5 GHz' : band === '24' ? '2.4 GHz' : 'unknown band';
+}
+
+function setSpectrumStatus(message) {
+    if (!elements.spectrumStatus) return;
+    const bandLabel =
+        state.spectrumBand === '24' ? '2.4 GHz' : state.spectrumBand === '5' ? '5 GHz' : 'band unset';
+    elements.spectrumStatus.textContent =
+        state.spectrumBand && message ? `${message} (${bandLabel})` : message || 'Idle';
+}
+
+function ensureSpectrumChart() {
+    if (state.spectrumChart || !elements.spectrumChartCanvas) return;
+    const ctx = elements.spectrumChartCanvas.getContext('2d');
+    state.spectrumChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'Power (dBm)',
+                    data: [],
+                    borderColor: '#00c8d7',
+                    backgroundColor: 'rgba(0, 200, 215, 0.2)',
+                    tension: 0.2,
+                },
+            ],
+        },
+        options: {
+            animation: false,
+            scales: {
+                y: {
+                    suggestedMin: -110,
+                    suggestedMax: -20,
+                    ticks: { color: '#9acfe1' },
+                },
+                x: {
+                    ticks: { color: '#9acfe1' },
+                },
+            },
+            plugins: {
+                legend: { labels: { color: '#e0e6f3' } },
+            },
+        },
+    });
+}
+
+function updateSpectrumChart(channelData) {
+    ensureSpectrumChart();
+    if (!state.spectrumChart) return;
+    const entries = Object.entries(channelData || {})
+        .map(([channel, value]) => ({ channel: Number(channel), value }))
+        .sort((a, b) => a.channel - b.channel);
+    state.spectrumChart.data.labels = entries.map(entry => entry.channel);
+    state.spectrumChart.data.datasets[0].data = entries.map(entry => entry.value);
+    state.spectrumChart.update('none');
+}
+
+function getSpectrumAgentId() {
+    const id = parseInt(elements.spectrumAgentSelect?.value ?? '', 10);
+    return Number.isInteger(id) ? id : null;
+}
+
+function startSpectrumScan(band) {
+    const agentId = getSpectrumAgentId();
+    if (!agentId) {
+        return alert('Select an agent first');
+    }
+    if (state.spectrumSnapshotting) {
+        return alert('Please wait for the current snapshot to finish.');
+    }
+    postJSON(`${API_BASE}/spectrum/${agentId}/start?band=${band}`)
+        .then(() => {
+            state.spectrumBand = band;
+            setSpectrumStatus('Scan running');
+            beginSpectrumPolling(agentId);
+            updateSpectrumControls(true);
+        })
+        .catch(err => alert(`Unable to start spectrum scan: ${err.message}`));
+}
+
+async function sendSpectrumStop(agentId, silent = false) {
+    try {
+        await postJSON(`${API_BASE}/spectrum/${agentId}/stop`, {});
+        return true;
+    } catch (err) {
+        if (!silent) {
+            throw err;
+        }
+        console.warn('Unable to stop spectrum scan', err);
+        return false;
+    }
+}
+
+async function stopSpectrumScan(manual = true) {
+    const agentId = getSpectrumAgentId();
+    if (!agentId) return;
+    try {
+        await sendSpectrumStop(agentId);
+        if (manual) {
+            setSpectrumStatus('Scan stopped');
+        }
+    } catch (err) {
+        alert(`Unable to stop spectrum scan: ${err.message}`);
+        return;
+    } finally {
+        state.spectrumBand = null;
+        stopSpectrumPolling();
+        updateSpectrumControls(false);
+    }
+}
+
+async function spectrumSnapshot(band) {
+    const agentId = getSpectrumAgentId();
+    if (!agentId) return alert('Select an agent first');
+    if (state.spectrumSnapshotting) return;
+    const bandLabel = labelForBand(band);
+    stopSpectrumPolling();
+    state.spectrumSnapshotting = true;
+    setSpectrumStatus(`Capturing ${bandLabel} snapshot...`);
+    updateSpectrumControls(Boolean(state.spectrumBand));
+    try {
+        if (state.spectrumBand) {
+            await sendSpectrumStop(agentId, true);
+            state.spectrumBand = null;
+            await delay(250);
+        }
+        state.spectrumBand = band;
+        await postJSON(`${API_BASE}/spectrum/${agentId}/start?band=${band}`);
+        await delay(SPECTRUM_SNAPSHOT_DELAY_MS);
+        await fetchSpectrumChannels(agentId, true);
+    } catch (err) {
+        setSpectrumStatus(`Snapshot failed: ${err.message}`);
+    } finally {
+        await sendSpectrumStop(agentId, true);
+        state.spectrumBand = null;
+        state.spectrumSnapshotting = false;
+        updateSpectrumControls(false);
+    }
+}
+
+function beginSpectrumPolling(agentId) {
+    stopSpectrumPolling();
+    state.spectrumPollHandle = setInterval(() => fetchSpectrumChannels(agentId, false), 2000);
+    fetchSpectrumChannels(agentId, false);
+}
+
+function stopSpectrumPolling() {
+    if (state.spectrumPollHandle) {
+        clearInterval(state.spectrumPollHandle);
+        state.spectrumPollHandle = null;
+    }
+}
+
+async function fetchSpectrumChannels(agentId, snapshot) {
+    try {
+        const data = await fetchJSON(`${API_BASE}/spectrum/${agentId}/channels`);
+        const channelData = data?.channeldata || {};
+        updateSpectrumChart(channelData);
+        const running = Boolean(data?.scanrunning);
+        if (running && !state.spectrumBand) {
+            state.spectrumBand = 'unknown';
+        }
+        if (!running && state.spectrumBand) {
+            setSpectrumStatus('Scan idle');
+            state.spectrumBand = null;
+            updateSpectrumControls(false);
+        } else if (running) {
+            setSpectrumStatus(snapshot ? 'Snapshot captured' : 'Scan running');
+            updateSpectrumControls(true);
+        } else if (snapshot) {
+            setSpectrumStatus('Snapshot captured (no active scan)');
+            updateSpectrumControls(false);
+        }
+    } catch (err) {
+        setSpectrumStatus(`Error: ${err.message}`);
+        if (!snapshot) {
+            stopSpectrumPolling();
+            state.spectrumBand = null;
+            updateSpectrumControls(false);
+        }
+    }
+}
+
+function updateSpectrumControls(isRunning) {
+    const running = Boolean(isRunning);
+    const busy = state.spectrumSnapshotting;
+    [elements.spectrumStart24, elements.spectrumStart5].forEach(button => {
+        if (!button) return;
+        button.disabled = running || busy;
+    });
+    if (elements.spectrumStop) {
+        elements.spectrumStop.disabled = !running || busy;
+    }
+    [elements.spectrumSnapshot24, elements.spectrumSnapshot5].forEach(button => {
+        if (!button) return;
+        button.disabled = running || busy;
+    });
 }
 
 function recordNetworkSample(mac, sample) {

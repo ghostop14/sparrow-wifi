@@ -62,6 +62,7 @@
                         </label>
                         <button type="submit">Launch</button>
                     </form>
+                    <button type="button" id="open-spectrum-modal">Spectrum View</button>
                     <div id="continuous-list"></div>
                 </div>
             </div>
@@ -215,7 +216,36 @@
         </div>
     </div>
 
+    <div id="spectrum-modal" class="modal hidden">
+        <div class="modal-content spectrum-modal">
+            <div class="modal-header">
+                <h2>HackRF Spectrum</h2>
+                <button id="close-spectrum-modal" class="modal-close">&times;</button>
+            </div>
+            <div class="spectrum-controls">
+                <label>
+                    Agent
+                    <select id="spectrum-agent"></select>
+                </label>
+                <div class="spectrum-buttons">
+                    <button type="button" id="spectrum-start-24">Start 2.4 GHz</button>
+                    <button type="button" id="spectrum-start-5">Start 5 GHz</button>
+                    <button type="button" id="spectrum-stop">Stop Scan</button>
+                </div>
+                <div class="spectrum-buttons">
+                    <button type="button" id="spectrum-snapshot-24">Snapshot 2.4 GHz</button>
+                    <button type="button" id="spectrum-snapshot-5">Snapshot 5 GHz</button>
+                </div>
+                <p id="spectrum-status" class="spectrum-status">Idle</p>
+            </div>
+            <div class="spectrum-chart-wrapper">
+                <canvas id="spectrum-chart" height="220"></canvas>
+            </div>
+        </div>
+    </div>
+
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="/static/main.js?v=3"></script>
 </body>
 </html>

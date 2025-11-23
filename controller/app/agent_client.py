@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import time
+import gzip
+import json
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -20,12 +22,16 @@ class AgentClient:
         if agent.api_key:
             self.headers["X-API-Key"] = agent.api_key
 
-    def _get(self, path: str, **kwargs) -> Dict[str, Any]:
+    def _get_response(self, path: str, **kwargs) -> httpx.Response:
         url = f"{self.base_url}{path}"
         timeout = kwargs.pop("timeout", 60.0)
         response = httpx.get(url, headers=self.headers, timeout=timeout, **kwargs)
         if response.status_code >= 400:
             raise AgentHTTPError(f"Agent {self.agent.name} returned {response.status_code}: {response.text}")
+        return response
+
+    def _get(self, path: str, **kwargs) -> Dict[str, Any]:
+        response = self._get_response(path, **kwargs)
         return response.json()
 
     def _post(self, path: str, data: Dict[str, Any] | None = None, **kwargs) -> Dict[str, Any]:
@@ -144,6 +150,33 @@ class AgentClient:
 
     def gps_status(self) -> Dict[str, Any]:
         return self._get('/gps/status')
+
+    def hackrf_status(self) -> Dict[str, Any]:
+        return self._get('/spectrum/hackrfstatus')
+
+    def hackrf_start(self, band: str) -> Dict[str, Any]:
+        if band == '24':
+            return self._get('/spectrum/scan/start24')
+        if band == '5':
+            return self._get('/spectrum/scan/start5')
+        raise ValueError('Band must be "24" or "5"')
+
+    def hackrf_stop(self) -> Dict[str, Any]:
+        return self._get('/spectrum/scan/stop')
+
+    def hackrf_channel_data(self) -> Dict[str, Any]:
+        response = self._get_response('/spectrum/scan/status')
+        content = response.content
+        if response.headers.get('Content-Encoding', '').lower() == 'gzip':
+            try:
+                content = gzip.decompress(content)
+            except OSError:
+                # Some agents set the header but return plain JSON; fall back gracefully
+                pass
+        try:
+            return json.loads(content.decode('utf-8'))
+        except Exception as exc:
+            raise AgentHTTPError(f"Invalid spectrum response from {self.agent.name}: {exc}") from exc
 
 
 def execute_scan(
