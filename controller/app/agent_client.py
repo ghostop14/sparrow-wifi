@@ -25,7 +25,10 @@ class AgentClient:
     def _get_response(self, path: str, **kwargs) -> httpx.Response:
         url = f"{self.base_url}{path}"
         timeout = kwargs.pop("timeout", 60.0)
-        response = httpx.get(url, headers=self.headers, timeout=timeout, **kwargs)
+        try:
+            response = httpx.get(url, headers=self.headers, timeout=timeout, **kwargs)
+        except httpx.RequestError as exc:
+            raise AgentHTTPError(f"Unable to reach {self.agent.name} at {url}: {exc}") from exc
         if response.status_code >= 400:
             raise AgentHTTPError(f"Agent {self.agent.name} returned {response.status_code}: {response.text}")
         return response
@@ -36,13 +39,28 @@ class AgentClient:
 
     def _post(self, path: str, data: Dict[str, Any] | None = None, **kwargs) -> Dict[str, Any]:
         url = f"{self.base_url}{path}"
-        response = httpx.post(url, json=data or {}, headers=self.headers, timeout=kwargs.get("timeout", 60.0))
+        try:
+            response = httpx.post(url, json=data or {}, headers=self.headers, timeout=kwargs.get("timeout", 60.0))
+        except httpx.RequestError as exc:
+            raise AgentHTTPError(f"Unable to reach {self.agent.name} at {url}: {exc}") from exc
         if response.status_code >= 400:
             raise AgentHTTPError(f"Agent {self.agent.name} returned {response.status_code}: {response.text}")
         return response.json()
 
+    def _normalize_interfaces(self, payload: Any) -> Dict[str, Any]:
+        if isinstance(payload, dict):
+            interfaces = payload.get('interfaces')
+            if isinstance(interfaces, dict):
+                return {'interfaces': interfaces}
+            if isinstance(interfaces, list):
+                return {'interfaces': {name: {} for name in interfaces if isinstance(name, str)}}
+        elif isinstance(payload, list):
+            return {'interfaces': {name: {} for name in payload if isinstance(name, str)}}    
+        return {'interfaces': {}}
+
     def get_interfaces(self) -> Dict[str, Any]:
-        return self._get('/wireless/interfaces')
+        payload = self._get('/wireless/interfaces')
+        return self._normalize_interfaces(payload)
 
     def wifi_scan(self, interface: str, channels: Optional[List[int]] = None, progress_cb=None) -> Dict[str, Any]:
         if progress_cb:
@@ -156,16 +174,16 @@ class AgentClient:
 
     def hackrf_start(self, band: str) -> Dict[str, Any]:
         if band == '24':
-            return self._get('/spectrum/scan/start24')
+            return self._get('/spectrum/scanstart24')
         if band == '5':
-            return self._get('/spectrum/scan/start5')
+            return self._get('/spectrum/scanstart5')
         raise ValueError('Band must be "24" or "5"')
 
     def hackrf_stop(self) -> Dict[str, Any]:
-        return self._get('/spectrum/scan/stop')
+        return self._get('/spectrum/scanstop')
 
     def hackrf_channel_data(self) -> Dict[str, Any]:
-        response = self._get_response('/spectrum/scan/status')
+        response = self._get_response('/spectrum/scanstatus')
         content = response.content
         if response.headers.get('Content-Encoding', '').lower() == 'gzip':
             try:
