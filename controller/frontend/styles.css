@@ -178,6 +178,21 @@ body.sidebar-collapsed .map-panel .leaflet-control-zoom {
     color: #999;
 }
 
+.agent-actions {
+    margin-top: 0.4rem;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.agent-actions .agent-delete-btn {
+    background: linear-gradient(135deg, #f0625f, #c62828);
+    color: #fff;
+    border: none;
+    padding: 0.3rem 0.6rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+
 .sidebar form label {
     display: flex;
     flex-direction: column;
@@ -198,6 +213,25 @@ button {
     background: linear-gradient(135deg, #00c8d7, #03809b);
     color: #041218;
     box-shadow: 0 0 6px rgba(0, 200, 215, 0.35);
+}
+
+.button-danger {
+    background: linear-gradient(135deg, #f0625f, #c62828);
+    color: #fff;
+    border-color: #7a1414;
+    box-shadow: 0 0 6px rgba(198, 40, 40, 0.45);
+}
+
+.detail-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 0.5rem;
+}
+
+.detail-error {
+    border-left: 3px solid #f0625f;
+    background: rgba(240, 98, 95, 0.08);
+    color: #f5c0bd;
 }
 
 .checkbox-label {
@@ -448,6 +482,16 @@ th {
     padding: 0.6rem;
     border-radius: 6px;
     box-shadow: inset 0 0 12px rgba(0, 200, 215, 0.15);
+}
+
+.falcon-indicator {
+    font-size: 0.8rem;
+    color: #7f96b1;
+    margin-left: 0.3rem;
+}
+
+.falcon-indicator.active {
+    color: #00c8d7;
 }
 
 .falcon-controls form {

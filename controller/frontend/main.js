@@ -28,6 +28,10 @@ const state = {
     falconPageSize: 15,
     falconNetworkTotalPages: 1,
     falconClientTotalPages: 1,
+    falconPollHandle: null,
+    falconPollingAgent: null,
+    falconScanning: new Set(),
+    falconScanInterfaces: new Map(),
     networkObservations: new Map(),
     bluetoothObservations: new Map(),
     spectrumPollHandle: null,
@@ -35,6 +39,7 @@ const state = {
     spectrumAgentId: null,
     spectrumBand: null,
     spectrumSnapshotting: false,
+    monitorOverrides: new Map(),
 };
 
 const SPECTRUM_SNAPSHOT_DELAY_MS = 1200;
@@ -106,6 +111,7 @@ function bootstrap() {
     loadContinuousScans();
     setInterval(loadContinuousScans, 15000);
     initWebSocket();
+    updateFalconIndicator();
 }
 
 function initMap() {
@@ -242,7 +248,9 @@ async function fetchJSON(path, options = {}) {
     const response = await fetch(path, options);
     if (!response.ok) {
         const text = await response.text();
-        throw new Error(text || response.statusText);
+        const error = new Error(text || response.statusText);
+        error.status = response.status;
+        throw error;
     }
     if (response.status === 204) return null;
     return response.json();
@@ -260,13 +268,39 @@ function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+async function deleteJSON(path) {
+    const response = await fetch(path, { method: 'DELETE' });
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || response.statusText);
+    }
+    return null;
+}
+
 async function loadAgents() {
     const agents = await fetchJSON(`${API_BASE}/agents`);
+    const availableIds = new Set(agents.map(agent => agent.id));
+    Array.from(state.falconScanning).forEach(agentId => {
+        if (!availableIds.has(agentId)) {
+            markFalconScanInactive(agentId);
+        }
+    });
+    Array.from(state.monitorOverrides.keys()).forEach(agentId => {
+        if (!availableIds.has(agentId)) {
+            state.monitorOverrides.delete(agentId);
+        }
+    });
+    if (state.selectedAgentId && !availableIds.has(state.selectedAgentId)) {
+        state.selectedAgentId = null;
+        hideDetailDrawer();
+    }
     updateAgentCache(agents);
     renderAgentList(agents);
     renderAgentSelects(agents);
     if (!state.selectedAgentId && agents.length) {
         selectAgent(agents[0].id);
+    } else if (!agents.length) {
+        stopFalconPolling();
     }
 }
 
@@ -276,11 +310,67 @@ function updateAgentCache(agents) {
     state.agentMonitorMap.clear();
     agents.forEach(agent => {
         state.agentCache.set(agent.id, agent);
-        const ifaceDict = agent.interfaces || {};
-        state.agentInterfaces.set(agent.id, Object.keys(ifaceDict));
-        state.agentMonitorMap.set(agent.id, agent.monitor_map || {});
+        cacheAgentMetadata(agent);
         updateAgentMarker(agent);
     });
+}
+
+function cacheAgentMetadata(agent) {
+    const ifaceDict = agent.interfaces || {};
+    const baseInterfaces = Object.keys(ifaceDict);
+    let monitorMap = agent.monitor_map || {};
+    monitorMap = applyMonitorOverrides(agent.id, monitorMap);
+    const interfaces = new Set(baseInterfaces);
+    Object.keys(monitorMap).forEach(managed => interfaces.add(managed));
+    state.agentInterfaces.set(agent.id, Array.from(interfaces));
+    state.agentMonitorMap.set(agent.id, { ...monitorMap });
+}
+
+function applyMonitorOverrides(agentId, monitorMap) {
+    const overrides = state.monitorOverrides.get(agentId);
+    if (!overrides) return monitorMap;
+    const updated = { ...monitorMap };
+    const remaining = new Map();
+    overrides.forEach((alias, managed) => {
+        if (alias) {
+            if (monitorMap[managed] !== alias) {
+                updated[managed] = alias;
+                remaining.set(managed, alias);
+            }
+        } else if (monitorMap[managed]) {
+            delete updated[managed];
+            remaining.set(managed, alias);
+        }
+    });
+    if (remaining.size) {
+        state.monitorOverrides.set(agentId, remaining);
+    } else {
+        state.monitorOverrides.delete(agentId);
+    }
+    return updated;
+}
+
+function updateLocalMonitorState(agentId, managed, alias) {
+    if (!agentId || !managed) return;
+    const overrides = new Map(state.monitorOverrides.get(agentId) || []);
+    overrides.set(managed, alias || null);
+    state.monitorOverrides.set(agentId, overrides);
+    const monitorMap = { ...(state.agentMonitorMap.get(agentId) || {}) };
+    const interfaces = new Set(state.agentInterfaces.get(agentId) || []);
+    const previousAlias = monitorMap[managed];
+    if (alias) {
+        monitorMap[managed] = alias;
+        interfaces.add(managed);
+    } else {
+        if (previousAlias) {
+            interfaces.delete(previousAlias);
+        }
+        delete monitorMap[managed];
+        interfaces.add(managed);
+    }
+    state.agentMonitorMap.set(agentId, monitorMap);
+    state.agentInterfaces.set(agentId, Array.from(interfaces));
+    updateInterfaceControls();
 }
 
 function renderAgentList(agents) {
@@ -296,9 +386,19 @@ function renderAgentList(agents) {
             <div class="agent-name">${agent.name}</div>
             <div class="agent-url">${agent.base_url}</div>
             <div class="agent-capabilities">${agent.capabilities.join(', ') || 'No capabilities'}</div>
+            <div class="agent-actions">
+                <button type="button" class="agent-delete-btn" data-agent-id="${agent.id}">Delete</button>
+            </div>
         `;
         card.addEventListener('click', () => selectAgent(agent.id));
         elements.agentList.appendChild(card);
+    });
+    elements.agentList.querySelectorAll('.agent-delete-btn').forEach(button => {
+        button.addEventListener('click', event => {
+            event.stopPropagation();
+            const agentId = parseInt(button.dataset.agentId, 10);
+            handleAgentDelete(agentId);
+        });
     });
 }
 
@@ -350,25 +450,110 @@ async function selectAgent(agentId) {
 
 async function showAgentDetail(agentId) {
     try {
-        const falconPromise = fetchJSON(`${API_BASE}/falcon/${agentId}/scan/results`).catch(() => null);
-        const [agent, status, falconResults] = await Promise.all([
+        const [agent, status] = await Promise.all([
             fetchJSON(`${API_BASE}/agents/${agentId}`),
             fetchJSON(`${API_BASE}/agents/${agentId}/status`),
-            falconPromise,
         ]);
         state.agentCache.set(agentId, agent);
-        state.falconData.set(agentId, falconResults);
-        state.agentInterfaces.set(agentId, Object.keys(agent.interfaces || {}));
-        state.agentMonitorMap.set(agentId, agent.monitor_map || {});
+        cacheAgentMetadata(agent);
         updateInterfaceControls();
         updateAgentMarker(agent);
         const html = buildAgentDetailHtml(agent, status);
         showDetailDrawer(html);
+        let falconResults = null;
+        if (state.falconScanning.has(agentId)) {
+            try {
+                falconResults = await fetchJSON(`${API_BASE}/falcon/${agentId}/scan/results`);
+            } catch (err) {
+                console.warn('Falcon results unavailable', err);
+                markFalconScanInactive(agentId);
+            }
+        } else {
+            state.falconData.delete(agentId);
+        }
         renderFalconTab(agentId, falconResults);
         attachFalconActionHandlers(agentId, falconResults);
+        await syncFalconScanState(agentId);
+        if (state.falconScanning.has(agentId)) {
+            startFalconPolling(agentId);
+        } else {
+            stopFalconPolling();
+        }
     } catch (err) {
-        showDetailDrawer(`<p>Error loading agent status: ${err.message}</p>`);
+        const cached = state.agentCache.get(agentId);
+        const status = { interfaces: cached?.interfaces || {}, bluetooth: {} };
+        const html = cached ? buildAgentDetailHtml(cached, status) : `<h3>Agent ${agentId}</h3>`;
+        showDetailDrawer(`
+            ${html}
+            <div class="detail-content-section detail-error">
+                <p>${formatAgentError(err)}</p>
+            </div>
+        `);
     }
+}
+
+function startFalconPolling(agentId) {
+    if (!agentId || !state.falconScanning.has(agentId)) return;
+    if (state.falconPollingAgent === agentId && state.falconPollHandle) return;
+    stopFalconPolling();
+    state.falconPollingAgent = agentId;
+    updateFalconIndicator();
+    const poll = async () => {
+        if (!state.falconScanning.has(agentId)) {
+            markFalconScanInactive(agentId);
+            return;
+        }
+        if (state.selectedAgentId !== agentId) {
+            return;
+        }
+        const alias = state.falconScanInterfaces.get(agentId);
+        try {
+            const statusPromise = alias ? fetchFalconStatus(agentId, alias) : Promise.resolve(null);
+            const results = await fetchJSON(`${API_BASE}/falcon/${agentId}/scan/results`);
+            const status = await statusPromise;
+            state.falconData.set(agentId, results);
+            renderFalconTab(agentId, results);
+            attachFalconActionHandlers(agentId, results);
+            if (status && !isFalconStatusRunning(status)) {
+                markFalconScanInactive(agentId);
+            }
+        } catch (err) {
+            console.warn('Falcon poll failed', err);
+            if (err?.status === 404 || !state.agentCache.has(agentId)) {
+                markFalconScanInactive(agentId);
+            }
+        }
+    };
+    (async () => {
+        await poll();
+        if (!state.falconScanning.has(agentId)) return;
+        state.falconPollHandle = setInterval(poll, 5000);
+    })();
+}
+
+function stopFalconPolling() {
+    if (state.falconPollHandle) {
+        clearInterval(state.falconPollHandle);
+        state.falconPollHandle = null;
+    }
+    state.falconPollingAgent = null;
+    updateFalconIndicator();
+}
+
+function updateFalconIndicator() {
+    const indicator = document.getElementById('falcon-poll-indicator');
+    if (!indicator) return;
+    const active = Boolean(state.falconPollingAgent);
+    indicator.textContent = active ? 'Auto-refreshing results…' : 'Idle';
+    indicator.classList.toggle('active', active);
+}
+
+function formatAgentError(err) {
+    const message = err?.message || String(err);
+    if (message.includes('Unable to reach')) {
+        return 'Agent is temporarily offline or unreachable. Check connectivity and ensure the agent service is running.';
+    }
+    return `Error loading agent status: ${message}`;
 }
 
 function updateAgentMarker(agent) {
@@ -406,6 +591,7 @@ function hideDetailDrawer() {
     elements.detailDrawer.classList.remove('open');
     document.body.classList.add('detail-collapsed');
     requestMapResize();
+    stopFalconPolling();
 }
 
 function buildAgentDetailHtml(agent, status) {
@@ -428,6 +614,32 @@ function buildAgentDetailHtml(agent, status) {
             <pre>${JSON.stringify(agent.monitor_map || {}, null, 2)}</pre>
         </details>
     `;
+}
+
+async function handleAgentDelete(agentId) {
+    if (!agentId) return;
+    if (!confirm('Remove this agent from the controller?')) return;
+    try {
+        await fetch(`${API_BASE}/agents/${agentId}`, { method: 'DELETE' });
+        const marker = state.agentMarkers.get(agentId);
+        if (marker && state.map && state.map.hasLayer(marker)) {
+            state.map.removeLayer(marker);
+        }
+        state.agentMarkers.delete(agentId);
+        markFalconScanInactive(agentId);
+        state.monitorOverrides.delete(agentId);
+        state.falconData.delete(agentId);
+        state.agentCache.delete(agentId);
+        state.agentInterfaces.delete(agentId);
+        state.agentMonitorMap.delete(agentId);
+        if (state.selectedAgentId === agentId) {
+            state.selectedAgentId = null;
+        }
+        hideDetailDrawer();
+        await loadAgents();
+    } catch (err) {
+        alert(`Unable to delete agent: ${err.message}`);
+    }
 }
 
 function renderFalconSection(falconResults) {
@@ -1480,6 +1692,81 @@ function logFalcon(message) {
     elements.falconStatusLog.textContent = `[${timestamp}] ${message}\n` + elements.falconStatusLog.textContent;
 }
 
+function getMonitorAliases(agentId) {
+    const monitorMap = state.agentMonitorMap.get(agentId) || {};
+    return Object.values(monitorMap).filter(Boolean);
+}
+
+function isFalconStatusRunning(status) {
+    if (!status || typeof status !== 'object') return false;
+    if (typeof status.running === 'boolean') return status.running;
+    if (typeof status.running === 'string') {
+        const normalized = status.running.toLowerCase();
+        if (normalized === 'true' || normalized === 'running' || normalized === '1') return true;
+        if (normalized === 'false' || normalized === 'stopped' || normalized === '0' || normalized === 'idle') return false;
+    }
+    const stateValue = status.state ?? status.status ?? status.scanstate ?? status.scanState;
+    if (typeof stateValue === 'string') {
+        const normalized = stateValue.toLowerCase();
+        if (normalized === 'running' || normalized === 'active') return true;
+        if (normalized === 'stopped' || normalized === 'idle' || normalized === 'complete') return false;
+    }
+    return false;
+}
+
+async function fetchFalconStatus(agentId, iface) {
+    if (!agentId || !iface) return null;
+    try {
+        return await fetchJSON(`${API_BASE}/falcon/${agentId}/scan/status?interface=${encodeURIComponent(iface)}`);
+    } catch (err) {
+        console.warn('Falcon status request failed', err);
+        return null;
+    }
+}
+
+function markFalconScanActive(agentId, alias) {
+    if (!agentId || !alias) return;
+    state.falconScanning.add(agentId);
+    state.falconScanInterfaces.set(agentId, alias);
+    updateFalconButtons(agentId);
+}
+
+function markFalconScanInactive(agentId) {
+    if (!agentId) return;
+    state.falconScanning.delete(agentId);
+    state.falconScanInterfaces.delete(agentId);
+    updateFalconButtons(agentId);
+    if (state.falconPollingAgent === agentId) {
+        stopFalconPolling();
+    }
+}
+
+async function syncFalconScanState(agentId) {
+    if (!agentId) return false;
+    const aliases = getMonitorAliases(agentId);
+    if (!aliases.length) {
+        markFalconScanInactive(agentId);
+        return false;
+    }
+    let observedStatus = false;
+    for (const alias of aliases) {
+        const status = await fetchFalconStatus(agentId, alias);
+        if (!status) {
+            continue;
+        }
+        observedStatus = true;
+        if (isFalconStatusRunning(status)) {
+            markFalconScanActive(agentId, alias);
+            return true;
+        }
+    }
+    if (!observedStatus) {
+        return state.falconScanning.has(agentId);
+    }
+    markFalconScanInactive(agentId);
+    return false;
+}
+
 function getSelectedAgentId() {
     const raw = elements.falconAgentSelect.value || elements.scanAgentSelect.value || `${state.selectedAgentId || ''}`;
     const id = parseInt(raw, 10);
@@ -1503,9 +1790,19 @@ function onFalconMonitorStart(event) {
         const agentId = getSelectedAgentId();
         const iface = document.getElementById('falcon-monitor-interface').value.trim();
         if (!iface) return alert('Enter a managed interface');
+        const monitorMap = state.agentMonitorMap.get(agentId) || {};
+        if (monitorMap[iface]) {
+            return alert(`${iface} is already in monitor mode. Stop it before starting again.`);
+        }
         postJSON(`${API_BASE}/falcon/${agentId}/monitor/start`, { interface: iface })
             .then(resp => {
                 logFalcon(`Monitor start ${iface} on ${agentId}: ${JSON.stringify(resp)}`);
+                const alias = resp?.interface || resp?.monitorinterface || resp?.monitorInterface || '';
+                if (alias) {
+                    updateLocalMonitorState(agentId, iface, alias);
+                    const monitorSelect = document.getElementById('falcon-scan-interface');
+                    if (monitorSelect) monitorSelect.value = alias;
+                }
                 return loadAgents();
             })
             .catch(err => alert(`Unable to start monitor mode: ${err.message}`));
@@ -1517,11 +1814,20 @@ function onFalconMonitorStart(event) {
 function onFalconMonitorStop() {
     try {
         const agentId = getSelectedAgentId();
-        const iface = document.getElementById('falcon-monitor-interface').value.trim();
-        if (!iface) return alert('Enter interface');
-        postJSON(`${API_BASE}/falcon/${agentId}/monitor/stop`, { interface: iface })
+        if (state.falconScanning.has(agentId)) {
+            alert('Stop the Falcon scan before exiting monitor mode.');
+            return;
+        }
+        const managed = document.getElementById('falcon-monitor-interface').value.trim();
+        if (!managed) return alert('Enter interface');
+        const monitorMap = state.agentMonitorMap.get(agentId) || {};
+        const alias = monitorMap[managed] || document.getElementById('falcon-scan-interface')?.value.trim() || managed;
+        postJSON(`${API_BASE}/falcon/${agentId}/monitor/stop`, { interface: alias })
             .then(resp => {
-                logFalcon(`Monitor stop ${iface} on ${agentId}: ${JSON.stringify(resp)}`);
+                logFalcon(`Monitor stop ${alias} on ${agentId}: ${JSON.stringify(resp)}`);
+                updateLocalMonitorState(agentId, managed, null);
+                const monitorSelect = document.getElementById('falcon-scan-interface');
+                if (monitorSelect) monitorSelect.value = '';
                 return loadAgents();
             })
             .catch(err => alert(`Unable to stop monitor mode: ${err.message}`));
@@ -1539,6 +1845,8 @@ function onFalconScanStart(event) {
         postJSON(`${API_BASE}/falcon/${agentId}/scan/start`, { interface: iface })
             .then(resp => {
                 logFalcon(`Falcon scan start ${iface} on ${agentId}: ${JSON.stringify(resp)}`);
+                markFalconScanActive(agentId, iface);
+                startFalconPolling(agentId);
                 return Promise.all([loadScans(), loadAgents()]);
             })
             .catch(err => alert(`Unable to start Falcon scan: ${err.message}`));
@@ -1555,6 +1863,7 @@ function onFalconScanStop() {
         postJSON(`${API_BASE}/falcon/${agentId}/scan/stop`, { interface: iface })
             .then(resp => {
                 logFalcon(`Falcon scan stop ${iface} on ${agentId}: ${JSON.stringify(resp)}`);
+                markFalconScanInactive(agentId);
                 return Promise.all([loadScans(), loadAgents()]);
             })
             .catch(err => alert(`Unable to stop Falcon scan: ${err.message}`));
@@ -1628,10 +1937,15 @@ function updateInterfaceControls() {
     const interfaces = state.agentInterfaces.get(agentId) || [];
     const monitorMap = state.agentMonitorMap.get(agentId) || {};
     populateSelect(document.getElementById('scan-interface'), interfaces, 'Select interface');
-    populateSelect(document.getElementById('falcon-monitor-interface'), interfaces, 'Select managed interface');
-    const monitorInterfaces = Object.values(monitorMap);
-    const fallback = interfaces.map(iface => monitorMap[iface] || `${iface}mon`);
-    populateSelect(document.getElementById('falcon-scan-interface'), monitorInterfaces.length ? monitorInterfaces : fallback, 'Select monitor interface');
+    const aliasSet = new Set(Object.values(monitorMap).filter(Boolean));
+    const managedOptions = Array.from(new Set([
+        ...interfaces.filter(name => !aliasSet.has(name)),
+        ...Object.keys(monitorMap),
+    ]));
+    populateSelect(document.getElementById('falcon-monitor-interface'), managedOptions, 'Select managed interface');
+    const monitorInterfaces = Object.values(monitorMap).filter(Boolean);
+    populateSelect(document.getElementById('falcon-scan-interface'), monitorInterfaces, 'Select monitor interface');
+    setFalconInterfaceDefaults(agentId);
 }
 
 function populateSelect(select, options, placeholder) {
@@ -1652,6 +1966,37 @@ function populateSelect(select, options, placeholder) {
         select.value = previous;
     } else if (options.length) {
         select.value = options[0];
+    } else {
+        select.value = '';
+    }
+}
+
+function setFalconInterfaceDefaults(agentId) {
+    const monitorMap = state.agentMonitorMap.get(agentId) || {};
+    const alias = Object.values(monitorMap).find(Boolean) || '';
+    const managedSelect = document.getElementById('falcon-monitor-interface');
+    if (managedSelect) {
+        if (alias && managedSelect.querySelector(`option[value="${alias}"]`)) {
+            managedSelect.value = alias;
+        } else if (!managedSelect.value && managedSelect.options.length > 1) {
+            managedSelect.value = managedSelect.options[1].value;
+        }
+    }
+    const monitorSelect = document.getElementById('falcon-scan-interface');
+    if (monitorSelect) {
+        if (alias && monitorSelect.querySelector(`option[value="${alias}"]`)) {
+            monitorSelect.value = alias;
+        } else {
+            monitorSelect.value = '';
+        }
+    }
+}
+
+function updateFalconButtons(agentId) {
+    const stopDisabled = state.falconScanning.has(agentId);
+    if (elements.falconMonitorStop) {
+        elements.falconMonitorStop.disabled = stopDisabled;
+        elements.falconMonitorStop.title = stopDisabled ? 'Stop the Falcon scan before exiting monitor mode.' : '';
     }
 }
 

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from ..agent_client import AgentClient, AgentHTTPError
 from ..dependencies import get_db
-from ..models import Agent
+from ..models import Agent, ScanJob
 from ..schemas import AgentCreate, AgentRead
 from ..services import create_agent, refresh_agent_metadata
 
@@ -41,6 +41,16 @@ def get_agent(agent_id: int, db: Session = Depends(get_db)):
     if not agent.interfaces_json or not agent.monitor_map_json or not agent.gps_json:
         refresh_agent_metadata(db, agent)
     return agent
+
+
+@router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_agent(agent_id: int, db: Session = Depends(get_db)):
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    db.query(ScanJob).filter(ScanJob.agent_id == agent.id).delete()
+    db.delete(agent)
+    db.flush()
 
 
 @router.get("/{agent_id}/interfaces")

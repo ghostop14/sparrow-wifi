@@ -134,6 +134,10 @@ def refresh_agent_metadata(session: Session, agent: Agent) -> Agent:
     try:
         interfaces = client.get_interfaces().get('interfaces', {})
         agent.interfaces = interfaces
+        if agent.monitor_map:
+            active_aliases = set(interfaces.keys())
+            cleaned = {managed: alias for managed, alias in agent.monitor_map.items() if alias in active_aliases}
+            agent.monitor_map = cleaned
     except Exception:
         pass
     try:
