@@ -1389,7 +1389,9 @@ function updateSpectrumChart(channelData) {
 
 function getSpectrumAgentId() {
     const id = parseInt(elements.spectrumAgentSelect?.value ?? '', 10);
-    return Number.isInteger(id) ? id : null;
+    if (Number.isInteger(id)) return id;
+    if (Number.isInteger(state.spectrumAgentId)) return state.spectrumAgentId;
+    return null;
 }
 
 function startSpectrumScan(band) {
@@ -1403,6 +1405,7 @@ function startSpectrumScan(band) {
     postJSON(`${API_BASE}/spectrum/${agentId}/start?band=${band}`)
         .then(() => {
             state.spectrumBand = band;
+            state.spectrumAgentId = agentId;
             setSpectrumStatus('Scan running');
             beginSpectrumPolling(agentId);
             updateSpectrumControls(true);

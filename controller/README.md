@@ -60,6 +60,8 @@ Open the **Spectrum** modal (top right button) to manage HackRF sweeps remotely:
 
 The X-axis intentionally mirrors whatever the agent returns (which can be raw Hz buckets or Wi‑Fi channels) so you can correlate with the textual data returned by `/spectrum/scanstatus`.  For finer resolution adjust `self.binWidth`, `minFreq`, and `maxFreq` in `sparrowhackrf.py` at the agent.
 
+Note: The spectrum modal is currently geared toward HackRF responses. Ubertooth 2.4 GHz specan data is not rendered in the chart yet even though the legacy endpoints are called.
+
 ## Documentation for Falcon controls
 
 - Use the **Falcon Monitor & Scan Control** section to toggle monitor mode per agent and start/stop dedicated Falcon scans.
