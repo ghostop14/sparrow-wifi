@@ -2146,7 +2146,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                             responsedict['scanrunning'] = hackrf.scanRunning24()
                         elif hackrf.scanRunning5():
                             channelData = hackrf.spectrum5ToChannels()
-                            responsedict['scanrunning'] = hackrf.scanRunning24()
+                            responsedict['scanrunning'] = hackrf.scanRunning5()
                         else:
                             channelData = {}  # Shouldn't be here but just in case.
                             responsedict['scanrunning'] = False
