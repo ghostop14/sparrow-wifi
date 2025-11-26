@@ -58,6 +58,7 @@ class Agent(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     scans = relationship("ScanJob", back_populates="agent")
+    push_payloads = relationship("PushPayload", back_populates="agent")
 
     @property
     def capabilities(self) -> List[str]:
@@ -119,3 +120,23 @@ class ScanJob(Base):
             self.response_payload = None
         else:
             self.response_payload = json.loads(json.dumps(data))
+
+
+class PushPayload(Base):
+    __tablename__ = "push_payloads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agent_id = Column(Integer, ForeignKey("agents.id"), nullable=False)
+    scan_type = Column(Enum(ScanType), nullable=False)
+    interface = Column(String(120), nullable=True)
+    payload = Column(_json_type, nullable=False)
+    source = Column(String(32), default="push", nullable=False)
+    received_at = Column(DateTime, default=datetime.utcnow)
+
+    agent = relationship("Agent", back_populates="push_payloads")
+
+    def set_payload(self, data: Dict[str, Any]) -> None:
+        if data is None:
+            self.payload = None
+        else:
+            self.payload = json.loads(json.dumps(data))

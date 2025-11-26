@@ -281,6 +281,26 @@ def hackrf_scan(action: str):
         return Response(content=compressed, media_type='application/json', headers={"Content-Encoding": "gzip"})
     return {"errcode": 1, "errmsg": "Unknown action"}
 
+# Aliases to match real agent endpoints expected by the controller
+@app.get("/spectrum/scanstart24")
+def hackrf_scan_start24():
+    return hackrf_scan("start24")
+
+
+@app.get("/spectrum/scanstart5")
+def hackrf_scan_start5():
+    return hackrf_scan("start5")
+
+
+@app.get("/spectrum/scanstop")
+def hackrf_scan_stop():
+    return hackrf_scan("stop")
+
+
+@app.get("/spectrum/scanstatus")
+def hackrf_scan_status():
+    return hackrf_scan("status")
+
 
 def fake_channel_data(band: str) -> Dict[int, float]:
     if band == '5':

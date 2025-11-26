@@ -59,6 +59,28 @@ class ScanRead(BaseModel):
         from_attributes = True
 
 
+class PushIngestRequest(BaseModel):
+    agent_id: Optional[int] = None
+    agent_name: Optional[str] = None
+    scan_type: ScanType
+    interface: Optional[str] = None
+    payload: Dict[str, Any]
+    received_at: Optional[datetime] = None
+
+
+class PushRead(BaseModel):
+    id: int
+    agent_id: int
+    scan_type: ScanType
+    interface: Optional[str] = None
+    payload: Dict[str, Any]
+    source: str
+    received_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class FalconMonitorRequest(BaseModel):
     interface: str
 

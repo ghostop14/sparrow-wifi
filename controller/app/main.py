@@ -14,6 +14,7 @@ from .database import Base, engine, ensure_schema
 from .exporters import setup_exporters
 from .notifications import set_notification_loop, setup_notifications
 from .routers import agents, falcon, scans, spectrum, stream
+from .routers import ingest
 
 settings = get_settings()
 
@@ -31,6 +32,7 @@ app.include_router(agents.router)
 app.include_router(scans.router)
 app.include_router(falcon.router)
 app.include_router(spectrum.router)
+app.include_router(ingest.router)
 app.include_router(stream.router)
 
 frontend_dir = Path(__file__).resolve().parent.parent / "frontend"

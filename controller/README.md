@@ -13,6 +13,7 @@ This directory contains an HTTP controller that aggregates multiple `sparrowwifi
 - Bluetooth results tab with live map markers plus per-agent Falcon panels for networks/clients and inline actions (deauth/capture)
 - Spectrum/HackRF modal that can launch 2.4 GHz/5 GHz sweeps or snapshots from the browser
 - Leave hooks that can later forward the aggregated data into Elastic
+- Optional ingest endpoint so agents can push Wi‑Fi/Falcon/Bluetooth results directly into the controller (pull remains available)
 
 ## Running the controller
 ```bash

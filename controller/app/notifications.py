@@ -19,6 +19,7 @@ SUBSCRIBED_EVENTS = (
     'scan.progress',
     'scan.completed',
     'scan.failed',
+    'ingest.received',
 )
 
 

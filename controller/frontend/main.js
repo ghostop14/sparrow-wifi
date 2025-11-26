@@ -43,6 +43,7 @@ const state = {
 };
 
 const SPECTRUM_SNAPSHOT_DELAY_MS = 1200;
+const LOCATION_WINDOW_MS = 24 * 60 * 60 * 1000; // keep location history for 24h
 
 function bootstrap() {
     elements.agentList = document.getElementById('agent-list');
@@ -932,21 +933,35 @@ function summarizeScan(scan) {
 
 function ingestScanPayload(agentId, scanType, payload, scanId) {
     if (!payload) return;
+    const scanCreatedAt = payload.created_at || payload.createdAt || null;
     if (Array.isArray(payload.networks)) {
-        addOrUpdateNetworks(payload.networks, agentId, scanId, scanType);
+        addOrUpdateNetworks(payload.networks, agentId, scanId, scanType, scanCreatedAt);
     }
     if (Array.isArray(payload.clients)) {
-        addOrUpdateNetworks(payload.clients, agentId, scanId, scanType, { label: 'client' });
+        addOrUpdateNetworks(payload.clients, agentId, scanId, scanType, scanCreatedAt, { label: 'client' });
     }
     if (Array.isArray(payload.devices)) {
-        addOrUpdateBluetooth(payload.devices, agentId, scanId, scanType);
+        addOrUpdateBluetooth(payload.devices, agentId, scanId, scanType, scanCreatedAt);
     }
 }
 
-function addOrUpdateNetworks(items, agentId, scanId, scanType) {
+function addOrUpdateNetworks(items, agentId, scanId, scanType, scanCreatedAt = null, options = {}) {
     const agentName = state.agentCache.get(agentId)?.name || `Agent ${agentId}`;
     const agentGps = state.agentCache.get(agentId)?.gps?.gpspos || null;
-    const now = Date.now();
+    const parseTimestamp = (value) => {
+        if (value instanceof Date) return value.getTime();
+        if (typeof value === 'number' && Number.isFinite(value)) return value;
+        if (typeof value === 'string' && value.length) {
+            const parsed = Date.parse(value);
+            if (!Number.isNaN(parsed)) return parsed;
+        }
+        return null;
+    };
+    const scanTs = parseTimestamp(scanCreatedAt) || Date.now();
+    const clampTs = (ts) => {
+        if (!ts) return scanTs;
+        return ts > scanTs ? scanTs : ts;
+    };
     items.forEach(item => {
         const mac = (item.macAddr || item.macaddr || '').toLowerCase();
         if (!mac) return;
@@ -976,7 +991,7 @@ function addOrUpdateNetworks(items, agentId, scanId, scanType) {
                 lon: sampleLon,
                 signal,
                 source: locationSource,
-                timestamp: now,
+                timestamp: clampTs(parseTimestamp(item.lastseen ?? item.lastSeen ?? item.firstseen ?? item.firstSeen)),
             });
         }
         const loc = computeNetworkLocation(mac);
@@ -985,9 +1000,10 @@ function addOrUpdateNetworks(items, agentId, scanId, scanType) {
         const finalLon = loc.hasPosition ? loc.lon : prev?.lon ?? null;
         const finalSource = loc.hasPosition ? loc.source : prev?.locationSource ?? 'none';
         const contributors = loc.hasPosition ? loc.contributors : prev?.contributors ?? 0;
+        const seenTs = clampTs(parseTimestamp(item.lastseen ?? item.lastSeen ?? item.firstseen ?? item.firstSeen));
         const info = {
             mac,
-            ssid: item.ssid || item.name || 'Unknown',
+            ssid: item.ssid || item.name || options.label || 'Unknown',
             channel: item.channel || '',
             signal: item.signal || item.power || '',
             lat: finalLat,
@@ -995,7 +1011,8 @@ function addOrUpdateNetworks(items, agentId, scanId, scanType) {
             hasGps: finalLat !== null && finalLon !== null,
             locationSource: finalSource,
             contributors,
-            lastSeen: new Date().toISOString(),
+            lastSeen: new Date(seenTs).toISOString(),
+            scanCreatedAt: new Date(scanTs).toISOString(),
             agentId,
             agentName,
             scanId,
@@ -1087,8 +1104,22 @@ function updateNetworkList() {
     renderNetworkTable();
 }
 
-function addOrUpdateBluetooth(devices, agentId, scanId, scanType) {
+function addOrUpdateBluetooth(devices, agentId, scanId, scanType, scanCreatedAt = null) {
     const agentName = state.agentCache.get(agentId)?.name || `Agent ${agentId}`;
+    const parseTimestamp = (value) => {
+        if (value instanceof Date) return value.getTime();
+        if (typeof value === 'number' && Number.isFinite(value)) return value;
+        if (typeof value === 'string' && value.length) {
+            const parsed = Date.parse(value);
+            if (!Number.isNaN(parsed)) return parsed;
+        }
+        return null;
+    };
+    const scanTs = parseTimestamp(scanCreatedAt) || Date.now();
+    const clampTs = (ts) => {
+        if (!ts) return scanTs;
+        return ts > scanTs ? scanTs : ts;
+    };
     devices.forEach(device => {
         const mac = (device.mac || device.macAddr || '').toLowerCase();
         if (!mac) return;
@@ -1112,17 +1143,19 @@ function addOrUpdateBluetooth(devices, agentId, scanId, scanType) {
                 lon: finalLon,
                 signal: device.rssi ?? device.signal ?? null,
                 source,
-                timestamp: Date.now(),
+                timestamp: clampTs(parseTimestamp(device.lastseen ?? device.lastSeen ?? device.firstseen ?? device.firstSeen)),
             });
         }
         const loc = computeBluetoothLocation(mac);
         const prev = state.bluetoothIndex.get(mac);
         const hasGps = loc.hasPosition || (prev?.lat !== undefined && prev.lat !== null);
+        const seenTs = clampTs(parseTimestamp(device.lastseen ?? device.lastSeen ?? device.firstseen ?? device.firstSeen));
         const info = {
             mac,
             name: device.name || 'Unknown',
             rssi: device.rssi ?? device.signal ?? '',
-            lastSeen: new Date().toISOString(),
+            lastSeen: new Date(seenTs).toISOString(),
+            scanCreatedAt: new Date(scanTs).toISOString(),
             agentId,
             agentName,
             scanId,
@@ -1157,6 +1190,8 @@ function renderNetworkTable() {
     rows.forEach(net => {
         const row = document.createElement('tr');
         const locationLabel = net.hasGps ? formatLocationLabel(net.locationSource) : 'No';
+        const scanTime = net.scanCreatedAt ? new Date(net.scanCreatedAt).toLocaleString() : 'n/a';
+        const lastSeen = net.lastSeen ? new Date(net.lastSeen).toLocaleString() : 'n/a';
         row.innerHTML = `
             <td>${net.ssid}</td>
             <td>${net.mac}</td>
@@ -1164,7 +1199,7 @@ function renderNetworkTable() {
             <td>${net.channel}</td>
             <td>${net.signal}</td>
             <td>${locationLabel}</td>
-            <td>${new Date(net.lastSeen).toLocaleString()}</td>`;
+            <td title="Scan: ${scanTime}">${lastSeen}</td>`;
         row.addEventListener('click', () => showNetworkDetail(net));
         elements.networkTableBody.appendChild(row);
     });
@@ -1173,6 +1208,8 @@ function renderNetworkTable() {
 
 function showNetworkDetail(net) {
     const coords = formatCoordinates(net.lat, net.lon);
+    const scanTime = net.scanCreatedAt ? new Date(net.scanCreatedAt).toLocaleString() : 'n/a';
+    const lastSeen = net.lastSeen ? new Date(net.lastSeen).toLocaleString() : 'n/a';
     const html = `
         <h3>${net.ssid}</h3>
         <div class="detail-content-section">
@@ -1185,7 +1222,8 @@ function showNetworkDetail(net) {
             <strong>Location:</strong> ${coords || 'N/A'}
         </div>
         <div class="detail-content-section">
-            <strong>Last seen:</strong> ${new Date(net.lastSeen).toLocaleString()}<br>
+            <strong>Last seen (agent):</strong> ${lastSeen}<br>
+            <strong>Scan time (controller):</strong> ${scanTime}<br>
             <strong>Scan:</strong> #${net.scanId} (${net.scanType})
         </div>`;
     showDetailDrawer(html);
@@ -1204,13 +1242,15 @@ function renderBluetoothTable() {
     rows.forEach(device => {
         const row = document.createElement('tr');
         const locationLabel = device.gpsValid ? formatLocationLabel(device.locationSource) : 'No';
+        const scanTime = device.scanCreatedAt ? new Date(device.scanCreatedAt).toLocaleString() : 'n/a';
+        const lastSeen = device.lastSeen ? new Date(device.lastSeen).toLocaleString() : 'n/a';
         row.innerHTML = `
             <td>${device.name}</td>
             <td>${device.mac}</td>
             <td>${device.agentName}</td>
             <td>${device.rssi}</td>
             <td>${locationLabel}</td>
-            <td>${new Date(device.lastSeen).toLocaleString()}</td>`;
+            <td title="Scan: ${scanTime}">${lastSeen}</td>`;
         row.addEventListener('click', () => showBluetoothDetail(device));
         elements.bluetoothTableBody.appendChild(row);
     });
@@ -1219,6 +1259,8 @@ function renderBluetoothTable() {
 
 function showBluetoothDetail(device) {
     const coords = formatCoordinates(device.lat, device.lon);
+    const scanTime = device.scanCreatedAt ? new Date(device.scanCreatedAt).toLocaleString() : 'n/a';
+    const lastSeen = device.lastSeen ? new Date(device.lastSeen).toLocaleString() : 'n/a';
     const html = `
         <h3>${device.name}</h3>
         <div class="detail-content-section">
@@ -1230,7 +1272,8 @@ function showBluetoothDetail(device) {
             <strong>Location:</strong> ${coords || 'N/A'}
         </div>
         <div class="detail-content-section">
-            <strong>Last seen:</strong> ${new Date(device.lastSeen).toLocaleString()}<br>
+            <strong>Last seen (agent):</strong> ${lastSeen}<br>
+            <strong>Scan time (controller):</strong> ${scanTime}<br>
             <strong>Scan:</strong> #${device.scanId} (${device.scanType})
         </div>`;
     showDetailDrawer(html);
@@ -1488,7 +1531,7 @@ function updateSpectrumControls(isRunning) {
 
 function recordNetworkSample(mac, sample) {
     const existing = state.networkObservations.get(mac) || [];
-    const cutoff = Date.now() - 120000;
+    const cutoff = Date.now() - LOCATION_WINDOW_MS;
     const filtered = existing.filter(entry => entry.timestamp >= cutoff);
     filtered.push(sample);
     state.networkObservations.set(mac, filtered);
@@ -1496,7 +1539,7 @@ function recordNetworkSample(mac, sample) {
 
 function computeNetworkLocation(mac) {
     const samples = state.networkObservations.get(mac) || [];
-    const cutoff = Date.now() - 120000;
+    const cutoff = Date.now() - LOCATION_WINDOW_MS;
     const recent = samples.filter(entry => entry.timestamp >= cutoff && Number.isFinite(entry.lat) && Number.isFinite(entry.lon));
     state.networkObservations.set(mac, recent);
     if (!recent.length) {
@@ -1547,7 +1590,7 @@ function computeNetworkLocation(mac) {
 
 function recordBluetoothSample(mac, sample) {
     const existing = state.bluetoothObservations.get(mac) || [];
-    const cutoff = Date.now() - 120000;
+    const cutoff = Date.now() - LOCATION_WINDOW_MS;
     const filtered = existing.filter(entry => entry.timestamp >= cutoff);
     filtered.push(sample);
     state.bluetoothObservations.set(mac, filtered);
@@ -1555,7 +1598,7 @@ function recordBluetoothSample(mac, sample) {
 
 function computeBluetoothLocation(mac) {
     const samples = state.bluetoothObservations.get(mac) || [];
-    const cutoff = Date.now() - 120000;
+    const cutoff = Date.now() - LOCATION_WINDOW_MS;
     const recent = samples.filter(entry => entry.timestamp >= cutoff && Number.isFinite(entry.lat) && Number.isFinite(entry.lon));
     state.bluetoothObservations.set(mac, recent);
     if (!recent.length) {
