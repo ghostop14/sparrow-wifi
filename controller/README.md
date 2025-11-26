@@ -62,6 +62,14 @@ The X-axis intentionally mirrors whatever the agent returns (which can be raw Hz
 
 Note: The spectrum modal is currently geared toward HackRF responses. Ubertooth 2.4 GHz specan data is not rendered in the chart yet even though the legacy endpoints are called.
 
+## Screenshots
+
+![Dashboard](images/sparrow-dashboard.png)
+
+![Falcon](images/sparrow-falcon.png)
+
+![Spectrum 5 GHz](images/sparrow-spectrum-5g.png)
+
 ## Documentation for Falcon controls
 
 - Use the **Falcon Monitor & Scan Control** section to toggle monitor mode per agent and start/stop dedicated Falcon scans.
