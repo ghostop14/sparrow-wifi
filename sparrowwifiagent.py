@@ -22,6 +22,8 @@ import sys
 import datetime
 import json
 import re
+import queue
+import requests
 
 import argparse
 import configparser
@@ -84,6 +86,7 @@ runningcfg = None
 
 recordThread = None
 announceThread = None
+controllerPushClient = None
 
 # ------   Global functions ------------
 def stringtobool(instr):
@@ -211,6 +214,25 @@ def updateRunningConfig(newCfg):
         else:
             # start will check if it's already running
             startRecord(newCfg.recordInterface)
+
+    if len(newCfg.controllerAgentName) == 0:
+        try:
+            newCfg.controllerAgentName = os.uname()[1]
+        except:
+            newCfg.controllerAgentName = 'unknown'
+
+    pushChanged = (
+        runningcfg.pushEnabled != newCfg.pushEnabled or
+        runningcfg.controllerURL != newCfg.controllerURL or
+        runningcfg.controllerAPIKey != newCfg.controllerAPIKey or
+        runningcfg.controllerAgentName != newCfg.controllerAgentName
+    )
+
+    if pushChanged:
+        if newCfg.pushEnabled and len(newCfg.controllerURL) > 0:
+            startPushClient(newCfg)
+        else:
+            stopPushClient()
 
     # Finally swap out the config
     runningcfg = newCfg
@@ -381,6 +403,10 @@ class AgentConfigSettings(object):
         self.mavlinkGPS = ""
         self.ipAllowedList = ""
         self.allowCors = False
+        self.controllerURL = ""
+        self.controllerAPIKey = ""
+        self.controllerAgentName = ""
+        self.pushEnabled = False
 
     def __str__(self):
         retVal = "Cancel Start: " + str(self.cancelStart) + "\n"
@@ -392,6 +418,9 @@ class AgentConfigSettings(object):
         retVal += "Mavlink GPS: " + self.mavlinkGPS + "\n"
         retVal += "IP Allowed List: " + self.ipAllowedList + "\n"
         retVal += "Allow CORS: " + str(self.allowCors) + "\n"
+        retVal += "Controller URL: " + self.controllerURL + "\n"
+        retVal += "Controller Agent Name: " + self.controllerAgentName + "\n"
+        retVal += "Push Enabled: " + str(self.pushEnabled) + "\n"
 
         return retVal
 
@@ -423,6 +452,18 @@ class AgentConfigSettings(object):
         if self.allowCors != obj.allowCors:
             return False
 
+        if self.controllerURL != obj.controllerURL:
+            return False
+
+        if self.controllerAPIKey != obj.controllerAPIKey:
+            return False
+
+        if self.controllerAgentName != obj.controllerAgentName:
+            return False
+
+        if self.pushEnabled != obj.pushEnabled:
+            return False
+
         return True
 
     def __ne__(self, other):
@@ -439,6 +480,10 @@ class AgentConfigSettings(object):
         dictjson['mavlinkgps'] = self.mavlinkGPS
         dictjson['allowedips'] = self.ipAllowedList
         dictjson['allowcors'] = str(self.allowCors)
+        dictjson['controllerurl'] = self.controllerURL
+        dictjson['controllerapikey'] = self.controllerAPIKey
+        dictjson['controlleragentname'] = self.controllerAgentName
+        dictjson['pushenabled'] = str(self.pushEnabled)
 
         return dictjson
 
@@ -458,6 +503,10 @@ class AgentConfigSettings(object):
             self.ipAllowedList = dictjson['allowedips']
             # if 'allowcors' in dictjson.keys():
             self.allowCors = stringtobool(dictjson['allowcors'])
+            self.controllerURL = dictjson.get('controllerurl', '')
+            self.controllerAPIKey = dictjson.get('controllerapikey', '')
+            self.controllerAgentName = dictjson.get('controlleragentname', '')
+            self.pushEnabled = stringtobool(dictjson.get('pushenabled', 'False'))
             # else:
             #     print("allowCors not set in dictjson!")
         except Exception as e:
@@ -507,6 +556,14 @@ class AgentConfigSettings(object):
                             self.ipAllowedList = cfgParser.get(section, option)
                         elif option == 'allowcors':
                             self.allowCors = stringtobool(cfgParser.get(section, option))
+                        elif option == 'controllerurl':
+                            self.controllerURL = cfgParser.get(section, option)
+                        elif option == 'controllerapikey':
+                            self.controllerAPIKey = cfgParser.get(section, option)
+                        elif option == 'controlleragentname':
+                            self.controllerAgentName = cfgParser.get(section, option)
+                        elif option == 'pushenabled':
+                            self.pushEnabled = stringtobool(cfgParser.get(section, option))
                     except:
                         print("exception on %s!" % option)
                         settings[option] = None
@@ -517,6 +574,126 @@ class AgentConfigSettings(object):
             return False
 
         return True
+
+# ------------------  Controller Push Client ------------------------------
+class ControllerPushClient(Thread):
+    def __init__(self, cfg):
+        super(ControllerPushClient, self).__init__()
+        self.daemon = True
+        self.signalStop = False
+        self.threadRunning = False
+        self.queue = queue.Queue(maxsize=200)
+        self.controllerURL = ""
+        self.controllerAPIKey = ""
+        self.controllerAgentName = ""
+        self.pushEnabled = False
+        self.configure(cfg)
+
+    def configure(self, cfg):
+        if cfg is None:
+            return
+        controllerURL = cfg.controllerURL if cfg.controllerURL else ""
+        self.controllerURL = controllerURL.rstrip('/')
+        self.controllerAPIKey = cfg.controllerAPIKey if cfg.controllerAPIKey else ""
+        self.controllerAgentName = cfg.controllerAgentName if cfg.controllerAgentName else ""
+        self.pushEnabled = cfg.pushEnabled and len(self.controllerURL) > 0
+
+    def stop(self):
+        self.signalStop = True
+        try:
+            self.queue.put_nowait(None)
+        except:
+            pass
+
+    def enqueue(self, scan_type, interface, payload):
+        if not self.pushEnabled or len(self.controllerURL) == 0:
+            return
+        item = {
+            'scan_type': scan_type,
+            'interface': interface,
+            'payload': payload,
+            'attempts': 0,
+            'received_at': datetime.datetime.utcnow().isoformat() + 'Z'
+        }
+        try:
+            self.queue.put_nowait(item)
+        except queue.Full:
+            print('Controller push queue is full. Dropping payload.')
+
+    def run(self):
+        self.threadRunning = True
+        while (not self.signalStop):
+            try:
+                item = self.queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+
+            if item is None:
+                try:
+                    self.queue.task_done()
+                except:
+                    pass
+                continue
+
+            endpoint = self.controllerURL + '/api/ingest'
+            headers = {'Content-Type': 'application/json'}
+            if len(self.controllerAPIKey) > 0:
+                headers['X-API-Key'] = self.controllerAPIKey
+
+            body = {
+                'agent_name': self.controllerAgentName,
+                'scan_type': item['scan_type'],
+                'interface': item['interface'],
+                'payload': item['payload'],
+                'received_at': item['received_at'],
+            }
+
+            try:
+                response = requests.post(endpoint, json=body, headers=headers, timeout=5)
+                if response.status_code >= 400:
+                    raise RuntimeError('Bad status code: ' + str(response.status_code))
+            except Exception as e:
+                item['attempts'] += 1
+                if item['attempts'] < 3 and (not self.signalStop):
+                    try:
+                        self.queue.put_nowait(item)
+                    except queue.Full:
+                        print('Controller push queue is full. Dropping payload.')
+                else:
+                    print('Failed to push payload to controller: ' + str(e))
+            finally:
+                self.queue.task_done()
+
+        self.threadRunning = False
+
+
+def startPushClient(cfg):
+    global controllerPushClient
+
+    if controllerPushClient and controllerPushClient.is_alive():
+        controllerPushClient.configure(cfg)
+        return
+
+    if cfg.pushEnabled and len(cfg.controllerURL) > 0:
+        controllerPushClient = ControllerPushClient(cfg)
+        controllerPushClient.start()
+    else:
+        controllerPushClient = None
+
+
+def stopPushClient():
+    global controllerPushClient
+
+    if controllerPushClient:
+        controllerPushClient.stop()
+        controllerPushClient = None
+
+
+def queuePushPayload(scan_type, interface, payload):
+    global controllerPushClient
+
+    if controllerPushClient and controllerPushClient.pushEnabled:
+        controllerPushClient.enqueue(scan_type, interface, payload)
 
 # ------------------  Agent auto scan thread  ------------------------------
 class AutoAgentScanThread(Thread):
@@ -818,6 +995,12 @@ class SparrowWiFiAgent(object):
         global bluetooth
         global falconWiFiRemoteAgent
 
+        try:
+            port = int(port)
+            assert 1 <= port <= 65535
+        except Exception as e:
+            raise SystemExit(f"Invalid port '{port}': must be 1–65535 integer") from e
+            
         server_address = ('', port)
         try:           # httpd = HTTPServer.HTTPServer(server_address, SparrowWiFiAgentRequestHandler)
             httpd = MultithreadHTTPServer(server_address, SparrowWiFiAgentRequestHandler)
@@ -867,7 +1050,7 @@ class MultithreadHTTPServer(ThreadingMixIn, HTTPServer.HTTPServer):
 class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         global debugHTTP
-
+        
         if not debugHTTP:
             return
         else:
@@ -1614,6 +1797,12 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     curLock.release()
 
                 s.wfile.write(jsonstr.encode("UTF-8"))
+
+                try:
+                    payload = json.loads(jsonstr)
+                    queuePushPayload('wifi', curInterface, payload)
+                except:
+                    pass
             elif s.path == '/gps/status':
                 jsondict={}
 
@@ -1872,6 +2061,11 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                         s.wfile.write(jsonstr.encode("UTF-8"))
                     except:
                         pass
+                    try:
+                        payload = json.loads(jsonstr)
+                        queuePushPayload('bluetooth', '', payload)
+                    except:
+                        pass
             elif s.path == '/bluetooth/running':
                 if not hasBluetooth:
                     responsedict = {}
@@ -1952,7 +2146,7 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                             responsedict['scanrunning'] = hackrf.scanRunning24()
                         elif hackrf.scanRunning5():
                             channelData = hackrf.spectrum5ToChannels()
-                            responsedict['scanrunning'] = hackrf.scanRunning24()
+                            responsedict['scanrunning'] = hackrf.scanRunning5()
                         else:
                             channelData = {}  # Shouldn't be here but just in case.
                             responsedict['scanrunning'] = False
@@ -2451,6 +2645,12 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                         s.wfile.write(jsonstr.encode("UTF-8"))
                     except:
                         pass
+
+                    try:
+                        payload = json.loads(jsonstr)
+                        queuePushPayload('falcon', '', payload)
+                    except:
+                        pass
             elif '/falcon/stopalldeauths' in s.path:
                 if not hasFalcon:
                     responsedict = {}
@@ -2565,7 +2765,7 @@ def checkForBluetooth():
 # ----------------- Main -----------------------------
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description='Sparrow-wifi agent')
-    argparser.add_argument('--port', help='Port for HTTP server to listen on.  Default is 8020.', default=8020, required=False)
+    argparser.add_argument('--port', type=int, help='Port for HTTP server to listen on.  Default is 8020.', default=8020, required=False)
     argparser.add_argument('--allowedips', help="IP addresses allowed to connect to this agent.  Default is any.  This can be a comma-separated list for multiple IP addresses", default='', required=False)
     argparser.add_argument('--staticcoord', help="Use user-defined lat,long,altitude(m) rather than GPS.  Ex: 40.1,-75.3,150", default='', required=False)
     argparser.add_argument('--mavlinkgps', help="Use Mavlink (drone) for GPS.  Options are: '3dr' for a Solo, 'sitl' for local simulator, or full connection string ('udp/tcp:<ip>:<port>' such as: 'udp:10.1.1.10:14550')", default='', required=False)
@@ -2643,7 +2843,7 @@ if __name__ == '__main__':
             for option in options:
                 try:
                     if (option == 'sendannounce' or option == 'userpileds' or
-                        option == 'cancelstart' or option == 'allowcors'):
+                        option == 'cancelstart' or option == 'allowcors' or option == 'pushenabled'):
                         settings[option] = stringtobool(cfgParser.get(section, option))
                     else:
                         settings[option] = cfgParser.get(section, option)
@@ -2715,6 +2915,41 @@ if __name__ == '__main__':
 
     runningcfg.allowCors = allowCors
     print("Allow CORS: " + str(runningcfg.allowCors))
+
+    try:
+        defaultAgentName = os.uname()[1]
+    except:
+        defaultAgentName = 'unknown'
+
+    if 'controllerurl' not in settings.keys():
+        controllerURL = ''
+    else:
+        controllerURL = settings['controllerurl']
+
+    runningcfg.controllerURL = controllerURL
+
+    if 'controllerapikey' not in settings.keys():
+        controllerAPIKey = ''
+    else:
+        controllerAPIKey = settings['controllerapikey']
+
+    runningcfg.controllerAPIKey = controllerAPIKey
+
+    if 'controlleragentname' not in settings.keys():
+        controllerAgentName = defaultAgentName
+    else:
+        controllerAgentName = settings['controlleragentname']
+        if len(controllerAgentName) == 0:
+            controllerAgentName = defaultAgentName
+
+    runningcfg.controllerAgentName = controllerAgentName
+
+    if 'pushenabled' not in settings.keys():
+        pushEnabled = False
+    else:
+        pushEnabled = settings['pushenabled']
+
+    runningcfg.pushEnabled = pushEnabled
 
     # Now start logic
 
@@ -2811,6 +3046,9 @@ if __name__ == '__main__':
     if len(runningcfg.recordInterface) > 0:
         startRecord(runningcfg.recordInterface)
 
+    if runningcfg.pushEnabled and len(runningcfg.controllerURL) > 0:
+        startPushClient(runningcfg)
+
     # -------------- Run HTTP Server / Main Loop--------------
     server = SparrowWiFiAgent()
     server.run(runningcfg.port)
@@ -2828,6 +3066,7 @@ if __name__ == '__main__':
         vehicle.close()
 
     stopAnnounceThread()
+    stopPushClient()
 
     if runningcfg.useRPiLEDs:
         SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_OFF)

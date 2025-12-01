@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Sparrow Multi-Agent Controller</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+    <link rel="stylesheet" href="/static/styles.css?v=2" />
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="sidebar" id="control-panel">
+            <div class="brand">
+                <h1>Sparrow Controller</h1>
+                <div class="brand-actions">
+                    <button id="open-agent-modal">+ Add Agent</button>
+                </div>
+            </div>
+            <header class="main-header">
+                <h2>Live Operations</h2>
+                <p>Manage multiple <code>sparrowwifiagent</code> nodes, run scans, and watch telemetry in real time.</p>
+            </header>
+            <div class="sidebar-section">
+                <div class="sidebar-tabs">
+                    <button class="sidebar-tab-button active" data-sidebar-tab="agents-panel">Agents</button>
+                    <button class="sidebar-tab-button" data-sidebar-tab="scan-panel">Quick Scan</button>
+                </div>
+                <div class="sidebar-tab-panel active" id="agents-panel">
+                    <div id="agent-list"></div>
+                </div>
+                <div class="sidebar-tab-panel" id="scan-panel">
+                    <form id="scan-form">
+                        <label>
+                            Agent
+                            <select id="scan-agent"></select>
+                        </label>
+                        <label>
+                            Type
+                            <select id="scan-type">
+                                <option value="wifi">Wi-Fi</option>
+                                <option value="bluetooth">Bluetooth</option>
+                            </select>
+                        </label>
+                        <label>
+                            Interface
+                            <select id="scan-interface"></select>
+                        </label>
+                        <label>
+                            Channels
+                            <input type="text" id="scan-channels" placeholder="1,6,11" />
+                        </label>
+                        <label>
+                            Extras (JSON)
+                            <input type="text" id="scan-extras" placeholder='{"duration":5}' />
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="scan-continuous" />
+                            Continuous scan
+                        </label>
+                        <label>
+                            Interval (seconds)
+                            <input type="number" id="scan-interval" value="10" min="2" />
+                        </label>
+                        <button type="submit">Launch</button>
+                    </form>
+                    <button type="button" id="open-spectrum-modal">Spectrum View</button>
+                    <div id="continuous-list"></div>
+                </div>
+            </div>
+        </aside>
+        <section class="map-panel">
+            <div class="map-stage">
+                <div id="map"></div>
+            </div>
+            <button id="sidebar-toggle" class="sidebar-toggle">Hide Panel</button>
+            <div class="layer-toggle">
+                <label><input type="checkbox" id="toggle-wifi" checked /> Wi-Fi</label>
+                <label><input type="checkbox" id="toggle-bluetooth" checked /> Bluetooth</label>
+                <label><input type="checkbox" id="toggle-agents" checked /> Agents</label>
+            </div>
+            <div class="tabs-overlay" id="tabs-overlay">
+                <button id="tabs-collapse" class="overlay-toggle" aria-label="Collapse data drawer">Collapse</button>
+                <div class="tabs">
+                    <button class="tab-button active" data-tab="wifi-tab">Wi-Fi</button>
+                    <button class="tab-button" data-tab="bluetooth-tab">Bluetooth</button>
+                    <button class="tab-button" data-tab="scans-tab">Scan Jobs</button>
+                    <button class="tab-button" data-tab="falcon-tab">Falcon</button>
+                </div>
+                <div class="tab-panels">
+                    <div class="tab-panel active" id="wifi-tab">
+                        <div class="table-controls">
+                            <div>
+                                <strong id="wifi-count">0</strong> networks
+                            </div>
+                            <div class="pagination">
+                                <button id="wifi-prev">Prev</button>
+                                <span id="wifi-page">1</span>
+                                <button id="wifi-next">Next</button>
+                            </div>
+                        </div>
+                        <table id="network-table">
+                            <thead>
+                                <tr>
+                                    <th>SSID</th>
+                                    <th>MAC</th>
+                                    <th>Agent</th>
+                                    <th>Channel</th>
+                                    <th>Signal</th>
+                                    <th>Location</th>
+                                    <th>Last Seen</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    <div class="tab-panel" id="bluetooth-tab">
+                        <div class="table-controls">
+                            <div>
+                                <strong id="bluetooth-count">0</strong> devices
+                            </div>
+                            <div class="pagination">
+                                <button id="bluetooth-prev">Prev</button>
+                                <span id="bluetooth-page">1</span>
+                                <button id="bluetooth-next">Next</button>
+                            </div>
+                        </div>
+                        <table id="bluetooth-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>MAC</th>
+                                    <th>Agent</th>
+                                    <th>RSSI</th>
+                                    <th>Location</th>
+                                    <th>Last Seen</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    <div class="tab-panel" id="scans-tab">
+                        <table id="scans-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Agent</th>
+                                    <th>Type</th>
+                                    <th>Status</th>
+                                    <th>Requested</th>
+                                    <th>Result</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    <div class="tab-panel" id="falcon-tab">
+                        <div class="falcon-panel">
+                            <div class="falcon-controls">
+                                <div>
+                                    <label>Selected Agent</label>
+                                    <select id="falcon-agent"></select>
+                                </div>
+                                <form id="falcon-monitor-form">
+                                    <label>
+                                        Managed Interface
+                                        <select id="falcon-monitor-interface"></select>
+                                    </label>
+                                    <div class="button-row">
+                                        <button type="submit">Start Monitor</button>
+                                        <button type="button" id="falcon-monitor-stop">Stop Monitor</button>
+                                    </div>
+                                </form>
+                                <form id="falcon-scan-form">
+                                    <label>
+                                        Monitor Interface
+                                        <select id="falcon-scan-interface"></select>
+                                    </label>
+                                    <div class="button-row">
+                                        <button type="submit">Start Scan</button>
+                                        <button type="button" id="falcon-scan-stop">Stop Scan</button>
+                                        <button type="button" id="falcon-scan-status">Refresh Status</button>
+                                    </div>
+                                </form>
+                            </div>
+                            <div class="falcon-indicator" id="falcon-poll-indicator">Idle</div>
+                            <div id="falcon-results">
+                                <p>Select an agent to view Falcon networks and clients.</p>
+                            </div>
+                            <h4>Falcon Log</h4>
+                            <pre id="falcon-status-log"></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        <aside class="detail-drawer open" id="detail-drawer">
+            <button id="detail-close">&times;</button>
+            <div id="detail-content">
+                <h3>No selection</h3>
+                <p>Select an agent or network to view details.</p>
+            </div>
+        </aside>
+    </div>
+
+    <div id="agent-modal" class="modal hidden">
+        <div class="modal-content">
+            <h2>Register Agent</h2>
+            <form id="agent-form">
+                <input type="text" id="agent-name" placeholder="Name" required />
+                <input type="url" id="agent-url" placeholder="Base URL (http://host:8020)" required />
+                <input type="text" id="agent-description" placeholder="Notes" />
+                <input type="text" id="agent-capabilities" placeholder="Capabilities (comma separated)" />
+                <div class="button-row">
+                    <button type="submit">Add Agent</button>
+                    <button type="button" id="close-agent-modal">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="spectrum-modal" class="modal hidden">
+        <div class="modal-content spectrum-modal">
+            <div class="modal-header">
+                <h2>HackRF Spectrum</h2>
+                <button id="close-spectrum-modal" class="modal-close">&times;</button>
+            </div>
+            <div class="spectrum-controls">
+                <label>
+                    Agent
+                    <select id="spectrum-agent"></select>
+                </label>
+                <div class="spectrum-buttons">
+                    <button type="button" id="spectrum-start-24">Start 2.4 GHz</button>
+                    <button type="button" id="spectrum-start-5">Start 5 GHz</button>
+                    <button type="button" id="spectrum-stop">Stop Scan</button>
+                </div>
+                <div class="spectrum-buttons">
+                    <button type="button" id="spectrum-snapshot-24">Snapshot 2.4 GHz</button>
+                    <button type="button" id="spectrum-snapshot-5">Snapshot 5 GHz</button>
+                </div>
+                <p id="spectrum-status" class="spectrum-status">Idle</p>
+            </div>
+            <div class="spectrum-chart-wrapper">
+                <canvas id="spectrum-chart" height="220"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/static/main.js?v=10"></script>
+</body>
+</html>
