@@ -66,12 +66,11 @@ def falcon_monitor_stop(agent_id: int, payload: FalconMonitorRequest, db: Sessio
             if alias == payload.interface:
                 removed_alias = alias
                 managed_iface = managed
-                monitor_map.pop(managed, None)
                 break
-    agent.monitor_map = monitor_map
-    refresh_agent_metadata(db, agent)
+    # Force-clear all monitor mappings to avoid stale aliases reappearing
+    agent.monitor_map = {}
     db.add(agent)
-    db.flush()
+    db.commit()
     enriched = dict(response)
     enriched['interface'] = removed_alias or payload.interface
     enriched['managed'] = managed_iface
