@@ -816,6 +816,18 @@ function onQuickScanSubmit(event) {
     event.preventDefault();
     try {
         const { body, continuous, interval_seconds } = buildScanPayload();
+        const agentId = body.agent_id;
+        const monitorMap = state.agentMonitorMap.get(agentId) || {};
+        const monitorAliases = new Set(Object.values(monitorMap).filter(Boolean));
+        const falconActive = state.falconScanning.has(agentId);
+        if (monitorAliases.has(body.interface)) {
+            alert(`Quick scan cannot run on ${body.interface} because it is in monitor mode. Stop Falcon monitor/scan first.`);
+            return;
+        }
+        if (falconActive) {
+            alert('Quick scan blocked while a Falcon scan is running. Stop the Falcon scan first.');
+            return;
+        }
         if (continuous) {
             body.interval_seconds = interval_seconds;
             postJSON(`${API_BASE}/scans/continuous`, body)
@@ -1745,6 +1757,14 @@ function getMonitorAliases(agentId) {
 
 function isFalconStatusRunning(status) {
     if (!status || typeof status !== 'object') return false;
+    // Falcon agent returns errcode: 0 while a scan is active, 1 when idle
+    const errCode = status.errcode ?? status.errCode ?? status.code;
+    if (errCode !== undefined) {
+        const numeric = Number(errCode);
+        if (!Number.isNaN(numeric)) {
+            return numeric === 0;
+        }
+    }
     if (typeof status.running === 'boolean') return status.running;
     if (typeof status.running === 'string') {
         const normalized = status.running.toLowerCase();
@@ -1982,8 +2002,19 @@ function updateInterfaceControls() {
     const agentId = state.selectedAgentId;
     const interfaces = state.agentInterfaces.get(agentId) || [];
     const monitorMap = state.agentMonitorMap.get(agentId) || {};
-    populateSelect(document.getElementById('scan-interface'), interfaces, 'Select interface');
     const aliasSet = new Set(Object.values(monitorMap).filter(Boolean));
+    const managedKeys = new Set(Object.keys(monitorMap));
+    // Quick scan: hide managed names that are currently mapped, but allow actual monitor aliases
+    const quickScanOptions = [];
+    interfaces.forEach(name => {
+        if (!managedKeys.has(name)) {
+            quickScanOptions.push(name);
+        }
+    });
+    aliasSet.forEach(name => {
+        if (name && !quickScanOptions.includes(name)) quickScanOptions.push(name);
+    });
+    populateSelect(document.getElementById('scan-interface'), quickScanOptions, 'Select interface');
     const managedOptions = Array.from(new Set([
         ...interfaces.filter(name => !aliasSet.has(name)),
         ...Object.keys(monitorMap),
