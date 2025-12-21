@@ -665,8 +665,26 @@ details.detail-content-section summary {
 }
 
 .falcon-note {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
     font-size: 0.75rem;
     color: #7da0b5;
+}
+
+.falcon-badge {
+    padding: 0.2rem 0.5rem;
+    border-radius: 999px;
+    background: #e0e8ed;
+    color: #4a6575;
+    font-weight: 600;
+    border: 1px solid #c3d2db;
+}
+
+.falcon-badge.active {
+    background: #ffe8e6;
+    border-color: #f2b1a9;
+    color: #c33b28;
 }
 
 .falcon-pagination {

@@ -35,7 +35,11 @@ class AgentClient:
 
     def _get(self, path: str, **kwargs) -> Dict[str, Any]:
         response = self._get_response(path, **kwargs)
-        return response.json()
+        try:
+            return response.json()
+        except Exception:
+            # Some agent endpoints return an empty body; normalize to empty dict
+            return {}
 
     def _post(self, path: str, data: Dict[str, Any] | None = None, **kwargs) -> Dict[str, Any]:
         url = f"{self.base_url}{path}"

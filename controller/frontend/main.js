@@ -32,6 +32,8 @@ const state = {
     falconPollingAgent: null,
     falconScanning: new Set(),
     falconScanInterfaces: new Map(),
+    falconStopGrace: new Map(),
+    falconDeauths: new Map(),
     networkObservations: new Map(),
     bluetoothObservations: new Map(),
     spectrumPollHandle: null,
@@ -462,6 +464,7 @@ async function showAgentDetail(agentId) {
         const html = buildAgentDetailHtml(agent, status);
         showDetailDrawer(html);
         let falconResults = null;
+        let activeDeauths = null;
         if (state.falconScanning.has(agentId)) {
             try {
                 falconResults = await fetchJSON(`${API_BASE}/falcon/${agentId}/scan/results`);
@@ -472,8 +475,14 @@ async function showAgentDetail(agentId) {
         } else {
             state.falconData.delete(agentId);
         }
-        renderFalconTab(agentId, falconResults);
-        attachFalconActionHandlers(agentId, falconResults);
+        try {
+            activeDeauths = await fetchFalconDeauths(agentId);
+            state.falconDeauths.set(agentId, activeDeauths?.activedeauths || []);
+        } catch (err) {
+            console.warn('Falcon deauths unavailable', err);
+        }
+        renderFalconTab(agentId, falconResults, activeDeauths);
+        attachFalconActionHandlers(agentId, falconResults, activeDeauths);
         await syncFalconScanState(agentId);
         if (state.falconScanning.has(agentId)) {
             startFalconPolling(agentId);
@@ -512,11 +521,29 @@ function startFalconPolling(agentId) {
             const statusPromise = alias ? fetchFalconStatus(agentId, alias) : Promise.resolve(null);
             const results = await fetchJSON(`${API_BASE}/falcon/${agentId}/scan/results`);
             const status = await statusPromise;
+            let deauths = null;
+            try {
+                deauths = await fetchFalconDeauths(agentId);
+                state.falconDeauths.set(agentId, deauths?.activedeauths || []);
+            } catch (err) {
+                console.warn('Falcon deauth poll failed', err);
+            }
             state.falconData.set(agentId, results);
-            renderFalconTab(agentId, results);
-            attachFalconActionHandlers(agentId, results);
-            if (status && !isFalconStatusRunning(status)) {
-                markFalconScanInactive(agentId);
+            renderFalconTab(agentId, results, deauths);
+            attachFalconActionHandlers(agentId, results, deauths);
+            if (status) {
+                const running = isFalconStatusRunning(status);
+                if (running) {
+                    state.falconStopGrace.delete(agentId);
+                } else {
+                    const attempts = state.falconStopGrace.get(agentId) || 0;
+                    if (attempts >= 1) {
+                        state.falconStopGrace.delete(agentId);
+                        markFalconScanInactive(agentId);
+                    } else {
+                        state.falconStopGrace.set(agentId, attempts + 1);
+                    }
+                }
             }
         } catch (err) {
             console.warn('Falcon poll failed', err);
@@ -644,6 +671,8 @@ async function handleAgentDelete(agentId) {
 }
 
 function renderFalconSection(falconResults) {
+    const agentId = state.selectedAgentId;
+    const deauths = state.falconDeauths.get(agentId) || [];
     if (!falconResults) {
         return '<p>No Falcon data available.</p>';
     }
@@ -699,7 +728,12 @@ function renderFalconSection(falconResults) {
                     <button class="btn-falcon-refresh">Refresh Falcon Data</button>
                     <button class="btn-falcon-stop-all">Stop All Deauths</button>
                 </div>
-                <span class="falcon-note">Use monitor interface dropdown before launching actions.</span>
+                <div class="falcon-note">
+                    <span>Use monitor interface dropdown before launching actions.</span>
+                    <span class="falcon-badge ${deauths.length ? 'active' : ''}" id="falcon-deauth-badge">
+                        ${deauths.length ? `${deauths.length} active deauth${deauths.length === 1 ? '' : 's'}` : 'No active deauths'}
+                    </span>
+                </div>
             </div>
             <h4>Access Points</h4>
             <table class="falcon-table">
@@ -738,11 +772,36 @@ function renderFalconSection(falconResults) {
                 <span>Page ${state.falconClientPage} / ${clientTotalPages}</span>
                 <button id="falcon-client-next">Next</button>
             </div>
+            <h4>Active Deauths</h4>
+            <table class="falcon-table">
+                <thead>
+                    <tr>
+                        <th>AP</th>
+                        <th>Client</th>
+                        <th>Ch</th>
+                        <th>Interface</th>
+                        <th>PID</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${deauths.length ? deauths.map(d => `
+                        <tr>
+                            <td>${d.apmacaddr || ''}</td>
+                            <td>${d.stationmacaddr || '(broadcast)'}</td>
+                            <td>${d.channel || ''}</td>
+                            <td>${d.interface || ''}</td>
+                            <td>${d.processid || ''}</td>
+                            <td><button class="btn-falcon-stop-deauth" data-ap="${d.apmacaddr || ''}" data-client="${d.stationmacaddr || ''}" data-channel="${d.channel || 0}" data-interface="${d.interface || ''}">Stop</button></td>
+                        </tr>
+                    `).join('') : '<tr><td colspan="6">No active deauths</td></tr>'}
+                </tbody>
+            </table>
         </div>
     `;
 }
 
-function renderFalconTab(agentId, falconResults) {
+function renderFalconTab(agentId, falconResults, deauths) {
     const container = document.getElementById('falcon-results');
     if (!container) return;
     if (!falconResults) {
@@ -755,8 +814,8 @@ function renderFalconTab(agentId, falconResults) {
     attachFalconPaginationHandlers(falconResults);
 }
 
-function attachFalconActionHandlers(agentId, falconResults) {
-    const root = elements.detailContent;
+function attachFalconActionHandlers(agentId, falconResults, deauths) {
+    const root = document.getElementById('falcon-tab') || elements.detailContent;
     if (!root) return;
     root.querySelector('.btn-falcon-refresh')?.addEventListener('click', () => showAgentDetail(agentId));
     root.querySelector('.btn-falcon-stop-all')?.addEventListener('click', () => stopAllFalconDeauths(agentId));
@@ -784,6 +843,15 @@ function attachFalconActionHandlers(agentId, falconResults) {
             triggerFalconDeauth(agentId, ap, '', channel);
         });
     });
+    root.querySelectorAll('.btn-falcon-stop-deauth').forEach(button => {
+        button.addEventListener('click', () => {
+            const ap = button.dataset.ap;
+            const client = button.dataset.client;
+            const channel = parseInt(button.dataset.channel, 10) || 0;
+            const iface = button.dataset.interface || '';
+            stopFalconDeauth(agentId, ap, client, channel, iface);
+        });
+    });
 }
 
 function attachFalconPaginationHandlers(falconResults) {
@@ -809,7 +877,7 @@ function changeFalconPage(type, delta, falconResults) {
     if (!container) return;
     container.innerHTML = renderFalconSection(falconResults);
     attachFalconPaginationHandlers(falconResults);
-    attachFalconActionHandlers(state.selectedAgentId, falconResults);
+    attachFalconActionHandlers(state.selectedAgentId, falconResults, { activedeauths: state.falconDeauths.get(state.selectedAgentId) || [] });
 }
 
 function onQuickScanSubmit(event) {
@@ -1790,10 +1858,32 @@ async function fetchFalconStatus(agentId, iface) {
     }
 }
 
+async function fetchFalconDeauths(agentId) {
+    if (!agentId) return null;
+    try {
+        return await fetchJSON(`${API_BASE}/falcon/${agentId}/deauths`);
+    } catch (err) {
+        console.warn('Falcon deauths request failed', err);
+        return null;
+    }
+}
+
+async function refreshFalconDeauths(agentId) {
+    if (!agentId) return;
+    const data = await fetchFalconDeauths(agentId);
+    state.falconDeauths.set(agentId, data?.activedeauths || []);
+    if (state.selectedAgentId === agentId) {
+        const results = state.falconData.get(agentId) || null;
+        renderFalconTab(agentId, results, data);
+        attachFalconActionHandlers(agentId, results, data);
+    }
+}
+
 function markFalconScanActive(agentId, alias) {
     if (!agentId || !alias) return;
     state.falconScanning.add(agentId);
     state.falconScanInterfaces.set(agentId, alias);
+    state.falconStopGrace.delete(agentId);
     updateFalconButtons(agentId);
 }
 
@@ -1801,6 +1891,7 @@ function markFalconScanInactive(agentId) {
     if (!agentId) return;
     state.falconScanning.delete(agentId);
     state.falconScanInterfaces.delete(agentId);
+    state.falconStopGrace.delete(agentId);
     updateFalconButtons(agentId);
     if (state.falconPollingAgent === agentId) {
         stopFalconPolling();
@@ -1954,6 +2045,11 @@ function onFalconScanStatus() {
 async function triggerFalconDeauth(agentId, apMac, clientMac, channel) {
     try {
         const iface = getMonitorInterfaceValue();
+        if (!apMac) {
+            alert('Missing AP MAC address for deauth');
+            return;
+        }
+        logFalcon(`Deauth request queued for ${apMac}/${clientMac || 'broadcast'} on ${agentId} (iface ${iface}, ch ${channel || 'n/a'})`);
         const payload = {
             interface: iface,
             apmacaddr: apMac,
@@ -1963,8 +2059,28 @@ async function triggerFalconDeauth(agentId, apMac, clientMac, channel) {
         };
         const resp = await postJSON(`${API_BASE}/falcon/${agentId}/deauth`, payload);
         logFalcon(`Deauth ${apMac}/${clientMac || 'broadcast'} on ${agentId}: ${JSON.stringify(resp)}`);
+        await refreshFalconDeauths(agentId);
     } catch (err) {
+        console.error('Falcon deauth failed', err);
         alert(`Unable to start deauth: ${err.message}`);
+    }
+}
+
+async function stopFalconDeauth(agentId, apMac, clientMac, channel, ifaceOverride) {
+    try {
+        const iface = ifaceOverride || getMonitorInterfaceValue();
+        const payload = {
+            interface: iface,
+            apmacaddr: apMac,
+            stationmacaddr: clientMac || '',
+            channel,
+        };
+        const resp = await postJSON(`${API_BASE}/falcon/${agentId}/deauth/stop`, payload);
+        logFalcon(`Stop deauth ${apMac}/${clientMac || 'broadcast'} on ${agentId}: ${JSON.stringify(resp)}`);
+        await refreshFalconDeauths(agentId);
+    } catch (err) {
+        console.error('Falcon stop deauth failed', err);
+        alert(`Unable to stop deauth: ${err.message}`);
     }
 }
 
@@ -1991,6 +2107,7 @@ async function stopAllFalconDeauths(agentId) {
         const iface = getMonitorInterfaceValue();
         const resp = await postJSON(`${API_BASE}/falcon/${agentId}/deauth/stopall`, { interface: iface });
         logFalcon(`Stop all deauths (${iface}) on ${agentId}: ${JSON.stringify(resp)}`);
+        await refreshFalconDeauths(agentId);
     } catch (err) {
         alert(`Unable to stop deauths: ${err.message}`);
     }
