@@ -343,6 +343,17 @@ button {
     flex-basis: 45vh;
 }
 
+body.falcon-focus .tabs-overlay {
+    position: fixed;
+    inset: 0;
+    width: auto;
+    max-height: none;
+    flex-basis: auto;
+    margin: 0;
+    border-radius: 0;
+    z-index: 10;
+}
+
 .tabs-overlay.collapsed {
     position: absolute;
     right: 1rem;
@@ -400,6 +411,10 @@ body.tabs-collapsed .map-panel {
     overflow-y: auto;
     height: 45vh;
     min-height: 12rem;
+}
+
+body.falcon-focus .tab-panels {
+    height: calc(100vh - 7rem);
 }
 
 .overlay-toggle {
