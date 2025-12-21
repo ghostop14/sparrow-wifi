@@ -50,6 +50,23 @@ body.sidebar-collapsed .sidebar {
     gap: 0.5rem;
 }
 
+.falcon-focus .map-panel {
+    min-height: 100vh;
+    padding: 0.5rem;
+}
+
+.falcon-focus .map-stage,
+.falcon-focus .layer-toggle {
+    display: none;
+}
+
+.falcon-focus .tabs-overlay {
+    position: relative;
+    inset: 0;
+    height: calc(100vh - 1rem);
+    margin: 0;
+}
+
 .map-stage {
     position: relative;
     flex: 1;
@@ -662,6 +679,10 @@ details.detail-content-section summary {
 .falcon-buttons {
     display: flex;
     gap: 0.5rem;
+}
+
+.falcon-focus-toggle {
+    margin-top: 0.4rem;
 }
 
 .falcon-note {

@@ -80,6 +80,7 @@ function bootstrap() {
     elements.falconScanForm = document.getElementById('falcon-scan-form');
     elements.falconScanStop = document.getElementById('falcon-scan-stop');
     elements.falconScanStatus = document.getElementById('falcon-scan-status');
+    elements.falconFocusToggle = document.getElementById('falcon-focus-toggle');
     elements.tabButtons = document.querySelectorAll('.tab-button');
     elements.tabPanels = document.querySelectorAll('.tab-panel');
     elements.sidebarTabButtons = document.querySelectorAll('.sidebar-tab-button');
@@ -106,6 +107,7 @@ function bootstrap() {
     initTabs();
     initModal();
     bindEvents();
+    updateFalconFocusButton();
     handleScanTypeChange();
     loadAgents();
     loadScans();
@@ -172,6 +174,7 @@ function bindEvents() {
             selectAgent(agentId);
         }
     });
+    elements.falconFocusToggle?.addEventListener('click', toggleFalconFocus);
     elements.wifiPrev?.addEventListener('click', () => changeNetworkPage(-1));
     elements.wifiNext?.addEventListener('click', () => changeNetworkPage(1));
     elements.bluetoothPrev?.addEventListener('click', () => changeBluetoothPage(-1));
@@ -566,6 +569,19 @@ function stopFalconPolling() {
     }
     state.falconPollingAgent = null;
     updateFalconIndicator();
+}
+
+function toggleFalconFocus() {
+    document.body.classList.toggle('falcon-focus');
+    updateFalconFocusButton();
+    requestMapResize();
+}
+
+function updateFalconFocusButton() {
+    const focused = document.body.classList.contains('falcon-focus');
+    if (elements.falconFocusToggle) {
+        elements.falconFocusToggle.textContent = focused ? 'Exit Falcon Focus' : 'Focus Falcon';
+    }
 }
 
 function updateFalconIndicator() {
