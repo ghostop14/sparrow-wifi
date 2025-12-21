@@ -2012,7 +2012,7 @@ function onFalconMonitorStart(event) {
                     const monitorSelect = document.getElementById('falcon-scan-interface');
                     if (monitorSelect) monitorSelect.value = alias;
                 }
-                return loadAgents();
+                return loadAgents().then(() => showAgentDetail(agentId));
             })
             .catch(err => alert(`Unable to start monitor mode: ${err.message}`));
     } catch (err) {
@@ -2037,7 +2037,7 @@ function onFalconMonitorStop() {
                 updateLocalMonitorState(agentId, managed, null);
                 const monitorSelect = document.getElementById('falcon-scan-interface');
                 if (monitorSelect) monitorSelect.value = '';
-                return loadAgents();
+                return loadAgents().then(() => showAgentDetail(agentId));
             })
             .catch(err => alert(`Unable to stop monitor mode: ${err.message}`));
     } catch (err) {
