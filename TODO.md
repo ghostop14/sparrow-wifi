@@ -1,0 +1,14 @@
+- Recent work (Dec 21, 2025):
+  - Falcon deauth controls improved: UI shows active deauths with per-entry stop and stop-all; handles agent empty responses; stop-all fixed in agent plugin.
+  - Falcon focus toggle added to expand the Falcon tab and hide map/layers temporarily; refined to avoid full-screening other tabs.
+  - Falcon monitor start/stop now refreshes agent details automatically after agent response.
+  - GPS UX: agent list shows a "GPS: no fix" badge when no valid lat/lon; agent detail has clear GPS status; no 0,0 markers when GPS isn’t valid.
+- Commit history (local):
+  - Add GPS no-fix badge for agents
+  - Tweak Falcon focus layout
+  - Add Falcon focus toggle
+  - Improve Falcon deauth controls
+- Consider next:
+  - Optional: tighter deauth timeouts in controller to surface agent delays faster.
+  - Optional: make Falcon focus a general "focus tab" toggle, or keep Falcon-only.
+  - Optional: add a small indicator badge for GPS status in the detail drawer.
