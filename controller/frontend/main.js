@@ -134,6 +134,9 @@ function initTabs() {
             elements.tabPanels.forEach(panel => panel.classList.remove('active'));
             button.classList.add('active');
             document.getElementById(button.dataset.tab).classList.add('active');
+            if (button.dataset.tab !== 'falcon-tab') {
+                exitFalconFocus();
+            }
         });
     });
 
@@ -575,6 +578,14 @@ function toggleFalconFocus() {
     document.body.classList.toggle('falcon-focus');
     updateFalconFocusButton();
     requestMapResize();
+}
+
+function exitFalconFocus() {
+    if (document.body.classList.contains('falcon-focus')) {
+        document.body.classList.remove('falcon-focus');
+        updateFalconFocusButton();
+        requestMapResize();
+    }
 }
 
 function updateFalconFocusButton() {

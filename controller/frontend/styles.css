@@ -344,14 +344,9 @@ button {
 }
 
 body.falcon-focus .tabs-overlay {
-    position: fixed;
-    inset: 0;
-    width: auto;
-    max-height: none;
-    flex-basis: auto;
-    margin: 0;
-    border-radius: 0;
-    z-index: 10;
+    position: relative;
+    max-height: calc(100vh - 1.5rem);
+    flex-basis: calc(100vh - 1.5rem);
 }
 
 .tabs-overlay.collapsed {
