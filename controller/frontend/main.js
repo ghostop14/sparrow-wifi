@@ -391,10 +391,21 @@ function renderAgentList(agents) {
     agents.forEach(agent => {
         const card = document.createElement('div');
         card.className = 'agent-card' + (agent.id === state.selectedAgentId ? ' active' : '');
+        const gpsPos = agent.gps?.gpspos;
+        const gpsValid = gpsPos && gpsPos.gpsvalid !== undefined ? interpretBool(gpsPos.gpsvalid) : false;
+        const hasCoords =
+            gpsValid &&
+            gpsPos &&
+            Number.isFinite(parseFloat(gpsPos.latitude)) &&
+            Number.isFinite(parseFloat(gpsPos.longitude));
+        const gpsBadge = hasCoords ? '' : '<span class="agent-gps-badge">GPS: no fix</span>';
         card.innerHTML = `
             <div class="agent-name">${agent.name}</div>
             <div class="agent-url">${agent.base_url}</div>
-            <div class="agent-capabilities">${agent.capabilities.join(', ') || 'No capabilities'}</div>
+            <div class="agent-capabilities">
+                ${agent.capabilities.join(', ') || 'No capabilities'}
+                ${gpsBadge}
+            </div>
             <div class="agent-actions">
                 <button type="button" class="agent-delete-btn" data-agent-id="${agent.id}">Delete</button>
             </div>
@@ -650,6 +661,15 @@ function hideDetailDrawer() {
 }
 
 function buildAgentDetailHtml(agent, status) {
+    const gpsPos = agent.gps?.gpspos || {};
+    const gpsValid = gpsPos && gpsPos.gpsvalid !== undefined ? interpretBool(gpsPos.gpsvalid) : false;
+    const hasCoords =
+        gpsValid &&
+        Number.isFinite(parseFloat(gpsPos.latitude)) &&
+        Number.isFinite(parseFloat(gpsPos.longitude));
+    const gpsSummary = hasCoords
+        ? `Lat: ${gpsPos.latitude}, Lon: ${gpsPos.longitude}`
+        : 'Status: no fix';
     return `
         <h3>${agent.name}</h3>
         <div class="detail-content-section">
@@ -667,6 +687,11 @@ function buildAgentDetailHtml(agent, status) {
         <details class="detail-content-section">
             <summary>Monitor Map</summary>
             <pre>${JSON.stringify(agent.monitor_map || {}, null, 2)}</pre>
+        </details>
+        <details class="detail-content-section">
+            <summary>GPS</summary>
+            <p>${gpsSummary}</p>
+            <pre>${JSON.stringify(agent.gps || {}, null, 2)}</pre>
         </details>
     `;
 }

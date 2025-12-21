@@ -195,6 +195,17 @@ body.sidebar-collapsed .map-panel .leaflet-control-zoom {
     color: #999;
 }
 
+.agent-gps-badge {
+    display: inline-block;
+    margin-left: 0.5rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 999px;
+    background: #ffe8e6;
+    color: #c33b28;
+    font-size: 0.75rem;
+    border: 1px solid #f2b1a9;
+}
+
 .agent-actions {
     margin-top: 0.4rem;
     display: flex;
