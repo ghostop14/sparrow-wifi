@@ -64,9 +64,11 @@ useMavlink = False
 vehicle = None
 mavlinkGPSThread = None
 hasFalcon = False
+hasCellScanner = False
 hasBluetooth = False
 hasUbertooth = False
 falconWiFiRemoteAgent = None
+cellScannerRemoteAgent = None
 
 bluetooth = None
 hackrf = SparrowHackrf()
@@ -147,6 +149,27 @@ def getRecordingFiles():
         pass
 
     return retVal
+
+def getCurrentGPSPositionDict():
+    # Returns a dict suitable for JSON responses if a valid GPS fix exists
+    try:
+        if useMavlink and mavlinkGPSThread and mavlinkGPSThread.gpsSynched:
+            gpsPos = {}
+            gpsPos['latitude'] = mavlinkGPSThread.latitude
+            gpsPos['longitude'] = mavlinkGPSThread.longitude
+            gpsPos['altitude'] = mavlinkGPSThread.altitude
+            gpsPos['speed'] = mavlinkGPSThread.vehicle.getAirSpeed()
+            return gpsPos
+        elif gpsEngine and gpsEngine.lastCoord and gpsEngine.lastCoord.isValid:
+            gpsPos = {}
+            gpsPos['latitude'] = gpsEngine.lastCoord.latitude
+            gpsPos['longitude'] = gpsEngine.lastCoord.longitude
+            gpsPos['altitude'] = gpsEngine.lastCoord.altitude
+            gpsPos['speed'] = gpsEngine.lastCoord.speed
+            return gpsPos
+    except:
+        pass
+    return None
 
 def restartAgent():
     global bluetooth
@@ -1068,6 +1091,8 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
     def do_POST(s):
         global runningcfg
         global falconWiFiRemoteAgent
+        global cellScannerRemoteAgent
+        global hasCellScanner
 
         if len(s.client_address) == 0:
             # This should have the connecting client IP.  If this isn't at least 1, something is wrong
@@ -1489,24 +1514,141 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     except:
                         pass
         else:
-            try:
-                responsedict = {}
-                responsedict['errcode'] = 5
-                responsedict['errmsg'] = 'Bad request.'
+            # -------------  Cellular (LTE) scan handling ------------------
+            if s.path == '/cell/startscan':
+                if not hasCellScanner:
+                    try:
+                        s.send_response(400)
+                        s.send_header("Content-type", "application/json")
+                        s.end_headers()
+                        responsedict = {}
+                        responsedict['errcode'] = 5
+                        responsedict['errmsg'] = "Cell scanner plugin not available."
 
-                s.send_response(400)
-                s.send_header("Content-type", "application/json")
-                s.end_headers()
-                jsonstr = json.dumps(responsedict)
-                s.wfile.write(jsonstr.encode("UTF-8"))
-            except:
-                pass
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
+                else:
+                    try:
+                        if cellScannerRemoteAgent is None:
+                            raise Exception("Cell scanner plugin not initialized.")
+
+                        params = {}
+                        params['mode'] = jsondata.get('mode', '')
+                        params['freqstart'] = jsondata.get('freqstart', '')
+                        params['freqend'] = jsondata.get('freqend', '')
+                        params['gain'] = jsondata.get('gain', '')
+                        if 'numtry' in jsondata:
+                            params['numtry'] = jsondata.get('numtry')
+                        if 'ppm' in jsondata:
+                            params['ppm'] = jsondata.get('ppm')
+                        if 'correction' in jsondata:
+                            params['correction'] = jsondata.get('correction')
+                        if 'deviceindex' in jsondata:
+                            params['deviceindex'] = jsondata.get('deviceindex')
+                        if 'binpath' in jsondata:
+                            binpath = jsondata.get('binpath')
+                            if binpath:
+                                params['binpath'] = binpath
+                        params['brief'] = jsondata.get('brief', False)
+                        params['verbose'] = jsondata.get('verbose', False)
+
+                        if len(str(params['freqstart'])) == 0 or len(str(params['freqend'])) == 0:
+                            raise Exception("Missing frequency range (freqstart/freqend).")
+                        if len(str(params['gain'])) == 0:
+                            raise Exception("Missing gain.")
+
+                        fakeLines = None
+                        if 'fakeoutput' in jsondata:
+                            if isinstance(jsondata['fakeoutput'], list):
+                                fakeLines = jsondata['fakeoutput']
+                            else:
+                                fakeLines = str(jsondata['fakeoutput']).splitlines()
+
+                        errcode, errmsg = cellScannerRemoteAgent.startScan(params, fakeLines)
+                        responsedict = {}
+                        responsedict['errcode'] = errcode
+                        responsedict['errmsg'] = errmsg
+                        jsonstr = json.dumps(responsedict)
+                        try:
+                            if errcode == 0:
+                                s.send_response(200)
+                            else:
+                                s.send_response(400)
+                            s.send_header("Content-type", "application/json")
+                            if allowCors:
+                                s.send_header("Access-Control-Allow-Origin", "*")
+                            s.end_headers()
+                            s.wfile.write(jsonstr.encode("UTF-8"))
+                        except:
+                            pass
+                    except Exception as e:
+                        try:
+                            s.send_response(400)
+                            s.send_header("Content-type", "application/json")
+                            s.end_headers()
+                            responsedict = {}
+                            responsedict['errcode'] = 5
+                            responsedict['errmsg'] = "Cell scan request error: " + str(e)
+
+                            jsonstr = json.dumps(responsedict)
+                            s.wfile.write(jsonstr.encode("UTF-8"))
+                        except:
+                            pass
+            elif s.path == '/cell/stopscan':
+                if not hasCellScanner:
+                    try:
+                        s.send_response(400)
+                        s.send_header("Content-type", "application/json")
+                        s.end_headers()
+                        responsedict = {}
+                        responsedict['errcode'] = 5
+                        responsedict['errmsg'] = "Cell scanner plugin not available."
+
+                        jsonstr = json.dumps(responsedict)
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
+                else:
+                    errcode, errmsg = cellScannerRemoteAgent.stopScan()
+                    responsedict = {}
+                    responsedict['errcode'] = errcode
+                    responsedict['errmsg'] = errmsg
+                    jsonstr = json.dumps(responsedict)
+                    try:
+                        if errcode == 0:
+                            s.send_response(200)
+                        else:
+                            s.send_response(400)
+                        s.send_header("Content-type", "application/json")
+                        if allowCors:
+                            s.send_header("Access-Control-Allow-Origin", "*")
+                        s.end_headers()
+                        s.wfile.write(jsonstr.encode("UTF-8"))
+                    except:
+                        pass
+            else:
+                try:
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = 'Bad request.'
+
+                    s.send_response(400)
+                    s.send_header("Content-type", "application/json")
+                    s.end_headers()
+                    jsonstr = json.dumps(responsedict)
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                except:
+                    pass
 
     def isValidPostURL(s):
         allowedfullurls = ['/system/config',
                                     '/falcon/startcrack',
                                     '/falcon/deauth',
                                     '/falcon/stopdeauth',
+                                    '/cell/startscan',
+                                    '/cell/stopscan',
                                     '/system/deleterecordings']
 
         allowedstarturls=[]
@@ -1526,6 +1668,8 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                                     '/wireless/moninterfaces',
                                     '/falcon/getscanresults',
                                     '/falcon/getalldeauths',
+                                    '/cell/status',
+                                    '/cell/results',
                                     '/system/getrecordings',
                                     '/bluetooth/present',
                                    '/bluetooth/scanstart',
@@ -1636,6 +1780,8 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
         global allowedIPs
         global runningcfg
         global falconWiFiRemoteAgent
+        global cellScannerRemoteAgent
+        global hasCellScanner
         global hasBluetooth
         global hasUbertooth
         global bluetooth
@@ -2715,6 +2861,34 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                         s.wfile.write(jsonstr.encode("UTF-8"))
                     except:
                         pass
+            elif s.path == '/cell/status':
+                if not hasCellScanner:
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Cell scanner plugin not available."
+                else:
+                    responsedict = cellScannerRemoteAgent.status()
+                    responsedict['errcode'] = 0
+                    responsedict['errmsg'] = ""
+
+                jsonstr = json.dumps(responsedict)
+                try:
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                except:
+                    pass
+            elif s.path == '/cell/results':
+                if not hasCellScanner:
+                    responsedict = {}
+                    responsedict['errcode'] = 5
+                    responsedict['errmsg'] = "Cell scanner plugin not available."
+                else:
+                    responsedict = cellScannerRemoteAgent.getResultsAsJsonDict()
+
+                jsonstr = json.dumps(responsedict)
+                try:
+                    s.wfile.write(jsonstr.encode("UTF-8"))
+                except:
+                    pass
             else:
                 # Catch-all.  Should never be here
                 responsedict = {}
@@ -2814,6 +2988,11 @@ if __name__ == '__main__':
             if not falconWiFiRemoteAgent.toolsInstalled():
                 print("ERROR: aircrack suite of tools does not appear to be installed.  Please install it.")
                 exit(4)
+        if os.path.isfile(pluginsdir + '/cellscanner.py'):
+            from cellscanner import CellScannerRemoteAgent
+            hasCellScanner = True
+            # Pass a GPS getter so detections can be stamped when available
+            cellScannerRemoteAgent = CellScannerRemoteAgent(gps_func=getCurrentGPSPositionDict)
 
     checkForBluetooth()
 

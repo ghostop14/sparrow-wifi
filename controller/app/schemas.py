@@ -106,6 +106,19 @@ class FalconCrackRequest(BaseModel):
     hasclient: bool = False
 
 
+class CellularScanRequest(BaseModel):
+    mode: Optional[str] = None
+    freqstart: str
+    freqend: str
+    gain: str
+    numtry: Optional[int] = None
+    ppm: Optional[str] = None
+    correction: Optional[str] = None
+    binpath: Optional[str] = None
+    brief: bool = False
+    verbose: bool = False
+
+
 class ContinuousScanStopRequest(BaseModel):
     agent_id: int
     scan_type: ScanType

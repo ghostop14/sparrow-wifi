@@ -42,10 +42,39 @@ const state = {
     spectrumBand: null,
     spectrumSnapshotting: false,
     monitorOverrides: new Map(),
+    cellularResults: new Map(),
+    cellularPollHandle: null,
+    cellularAgentId: null,
+    cellularQueue: [],
+    cellularActiveJob: null,
+    cellularQueueTimer: null,
+    cellularHasPresets: false,
+    cellularAbort: false,
 };
 
 const SPECTRUM_SNAPSHOT_DELAY_MS = 1200;
 const LOCATION_WINDOW_MS = 24 * 60 * 60 * 1000; // keep location history for 24h
+const CELLULAR_PRESETS = [
+    { id: 'us-b2', label: 'US Band 2 (1900 PCS)', start: '1930e6', end: '1990e6' },
+    { id: 'us-b4', label: 'US Band 4 (AWS-1)', start: '2110e6', end: '2155e6' },
+    { id: 'us-b5', label: 'US Band 5 (850)', start: '869e6', end: '894e6' },
+    { id: 'us-b12', label: 'US Band 12 (700a)', start: '729e6', end: '746e6' },
+    { id: 'us-b13', label: 'US Band 13 (700c)', start: '746e6', end: '756e6' },
+    { id: 'us-b17', label: 'US Band 17 (700bc)', start: '734e6', end: '746e6' },
+    { id: 'us-b66', label: 'US Band 66 (AWS-3)', start: '2110e6', end: '2200e6' },
+    { id: 'eu-b1', label: 'EU Band 1 (2100)', start: '2110e6', end: '2170e6' },
+    { id: 'eu-b3', label: 'EU Band 3 (1800)', start: '1805e6', end: '1880e6' },
+    { id: 'eu-b7', label: 'EU Band 7 (2600)', start: '2620e6', end: '2690e6' },
+    { id: 'eu-b8', label: 'EU Band 8 (900)', start: '925e6', end: '960e6' },
+    { id: 'eu-b20', label: 'EU Band 20 (800)', start: '791e6', end: '821e6' },
+    { id: 'eu-b28', label: 'EU Band 28 (700)', start: '758e6', end: '803e6' },
+];
+const CELLULAR_DEFAULTS = {
+    gain: '40',
+    numtry: '1',
+    ppm: '1',
+    correction: '1.0',
+};
 
 function bootstrap() {
     elements.agentList = document.getElementById('agent-list');
@@ -81,6 +110,25 @@ function bootstrap() {
     elements.falconScanStop = document.getElementById('falcon-scan-stop');
     elements.falconScanStatus = document.getElementById('falcon-scan-status');
     elements.falconFocusToggle = document.getElementById('falcon-focus-toggle');
+    elements.cellularFocusToggle = document.getElementById('cellular-focus-toggle');
+    elements.cellAgentSelect = document.getElementById('cellular-agent');
+    elements.cellMode = document.getElementById('cellular-mode');
+    elements.cellFreqStart = document.getElementById('cellular-freq-start');
+    elements.cellFreqEnd = document.getElementById('cellular-freq-end');
+    elements.cellGain = document.getElementById('cellular-gain');
+    elements.cellNumTry = document.getElementById('cellular-numtry');
+    elements.cellPPM = document.getElementById('cellular-ppm');
+    elements.cellCorrection = document.getElementById('cellular-correction');
+    elements.cellBinPath = document.getElementById('cellular-binpath');
+    elements.cellDuration = document.getElementById('cellular-duration');
+    elements.cellPresets = document.getElementById('cellular-presets');
+    elements.cellStart = document.getElementById('cellular-start');
+    elements.cellStop = document.getElementById('cellular-stop');
+    elements.cellRefresh = document.getElementById('cellular-refresh');
+    elements.cellStatus = document.getElementById('cellular-status');
+    elements.cellQueueStatus = document.getElementById('cellular-queue-status');
+    elements.cellTableBody = document.querySelector('#cellular-table tbody');
+    elements.cellCount = document.getElementById('cellular-count');
     elements.tabButtons = document.querySelectorAll('.tab-button');
     elements.tabPanels = document.querySelectorAll('.tab-panel');
     elements.sidebarTabButtons = document.querySelectorAll('.sidebar-tab-button');
@@ -107,7 +155,9 @@ function bootstrap() {
     initTabs();
     initModal();
     bindEvents();
+    renderCellularPresets();
     updateFalconFocusButton();
+    updateCellularFocusButton();
     handleScanTypeChange();
     loadAgents();
     loadScans();
@@ -136,6 +186,14 @@ function initTabs() {
             document.getElementById(button.dataset.tab).classList.add('active');
             if (button.dataset.tab !== 'falcon-tab') {
                 exitFalconFocus();
+            }
+            if (button.dataset.tab !== 'cellular-tab') {
+                exitCellularFocus();
+            }
+            if (button.dataset.tab === 'cellular-tab') {
+                startCellularPolling();
+            } else {
+                stopCellularPolling();
             }
         });
     });
@@ -188,6 +246,19 @@ function bindEvents() {
     elements.falconScanForm?.addEventListener('submit', onFalconScanStart);
     elements.falconScanStop?.addEventListener('click', onFalconScanStop);
     elements.falconScanStatus?.addEventListener('click', onFalconScanStatus);
+    elements.cellStart?.addEventListener('click', onCellularStart);
+    elements.cellStop?.addEventListener('click', onCellularStop);
+    elements.cellRefresh?.addEventListener('click', () => refreshCellularResults());
+    elements.cellularFocusToggle?.addEventListener('click', toggleCellularFocus);
+    elements.cellAgentSelect?.addEventListener('change', (event) => {
+        const agentId = parseInt(event.target.value, 10);
+        if (Number.isInteger(agentId)) {
+            state.cellularAgentId = agentId;
+            if (document.getElementById('cellular-tab')?.classList.contains('active')) {
+                startCellularPolling(agentId);
+            }
+        }
+    });
     elements.toggleWifi?.addEventListener('change', (event) => {
         state.showWifiLayers = event.target.checked;
         updateLayerVisibility();
@@ -423,7 +494,7 @@ function renderAgentList(agents) {
 }
 
 function renderAgentSelects(agents) {
-    const selects = [elements.scanAgentSelect, elements.falconAgentSelect];
+    const selects = [elements.scanAgentSelect, elements.falconAgentSelect, elements.cellAgentSelect];
     selects.forEach(select => {
         if (!select) return;
         select.innerHTML = '';
@@ -437,6 +508,11 @@ function renderAgentSelects(agents) {
     });
     updateInterfaceControls();
     syncSpectrumAgentOptions(agents);
+    if (elements.cellAgentSelect && agents.length) {
+        const selected = Number(elements.cellAgentSelect.value) || agents[0].id;
+        elements.cellAgentSelect.value = `${selected}`;
+        state.cellularAgentId = selected;
+    }
 }
 
 function syncSpectrumAgentOptions(agents) {
@@ -470,15 +546,16 @@ async function selectAgent(agentId) {
 
 async function showAgentDetail(agentId) {
     try {
-        const [agent, status] = await Promise.all([
+        const [agent, status, hackrf] = await Promise.all([
             fetchJSON(`${API_BASE}/agents/${agentId}`),
             fetchJSON(`${API_BASE}/agents/${agentId}/status`),
+            fetchJSON(`${API_BASE}/spectrum/${agentId}/status`).catch(() => null),
         ]);
         state.agentCache.set(agentId, agent);
         cacheAgentMetadata(agent);
         updateInterfaceControls();
         updateAgentMarker(agent);
-        const html = buildAgentDetailHtml(agent, status);
+        const html = buildAgentDetailHtml(agent, status, hackrf);
         showDetailDrawer(html);
         let falconResults = null;
         let activeDeauths = null;
@@ -586,6 +663,10 @@ function stopFalconPolling() {
 }
 
 function toggleFalconFocus() {
+    if (document.body.classList.contains('cellular-focus')) {
+        document.body.classList.remove('cellular-focus');
+        updateCellularFocusButton();
+    }
     document.body.classList.toggle('falcon-focus');
     updateFalconFocusButton();
     requestMapResize();
@@ -603,6 +684,31 @@ function updateFalconFocusButton() {
     const focused = document.body.classList.contains('falcon-focus');
     if (elements.falconFocusToggle) {
         elements.falconFocusToggle.textContent = focused ? 'Exit Falcon Focus' : 'Focus Falcon';
+    }
+}
+
+function toggleCellularFocus() {
+    if (document.body.classList.contains('falcon-focus')) {
+        document.body.classList.remove('falcon-focus');
+        updateFalconFocusButton();
+    }
+    document.body.classList.toggle('cellular-focus');
+    updateCellularFocusButton();
+    requestMapResize();
+}
+
+function exitCellularFocus() {
+    if (document.body.classList.contains('cellular-focus')) {
+        document.body.classList.remove('cellular-focus');
+        updateCellularFocusButton();
+        requestMapResize();
+    }
+}
+
+function updateCellularFocusButton() {
+    const focused = document.body.classList.contains('cellular-focus');
+    if (elements.cellularFocusToggle) {
+        elements.cellularFocusToggle.textContent = focused ? 'Exit Cellular Focus' : 'Focus Cellular';
     }
 }
 
@@ -660,7 +766,7 @@ function hideDetailDrawer() {
     stopFalconPolling();
 }
 
-function buildAgentDetailHtml(agent, status) {
+function buildAgentDetailHtml(agent, status, hackrfStatus) {
     const gpsPos = agent.gps?.gpspos || {};
     const gpsValid = gpsPos && gpsPos.gpsvalid !== undefined ? interpretBool(gpsPos.gpsvalid) : false;
     const hasCoords =
@@ -670,6 +776,9 @@ function buildAgentDetailHtml(agent, status) {
     const gpsSummary = hasCoords
         ? `Lat: ${gpsPos.latitude}, Lon: ${gpsPos.longitude}`
         : 'Status: no fix';
+    const hackrfSummary = hackrfStatus
+        ? `Present: ${interpretBool(hackrfStatus.hashackrf)} | 2.4GHz: ${interpretBool(hackrfStatus.scan24running)} | 5GHz: ${interpretBool(hackrfStatus.scan5running)}`
+        : 'Unavailable';
     return `
         <h3>${agent.name}</h3>
         <div class="detail-content-section">
@@ -683,6 +792,11 @@ function buildAgentDetailHtml(agent, status) {
         <details class="detail-content-section">
             <summary>Bluetooth</summary>
             <pre>${JSON.stringify(status.bluetooth, null, 2)}</pre>
+        </details>
+        <details class="detail-content-section">
+            <summary>HackRF</summary>
+            <p>${hackrfSummary}</p>
+            <pre>${JSON.stringify(hackrfStatus || {}, null, 2)}</pre>
         </details>
         <details class="detail-content-section">
             <summary>Monitor Map</summary>
@@ -1526,7 +1640,7 @@ function getSpectrumAgentId() {
     return null;
 }
 
-function startSpectrumScan(band) {
+async function startSpectrumScan(band) {
     const agentId = getSpectrumAgentId();
     if (!agentId) {
         return alert('Select an agent first');
@@ -1534,6 +1648,8 @@ function startSpectrumScan(band) {
     if (state.spectrumSnapshotting) {
         return alert('Please wait for the current snapshot to finish.');
     }
+    const okToProceed = await ensureHackrfAvailableForSpectrum(agentId);
+    if (!okToProceed) return;
     postJSON(`${API_BASE}/spectrum/${agentId}/start?band=${band}`)
         .then(() => {
             state.spectrumBand = band;
@@ -2162,6 +2278,266 @@ async function stopAllFalconDeauths(agentId) {
         await refreshFalconDeauths(agentId);
     } catch (err) {
         alert(`Unable to stop deauths: ${err.message}`);
+    }
+}
+
+// ---------- Cellular (LTE) ----------
+function collectCellularJobs() {
+    const jobs = [];
+    const selectedPresets = Array.from(document.querySelectorAll('#cellular-presets input[type="checkbox"]:checked'));
+    state.cellularHasPresets = selectedPresets.length > 0;
+    selectedPresets.forEach(box => {
+        const preset = CELLULAR_PRESETS.find(p => p.id === box.value);
+        if (preset) {
+            jobs.push({
+                freqstart: preset.start,
+                freqend: preset.end,
+                label: preset.label,
+            });
+        }
+    });
+    const manualStart = elements.cellFreqStart?.value;
+    const manualEnd = elements.cellFreqEnd?.value;
+    if (manualStart && manualEnd) {
+        jobs.push({
+            freqstart: manualStart,
+            freqend: manualEnd,
+            label: 'Manual',
+        });
+    }
+    return jobs;
+}
+
+async function onCellularStart() {
+    const agentId = Number(elements.cellAgentSelect?.value || state.selectedAgentId);
+    if (!agentId) {
+        alert('Select an agent for cellular scan');
+        return;
+    }
+    const jobs = collectCellularJobs();
+    if (!jobs.length) {
+        alert('Select a preset or enter manual start/end frequency.');
+        return;
+    }
+    state.cellularQueue = jobs;
+    state.cellularAgentId = agentId;
+    state.cellularAbort = false;
+    startCellularQueue();
+}
+
+async function onCellularStop() {
+    state.cellularQueue = [];
+    state.cellularActiveJob = null;
+    state.cellularAbort = true;
+    if (state.cellularQueueTimer) {
+        clearTimeout(state.cellularQueueTimer);
+        state.cellularQueueTimer = null;
+    }
+    const agentId = Number(elements.cellAgentSelect?.value || state.cellularAgentId || state.selectedAgentId);
+    if (!agentId) return;
+    elements.cellStatus.textContent = 'Stopping...';
+    try {
+        await postJSON(`${API_BASE}/cellular/${agentId}/stop`, {});
+        elements.cellStatus.textContent = 'Stopped';
+    } catch (err) {
+        elements.cellStatus.textContent = `Error: ${err.message}`;
+    } finally {
+        stopCellularPolling();
+    }
+    await refreshCellularResults(agentId);
+}
+
+async function startCellularQueue() {
+    if (!state.cellularQueue.length) {
+        elements.cellQueueStatus.textContent = 'Queue empty';
+        return;
+    }
+    const agentId = Number(state.cellularAgentId || state.selectedAgentId);
+    if (!agentId) return;
+    const okToProceed = await ensureHackrfAvailableForCellular(agentId);
+    if (!okToProceed) {
+        elements.cellQueueStatus.textContent = 'Queue paused';
+        state.cellularQueue = [];
+        return;
+    }
+    const durationSec = Number(elements.cellDuration?.value || 8);
+    const job = state.cellularQueue.shift();
+    state.cellularActiveJob = job;
+    elements.cellQueueStatus.textContent = `Running ${job.label || ''} (${job.freqstart} - ${job.freqend})`;
+    const useDefaults = state.cellularHasPresets;
+    const gain = elements.cellGain?.value || (useDefaults ? CELLULAR_DEFAULTS.gain : '');
+    const numtry = elements.cellNumTry?.value || (useDefaults ? CELLULAR_DEFAULTS.numtry : undefined);
+    const ppm = elements.cellPPM?.value || (useDefaults ? CELLULAR_DEFAULTS.ppm : undefined);
+    const correction = elements.cellCorrection?.value || (useDefaults ? CELLULAR_DEFAULTS.correction : undefined);
+    const payload = {
+        mode: elements.cellMode?.value || 'lte',
+        freqstart: job.freqstart,
+        freqend: job.freqend,
+        gain,
+        numtry,
+        ppm,
+        correction,
+        binpath: elements.cellBinPath?.value || undefined,
+        brief: false,
+        verbose: false,
+    };
+    elements.cellStatus.textContent = 'Starting...';
+    postJSON(`${API_BASE}/cellular/${agentId}/start`, payload)
+        .then(() => {
+            elements.cellStatus.textContent = 'Running';
+            startCellularPolling(agentId);
+            waitForCellularCompletion(agentId, durationSec, job);
+        })
+        .catch(err => {
+            elements.cellStatus.textContent = `Error: ${err.message}`;
+            elements.cellQueueStatus.textContent = 'Queue stopped on error';
+            state.cellularQueue = [];
+            state.cellularActiveJob = null;
+            stopCellularPolling();
+        });
+}
+
+function waitForCellularCompletion(agentId, durationSec, job) {
+    const maxDuration = Number.isFinite(durationSec) ? durationSec : 0;
+    const startTime = Date.now();
+    const poll = async () => {
+        if (state.cellularAbort) {
+            state.cellularQueueTimer = null;
+            return;
+        }
+        try {
+            const status = await fetchJSON(`${API_BASE}/cellular/${agentId}/status`);
+            if (!status.running) {
+                await refreshCellularResults(agentId);
+                if (state.cellularQueue.length) {
+                    startCellularQueue();
+                } else {
+                    elements.cellQueueStatus.textContent = 'Queue complete';
+                    state.cellularActiveJob = null;
+                }
+                state.cellularQueueTimer = null;
+                return;
+            }
+            const elapsed = (Date.now() - startTime) / 1000;
+            if (maxDuration && elapsed > maxDuration) {
+                elements.cellQueueStatus.textContent =
+                    `Running ${job.label || ''} (${job.freqstart} - ${job.freqend}) - over ${maxDuration}s`;
+            }
+        } catch (err) {
+            elements.cellStatus.textContent = `Status error: ${err.message}`;
+        }
+        state.cellularQueueTimer = setTimeout(poll, 2000);
+    };
+    poll();
+}
+
+async function refreshCellularResults(agentId) {
+    const targetId = Number(agentId || state.cellularAgentId || state.selectedAgentId);
+    if (!targetId) return;
+    state.cellularAgentId = targetId;
+    try {
+        const status = await fetchJSON(`${API_BASE}/cellular/${targetId}/status`);
+        if (status) {
+            const running = status.running ? 'Running' : 'Idle';
+            const count = status.resultcount ?? '';
+            elements.cellStatus.textContent = `${running}${count !== '' ? ` (${count})` : ''}`;
+            if (!status.running && !state.cellularQueue.length && !state.cellularActiveJob) {
+                stopCellularPolling();
+            }
+        }
+    } catch (err) {
+        elements.cellStatus.textContent = `Status error: ${err.message}`;
+    }
+    try {
+        const results = await fetchJSON(`${API_BASE}/cellular/${targetId}/results`);
+        const detections = results?.results || [];
+        state.cellularResults.set(targetId, detections);
+        renderCellularResults(targetId, detections);
+    } catch (err) {
+        console.warn('Cellular results error', err);
+    }
+}
+
+function renderCellularResults(agentId, detections) {
+    if (!elements.cellTableBody) return;
+    elements.cellTableBody.innerHTML = '';
+    const rows = Array.isArray(detections) ? detections : [];
+    rows.forEach(det => {
+        const tr = document.createElement('tr');
+        const params = det.params ? JSON.stringify(det.params) : '';
+        tr.innerHTML = `
+            <td>${det.timestamp || ''}</td>
+            <td>${det.centerfreqmhz ?? ''}</td>
+            <td>${det.cellid ?? ''}</td>
+            <td>${det.pssid ?? ''}</td>
+            <td>${det.rxpowerdb ?? ''}</td>
+            <td>${det.residualfreqoffsethz ?? ''}</td>
+            <td>${det.duplexmode ?? ''}</td>
+            <td>${params}</td>
+        `;
+        elements.cellTableBody.appendChild(tr);
+    });
+    if (elements.cellCount) {
+        elements.cellCount.textContent = `${rows.length}`;
+    }
+}
+
+function startCellularPolling(agentId) {
+    const targetId = Number(agentId || state.cellularAgentId || state.selectedAgentId);
+    if (!targetId) return;
+    stopCellularPolling();
+    state.cellularPollHandle = setInterval(() => refreshCellularResults(targetId), 3000);
+    refreshCellularResults(targetId);
+}
+
+function stopCellularPolling() {
+    if (state.cellularPollHandle) {
+        clearInterval(state.cellularPollHandle);
+        state.cellularPollHandle = null;
+    }
+}
+
+function renderCellularPresets() {
+    if (!elements.cellPresets) return;
+    const container = elements.cellPresets;
+    container.innerHTML = '<div class="preset-heading">Presets (optional)</div>';
+    CELLULAR_PRESETS.forEach(preset => {
+        const id = `preset-${preset.id}`;
+        const wrapper = document.createElement('label');
+        wrapper.className = 'checkbox-label';
+        wrapper.innerHTML = `<input type="checkbox" value="${preset.id}" id="${id}"/> ${preset.label}`;
+        container.appendChild(wrapper);
+    });
+}
+
+async function ensureHackrfAvailableForCellular(agentId) {
+    try {
+        const spectrum = await fetchJSON(`${API_BASE}/spectrum/${agentId}/status`);
+        const running = spectrum?.scan24running || spectrum?.scan5running;
+        if (running) {
+            const confirmStop = confirm('Spectrum scan is running on this agent. Stop it to run cellular?');
+            if (!confirmStop) return false;
+            await postJSON(`${API_BASE}/spectrum/${agentId}/stop`, {});
+        }
+        return true;
+    } catch (err) {
+        alert(`Unable to confirm spectrum status: ${err.message}`);
+        return false;
+    }
+}
+
+async function ensureHackrfAvailableForSpectrum(agentId) {
+    try {
+        const cellular = await fetchJSON(`${API_BASE}/cellular/${agentId}/status`);
+        if (cellular?.running) {
+            const confirmStop = confirm('Cellular scan is running on this agent. Stop it to run spectrum?');
+            if (!confirmStop) return false;
+            await postJSON(`${API_BASE}/cellular/${agentId}/stop`, {});
+        }
+        return true;
+    } catch (err) {
+        alert(`Unable to confirm cellular status: ${err.message}`);
+        return false;
     }
 }
 

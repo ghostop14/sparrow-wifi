@@ -173,6 +173,19 @@ class AgentClient:
     def gps_status(self) -> Dict[str, Any]:
         return self._get('/gps/status')
 
+    # Cellular (LTE) endpoints
+    def cellular_start_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self._post('/cell/startscan', payload)
+
+    def cellular_stop_scan(self) -> Dict[str, Any]:
+        return self._post('/cell/stopscan', {})
+
+    def cellular_status(self) -> Dict[str, Any]:
+        return self._get('/cell/status')
+
+    def cellular_results(self) -> Dict[str, Any]:
+        return self._get('/cell/results')
+
     def hackrf_status(self) -> Dict[str, Any]:
         return self._get('/spectrum/hackrfstatus')
 
