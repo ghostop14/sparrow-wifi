@@ -50,6 +50,40 @@ body.sidebar-collapsed .sidebar {
     gap: 0.5rem;
 }
 
+.falcon-focus .map-panel {
+    min-height: 100vh;
+    padding: 0.5rem;
+}
+
+.falcon-focus .map-stage,
+.falcon-focus .layer-toggle {
+    display: none;
+}
+
+.falcon-focus .tabs-overlay {
+    position: relative;
+    inset: 0;
+    height: calc(100vh - 1rem);
+    margin: 0;
+}
+
+.cellular-focus .map-panel {
+    min-height: 100vh;
+    padding: 0.5rem;
+}
+
+.cellular-focus .map-stage,
+.cellular-focus .layer-toggle {
+    display: none;
+}
+
+.cellular-focus .tabs-overlay {
+    position: relative;
+    inset: 0;
+    height: calc(100vh - 1rem);
+    margin: 0;
+}
+
 .map-stage {
     position: relative;
     flex: 1;
@@ -114,6 +148,25 @@ body.sidebar-collapsed .map-panel .leaflet-control-zoom {
     box-shadow: 0 0 10px rgba(0, 200, 215, 0.4);
 }
 
+.preset-list {
+    max-height: 140px;
+    overflow-y: auto;
+    border: 1px solid #1d2a36;
+    border-radius: 4px;
+    padding: 0.4rem;
+    background: #0c121a;
+    display: grid;
+    gap: 0.25rem;
+}
+
+.preset-heading {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #8ca0b5;
+    margin-bottom: 0.25rem;
+}
+
 .sidebar-section {
     background: #11161f;
     border-radius: 6px;
@@ -176,6 +229,17 @@ body.sidebar-collapsed .map-panel .leaflet-control-zoom {
 .agent-card .agent-url {
     font-size: 0.8rem;
     color: #999;
+}
+
+.agent-gps-badge {
+    display: inline-block;
+    margin-left: 0.5rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 999px;
+    background: #ffe8e6;
+    color: #c33b28;
+    font-size: 0.75rem;
+    border: 1px solid #f2b1a9;
 }
 
 .agent-actions {
@@ -326,6 +390,18 @@ button {
     flex-basis: 45vh;
 }
 
+body.falcon-focus .tabs-overlay {
+    position: relative;
+    max-height: calc(100vh - 1.5rem);
+    flex-basis: calc(100vh - 1.5rem);
+}
+
+body.cellular-focus .tabs-overlay {
+    position: relative;
+    max-height: calc(100vh - 1.5rem);
+    flex-basis: calc(100vh - 1.5rem);
+}
+
 .tabs-overlay.collapsed {
     position: absolute;
     right: 1rem;
@@ -383,6 +459,14 @@ body.tabs-collapsed .map-panel {
     overflow-y: auto;
     height: 45vh;
     min-height: 12rem;
+}
+
+body.falcon-focus .tab-panels {
+    height: calc(100vh - 7rem);
+}
+
+body.cellular-focus .tab-panels {
+    height: calc(100vh - 7rem);
 }
 
 .overlay-toggle {
@@ -664,9 +748,35 @@ details.detail-content-section summary {
     gap: 0.5rem;
 }
 
+.falcon-focus-toggle {
+    margin-top: 0.4rem;
+}
+
+.cellular-focus-toggle {
+    margin-top: 0.4rem;
+}
+
 .falcon-note {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
     font-size: 0.75rem;
     color: #7da0b5;
+}
+
+.falcon-badge {
+    padding: 0.2rem 0.5rem;
+    border-radius: 999px;
+    background: #e0e8ed;
+    color: #4a6575;
+    font-weight: 600;
+    border: 1px solid #c3d2db;
+}
+
+.falcon-badge.active {
+    background: #ffe8e6;
+    border-color: #f2b1a9;
+    color: #c33b28;
 }
 
 .falcon-pagination {

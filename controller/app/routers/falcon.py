@@ -40,7 +40,7 @@ def falcon_monitor_start(agent_id: int, payload: FalconMonitorRequest, db: Sessi
     agent.monitor_map = monitor_map
     refresh_agent_metadata(db, agent)
     db.add(agent)
-    db.flush()
+    db.commit()
     if alias:
         enriched = dict(response)
         enriched['interface'] = alias

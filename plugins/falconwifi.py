@@ -52,13 +52,17 @@ class FalconWiFiRemoteAgent(object):
             
     def stopAllDeauths(self, interface):
         self.deauthLock.acquire()
-        for curKey in self.activeDeauths:
-            curDeauth = self.activeDeauths[curKey]
-            if curDeauth.interface == interface:
-                curDeauth.kill()
-                del self.activeDeauths[curKey]
-                
-        self.deauthLock.release()
+        try:
+            for curKey in list(self.activeDeauths.keys()):
+                curDeauth = self.activeDeauths[curKey]
+                if curDeauth.interface == interface:
+                    curDeauth.kill()
+                    try:
+                        del self.activeDeauths[curKey]
+                    except:
+                        pass
+        finally:
+            self.deauthLock.release()
                 
     def stopDeauth(self, apMacAddr, clientMacAddr, curInterface, channel):
         potentialKey = FalconDeauth.testKey(apMacAddr, clientMacAddr, channel)

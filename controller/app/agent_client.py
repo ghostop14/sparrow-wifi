@@ -35,7 +35,11 @@ class AgentClient:
 
     def _get(self, path: str, **kwargs) -> Dict[str, Any]:
         response = self._get_response(path, **kwargs)
-        return response.json()
+        try:
+            return response.json()
+        except Exception:
+            # Some agent endpoints return an empty body; normalize to empty dict
+            return {}
 
     def _post(self, path: str, data: Dict[str, Any] | None = None, **kwargs) -> Dict[str, Any]:
         url = f"{self.base_url}{path}"
@@ -168,6 +172,19 @@ class AgentClient:
 
     def gps_status(self) -> Dict[str, Any]:
         return self._get('/gps/status')
+
+    # Cellular (LTE) endpoints
+    def cellular_start_scan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self._post('/cell/startscan', payload)
+
+    def cellular_stop_scan(self) -> Dict[str, Any]:
+        return self._post('/cell/stopscan', {})
+
+    def cellular_status(self) -> Dict[str, Any]:
+        return self._get('/cell/status')
+
+    def cellular_results(self) -> Dict[str, Any]:
+        return self._get('/cell/results')
 
     def hackrf_status(self) -> Dict[str, Any]:
         return self._get('/spectrum/hackrfstatus')

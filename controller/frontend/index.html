@@ -82,8 +82,9 @@
                 <div class="tabs">
                     <button class="tab-button active" data-tab="wifi-tab">Wi-Fi</button>
                     <button class="tab-button" data-tab="bluetooth-tab">Bluetooth</button>
-                    <button class="tab-button" data-tab="scans-tab">Scan Jobs</button>
+                    <button class="tab-button" data-tab="cellular-tab">Cellular</button>
                     <button class="tab-button" data-tab="falcon-tab">Falcon</button>
+                    <button class="tab-button" data-tab="scans-tab">Scan Jobs</button>
                 </div>
                 <div class="tab-panels">
                     <div class="tab-panel active" id="wifi-tab">
@@ -137,20 +138,80 @@
                             <tbody></tbody>
                         </table>
                     </div>
-                    <div class="tab-panel" id="scans-tab">
-                        <table id="scans-table">
-                            <thead>
-                                <tr>
-                                    <th>ID</th>
-                                    <th>Agent</th>
-                                    <th>Type</th>
-                                    <th>Status</th>
-                                    <th>Requested</th>
-                                    <th>Result</th>
-                                </tr>
-                            </thead>
-                            <tbody></tbody>
-                        </table>
+                    <div class="tab-panel" id="cellular-tab">
+                        <div class="cellular-panel">
+                            <div class="cellular-controls">
+                                <label>
+                                    Mode
+                                    <select id="cellular-mode">
+                                        <option value="lte" selected>LTE</option>
+                                    </select>
+                                </label>
+                                <label>
+                                    Agent
+                                    <select id="cellular-agent"></select>
+                                </label>
+                                <div id="cellular-presets" class="preset-list"></div>
+                                <label>
+                                    Start Freq
+                                    <input type="text" id="cellular-freq-start" placeholder="750e6" />
+                                </label>
+                                <label>
+                                    End Freq
+                                    <input type="text" id="cellular-freq-end" placeholder="760e6" />
+                                </label>
+                                <label>
+                                    Gain
+                                    <input type="text" id="cellular-gain" placeholder="40" />
+                                </label>
+                                <label>
+                                    Tries
+                                    <input type="number" id="cellular-numtry" min="1" placeholder="1" />
+                                </label>
+                                <label>
+                                    PPM
+                                    <input type="text" id="cellular-ppm" placeholder="1" />
+                                </label>
+                                <label>
+                                    Correction
+                                    <input type="text" id="cellular-correction" placeholder="1.0" />
+                                </label>
+                                    <label>
+                                        Expected duration (sec)
+                                        <input type="number" id="cellular-duration" min="3" value="8" />
+                                    </label>
+                                <label>
+                                    Binary Path (optional)
+                                    <input type="text" id="cellular-binpath" placeholder="/usr/local/bin/CellSearch" />
+                                </label>
+                                <div class="button-row">
+                                    <button type="button" id="cellular-start">Start Scan</button>
+                                    <button type="button" id="cellular-stop">Stop</button>
+                                    <button type="button" id="cellular-refresh">Refresh Results</button>
+                                </div>
+                                <button type="button" id="cellular-focus-toggle" class="cellular-focus-toggle">Focus Cellular</button>
+                                <div id="cellular-status">Idle</div>
+                                <div id="cellular-queue-status"></div>
+                            </div>
+                            <div class="table-controls">
+                                <div><strong id="cellular-count">0</strong> detections</div>
+                            </div>
+                            <table id="cellular-table">
+                                <thead>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Freq (MHz)</th>
+                                        <th>Cell ID</th>
+                                        <th>PSS ID</th>
+                                        <th>RX Power (dB)</th>
+                                        <th>Residual (Hz)</th>
+                                        <th>Duplex</th>
+                                        <th>Params</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
                     </div>
                     <div class="tab-panel" id="falcon-tab">
                         <div class="falcon-panel">
@@ -180,6 +241,7 @@
                                         <button type="button" id="falcon-scan-status">Refresh Status</button>
                                     </div>
                                 </form>
+                                <button type="button" id="falcon-focus-toggle" class="falcon-focus-toggle">Focus Falcon</button>
                             </div>
                             <div class="falcon-indicator" id="falcon-poll-indicator">Idle</div>
                             <div id="falcon-results">
@@ -188,6 +250,21 @@
                             <h4>Falcon Log</h4>
                             <pre id="falcon-status-log"></pre>
                         </div>
+                    </div>
+                    <div class="tab-panel" id="scans-tab">
+                        <table id="scans-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Agent</th>
+                                    <th>Type</th>
+                                    <th>Status</th>
+                                    <th>Requested</th>
+                                    <th>Result</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
                     </div>
                 </div>
             </div>
