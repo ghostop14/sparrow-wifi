@@ -495,16 +495,30 @@ class WirelessEngine(object):
                 return '<Unknown>'
         else:
             return ssid
-        
-    def getInterfaces(printResults=False):
-        result = subprocess.run(['iwconfig'], stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
-        wirelessResult = result.stdout.decode('UTF-8')
-        p = re.compile('^(w.*?) .*', re.MULTILINE)
-        tmpInterfaces = p.findall(wirelessResult)
-        
+
+    def getInterfaces(printResults=False) -> list:
+        """ Returns a list of wireless interfaces using the `nmcli device status`,`iwconfig`, or `iw dev` command. """
+        programs = {
+                ('nmcli', '--colors', 'no', 'device', 'status'): '^w([a-z0-9]+)\\s+wifi\\s+',
+                ('iwconfig'):  "^(w.*?) .*",
+                ('iw', 'dev'): "Interface (w[a-z0-9]+)",
+        }
+
+        for program, pattern in programs.items():
+           try:
+                result = subprocess.run(list(program), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                wireless_result = result.stdout.decode('UTF-8')
+                p = re.compile(pattern, re.MULTILINE)
+                tmpInterfaces = p.findall(wireless_result)
+           except FileNotFoundError:
+               pass
+
+        if printResults:
+            print("tmpInterfaces: ", tmpInterfaces)
+
         retVal = []
-        
-        if (len(tmpInterfaces) > 0):
+
+        if len(tmpInterfaces) > 0:
             for curInterface in tmpInterfaces:
                 tmpStr=curInterface.replace(' ','')
                 retVal.append(tmpStr)
