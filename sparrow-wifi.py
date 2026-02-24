@@ -897,11 +897,11 @@ class mainWindow(QMainWindow):
         
         # Scan Mode
         self.lblScanMode = QLabel("Scan Mode:", self)
-        self.lblScanMode.setGeometry(380, 30, 120, 30)
-        
+        self.lblScanMode.setGeometry(380, 30, 80, 30)
+
         self.scanModeCombo = QComboBox(self)
         self.scanModeCombo.setStatusTip('All-channel normal scans can take 5-10 seconds per sweep.  Use Hunt mode for faster response time on a selected channel.')
-        self.scanModeCombo.move(455, 30)
+        self.scanModeCombo.move(465, 30)
         self.scanModeCombo.addItem("Normal")
         self.scanModeCombo.addItem("Hunt")
         self.scanModeCombo.currentIndexChanged.connect(self.onScanModeChanged)

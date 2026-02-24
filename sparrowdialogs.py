@@ -1121,10 +1121,10 @@ class BluetoothDialog(QDialog):
         self.firstUpdate = True
 
         self.lblInterface = QLabel("Scan Type:", self)
-        self.lblInterface.setGeometry(5, 10, 70, 30)
+        self.lblInterface.setGeometry(5, 12, 75, 27)
 
         self.comboScanType = QComboBox(self)
-        self.comboScanType.move(90, 15)
+        self.comboScanType.setGeometry(85, 12, 215, 27)
 
         self.fillScanTypes()
 
@@ -1133,7 +1133,7 @@ class BluetoothDialog(QDialog):
         self.btnScan.setCheckable(True)
         self.btnScan.setShortcut('Ctrl+S')
         self.btnScan.setStyleSheet("background-color: rgba(0,128,192,255); border: none;")
-        self.btnScan.setGeometry(298, 12, 120, 27)
+        self.btnScan.setGeometry(310, 12, 120, 27)
         self.btnScan.clicked[bool].connect(self.onScanClicked)
 
         # Map Button
