@@ -499,7 +499,7 @@ class WirelessEngine(object):
     def getInterfaces(printResults=False) -> list:
         """ Returns a list of wireless interfaces using the `nmcli device status`,`iwconfig`, or `iw dev` command. """
         programs = {
-                ('nmcli', '--colors', 'no', 'device', 'status'): '^(w[a-z0-9]+)\\s+wifi\\s+',
+                ('nmcli', '--colors', 'no', '--terse'): '^(w[a-z0-9]+):wifi:',
                 ('iwconfig'):  "^(w.*?) .*",
                 ('iw', 'dev'): "Interface (w[a-z0-9]+)",
         }
