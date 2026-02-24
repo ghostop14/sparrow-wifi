@@ -19,6 +19,7 @@
 # 
 
 import os
+import shutil
 import subprocess
 import re
 import datetime
@@ -104,6 +105,25 @@ channelToFreq['189'] = '4945'
 channelToFreq['192'] = '4960'
 channelToFreq['196'] = '4980'
    
+# ------------------  Interface detection -------------------------------------
+# Cached result of which tool is available for listing wireless interfaces.
+# None means not yet determined. Set on first call to getInterfaces().
+interfaceApp = None
+
+_INTERFACE_APPS = [
+    # (executable, full command, regex to extract interface names)
+    ('iwconfig', ['iwconfig'],                                               r'^(w.*?) .*'),
+    ('iw',       ['iw', 'dev'],                                              r'Interface (w[a-z0-9]+)'),
+    ('nmcli',    ['nmcli', '--colors', 'no', '--terse', 'device', 'status'], r'^(w[a-z0-9]+):wifi:'),
+]
+
+def _findInterfaceApp():
+    """Return the first available interface-listing tool as (cmd, pattern), or None."""
+    for exe, cmd, pattern in _INTERFACE_APPS:
+        if shutil.which(exe):
+            return (cmd, pattern)
+    return None
+
 # ------------------  WirelessNetwork class ------------------------------------
 class WirelessClient(object):
     def __init__(self):
@@ -496,24 +516,32 @@ class WirelessEngine(object):
         else:
             return ssid
         
-    def getInterfaces(printResults=False):
-        result = subprocess.run(['iwconfig'], stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
-        wirelessResult = result.stdout.decode('UTF-8')
-        p = re.compile('^(w.*?) .*', re.MULTILINE)
-        tmpInterfaces = p.findall(wirelessResult)
-        
+    def getInterfaces(printResults=False) -> list:
+        """ Returns a list of wireless interfaces using iwconfig, iw, or nmcli (whichever is available). """
+        global interfaceApp
+        if interfaceApp is None:
+            interfaceApp = _findInterfaceApp()
+
         retVal = []
-        
-        if (len(tmpInterfaces) > 0):
+
+        if interfaceApp is None:
+            if printResults:
+                print("Error: No wireless interface tool (iwconfig/iw/nmcli) found.")
+            return retVal
+
+        cmd, pattern = interfaceApp
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        wireless_result = result.stdout.decode('UTF-8')
+        tmpInterfaces = re.findall(pattern, wireless_result, re.MULTILINE)
+
+        if tmpInterfaces:
             for curInterface in tmpInterfaces:
-                tmpStr=curInterface.replace(' ','')
+                tmpStr = curInterface.replace(' ', '')
                 retVal.append(tmpStr)
-                # debug
-                if (printResults):
+                if printResults:
                     print(tmpStr)
         else:
-            # debug
-            if (printResults):
+            if printResults:
                 print("Error: No wireless interfaces found.")
 
         return retVal
