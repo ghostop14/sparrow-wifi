@@ -77,6 +77,9 @@ def GetCenterCoordFromMarkers(markers):
     maxlong = None
     
     for curMarker in markers:
+        if not curMarker.gpsValid or (curMarker.latitude == 0.0 and curMarker.longitude == 0.0):
+            continue
+
         if minlat == None:
             minlat = curMarker.latitude
         if maxlat == None:
@@ -85,16 +88,16 @@ def GetCenterCoordFromMarkers(markers):
             minlong = curMarker.longitude
         if maxlong == None:
             maxlong = curMarker.longitude
-        
+
         if (curMarker.latitude < minlat):
             minlat = curMarker.latitude
-            
+
         if (curMarker.latitude > maxlat):
             maxlat = curMarker.latitude
-            
+
         if (curMarker.longitude < minlong):
             minlong = curMarker.longitude
-            
+
         if (curMarker.longitude > maxlong):
             maxlong = curMarker.longitude
 
@@ -114,10 +117,14 @@ class MapEngineBase(object):
     def init(self):
         pass
         
+# NOTE: MapEngineGoogle requires a valid Google Maps API key (mandatory since 2018).
+# Without a key the map will display a development-only watermark or be blocked entirely.
+# To use this engine, replace the key= parameter value in the script URL below with a
+# real key from https://console.cloud.google.com/  No key is currently set.
 class MapEngineGoogle(MapEngineBase):
     def init(self):
         super().__init__()
-        
+
     def createMap(fileName,title,markers, connectMarkers=False, openWhenDone=True, mapType=MapEngineBase.MAP_TYPE_DEFAULT):
         centerLat, centerLong = GetCenterCoordFromMarkers(markers)
         
@@ -127,7 +134,7 @@ class MapEngineGoogle(MapEngineBase):
         htmlString = '<html><head><meta name="viewport" content="initial-scale=1.0, user-scalable=no" />\n'
         htmlString += '<meta http-equiv="content-type" content="text/html; charset=UTF-8"/>\n'
         htmlString += '<title>' + title + '</title>\n'
-        htmlString += '<script type="text/javascript" src="https://maps.googleapis.com/maps/api/js?libraries=visualization&sensor=true_or_false"></script>\n'
+        htmlString += '<script type="text/javascript" src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&libraries=visualization"></script>\n'
         htmlString += '<script type="text/javascript">\n'
         htmlString += '	function initialize() {\n'
         htmlString +='		var centerlatlng = new google.maps.LatLng('+str(centerLat) + ',' + str(centerLong) + ');\n'
@@ -138,7 +145,7 @@ class MapEngineGoogle(MapEngineBase):
             htmlString +='			mapTypeId: google.maps.MapTypeId.HYBRID\n'
             labelColor = 'white'
         elif mapType == MapEngineBase.MAP_TYPE_SATELLITE_ONLY:
-            htmlString +='			mapTypeId: google.maps.MapTypeId.SATELLITE_ONLY\n'
+            htmlString +='			mapTypeId: google.maps.MapTypeId.SATELLITE\n'
             labelColor = 'white'
         elif mapType == MapEngineBase.MAP_TYPE_TERRAIN:
             htmlString +='			mapTypeId: google.maps.MapTypeId.TERRAIN\n'
@@ -266,19 +273,18 @@ class MapEngineOSM(MapEngineBase):
         htmlString += '<head>\n'
         htmlString += '	<meta charset="utf-8" />\n'
         htmlString += '	<title>' + title + '</title>\n'
-        htmlString += '	<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/openlayers/openlayers.github.io@master/en/v6.12.0/css/ol.css" type="text/css">\n'
-        htmlString += '	<script src="https://cdn.jsdelivr.net/gh/openlayers/openlayers.github.io@master/en/v6.12.0/build/ol.js"></script>\n'
-        htmlString += '	<!-- These are required for the popup-->\n'
-        htmlString += '	<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.js"></script>\n'
+        htmlString += '	<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@10.0.0/ol.css" type="text/css">\n'
+        htmlString += '	<script src="https://cdn.jsdelivr.net/npm/ol@10.0.0/dist/ol.js"></script>\n'
         htmlString += '	<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">\n'
         htmlString += '	<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>\n'
         htmlString += '\n'
         htmlString += '\n'
         htmlString += '	<style>\n'
         htmlString += '		/* Map settings */\n'
+        htmlString += '		html, body { margin: 0; padding: 0; height: 100%; }\n'
         htmlString += '		#map {\n'
-        htmlString += '			width: 1024px;\n'
-        htmlString += '			height: 768px;\n'
+        htmlString += '			width: 100%;\n'
+        htmlString += '			height: 100vh;\n'
         htmlString += '		}\n'
         htmlString += '		.ol-popup {\n'
         htmlString += '		  margin-left: -253px;\n'
@@ -355,7 +361,6 @@ class MapEngineOSM(MapEngineBase):
         htmlString += '			// Map\n'
         htmlString += '			var map = new ol.Map({\n'
         htmlString += '				target: "map",\n'
-        htmlString += '				renderer: "canvas", // Force the renderer to be used\n'
         htmlString += '				layers: [\n'
         htmlString += '					new ol.layer.Tile({\n'
         htmlString += '						source: map_server\n'
@@ -372,7 +377,7 @@ class MapEngineOSM(MapEngineBase):
         htmlString += '			var point;\n'
         htmlString += '			var pointFeature;\n'
         for curMarker in markers:
-            if curMarker.latitude != 0.0 or curMarker.longitude != 0.0:
+            if curMarker.gpsValid and not (curMarker.latitude == 0.0 and curMarker.longitude == 0.0):
                 htmlString += '			point = new ol.geom.Point(ol.proj.transform([' + str(curMarker.longitude) + ', ' + str(curMarker.latitude) + '], "EPSG:4326", "EPSG:3857"));\n'
                 htmlString += '			pointFeature = new ol.Feature({ \n'
                 htmlString += '				geometry: point, \n'
@@ -382,6 +387,21 @@ class MapEngineOSM(MapEngineBase):
                 htmlString += '			pointSource.addFeature(pointFeature);\n'
                 htmlString += '\n'
             
+        # Draw a polyline connecting all valid markers
+        if connectMarkers:
+            htmlString += '			// Connect markers with a polyline\n'
+            htmlString += '			var lineCoords = [\n'
+            for curMarker in markers:
+                if curMarker.gpsValid and not (curMarker.latitude == 0.0 and curMarker.longitude == 0.0):
+                    htmlString += '				ol.proj.transform([' + str(curMarker.longitude) + ', ' + str(curMarker.latitude) + '], "EPSG:4326", "EPSG:3857"),\n'
+            htmlString += '			];\n'
+            htmlString += '			var lineFeature = new ol.Feature({ geometry: new ol.geom.LineString(lineCoords) });\n'
+            htmlString += '			lineFeature.setStyle(new ol.style.Style({\n'
+            htmlString += '				stroke: new ol.style.Stroke({ color: "#6495ED", width: 5 })\n'
+            htmlString += '			}));\n'
+            htmlString += '			pointSource.addFeature(lineFeature);\n'
+            htmlString += '\n'
+
         htmlString += '			// Set up popup bubble layer\n'
         htmlString += '			const popup = new ol.Overlay({\n'
         htmlString += '				element: document.getElementById("popup"),\n'
@@ -399,29 +419,34 @@ class MapEngineOSM(MapEngineBase):
         htmlString += '				\n'
         htmlString += '					popup_content = feature.get("name");\n'
         htmlString += '					if (popup_content == null) {\n'
-        htmlString += '						$(element).popover("dispose");\n'
+        htmlString += '						var existingPop = bootstrap.Popover.getInstance(element);\n'
+        htmlString += '						if (existingPop) { existingPop.dispose(); }\n'
         htmlString += '						return;\n'
         htmlString += '					}\n'
         htmlString += '\n'
         htmlString += '					popup.setPosition(evt.coordinate);\n'
         htmlString += '\n'
-        htmlString += '					$(element).popover({\n'
-        htmlString += '						container: element,\n'
+        htmlString += '					var existingPop = bootstrap.Popover.getInstance(element);\n'
+        htmlString += '					if (existingPop) { existingPop.dispose(); }\n'
+        htmlString += '					var pop = new bootstrap.Popover(element, {\n'
+        htmlString += '						container: "body",\n'
         htmlString += '						placement: "top",\n'
+        htmlString += '						trigger: "manual",\n'
         htmlString += '						html: true,\n'
         htmlString += '						content: popup_content,\n'
         htmlString += '					});\n'
-        htmlString += '					$(element).popover("show");\n'
+        htmlString += '					pop.show();\n'
         htmlString += '				} else {\n'
         htmlString += '					const element = document.getElementById("popup");\n'
-        htmlString += '					$(element).popover("dispose");\n'
+        htmlString += '					var existingPop = bootstrap.Popover.getInstance(element);\n'
+        htmlString += '					if (existingPop) { existingPop.dispose(); }\n'
         htmlString += '				}\n'
         htmlString += '			});\n'
         htmlString += '\n'
         htmlString += '		}\n'
         htmlString += '	</script>\n'
         htmlString += '	<!--map placeholder div: -->\n'
-        htmlString += '	<div id="map" style="width:1024px; height:768px;"></div>\n'
+        htmlString += '	<div id="map"></div>\n'
         htmlString += '	<div id="popup" class="ol-popup"></div>\n'
         htmlString += '</body>\n'
         htmlString += '\n'
