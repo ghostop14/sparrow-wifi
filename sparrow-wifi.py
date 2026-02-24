@@ -85,11 +85,24 @@ def getOUIDB():
             # We don't have the file, let's get it
             updateflag = True
             
+        # Fix for manuf 1.1.5: the default GitLab raw URLs return 404.
+        # Override with the working Wireshark direct download URLs.
+        manuf.MacParser.MANUF_URL = "https://www.wireshark.org/download/automated/data/manuf"
+        manuf.MacParser.WFA_URL = "https://raw.githubusercontent.com/wireshark/wireshark/master/wka"
         try:
-            ouidb = manuf.MacParser(update=updateflag)
+            if updateflag:
+                # Pass manuf_name so the file is saved locally (avoids permission
+                # errors writing to the system package directory).
+                ouidb = manuf.MacParser(manuf_name='manuf', update=True)
+            else:
+                ouidb = manuf.MacParser(manuf_name='manuf', update=False)
         except:
-            print("Error updating the MAC address database.  Please check if the manuf module needs updating with 'sudo pip3 install --upgrade manuf'.")
-            ouidb = None
+            try:
+                # Fall back to the bundled database if download fails.
+                ouidb = manuf.MacParser(update=False)
+            except:
+                print("Error updating the MAC address database.  Please check if the manuf module needs updating with 'sudo pip3 install --upgrade manuf'.")
+                ouidb = None
     else:
         ouidb = None
         

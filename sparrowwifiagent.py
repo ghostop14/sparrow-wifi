@@ -375,10 +375,20 @@ def getOUIDB():
             # We don't have the file, let's get it
             updateflag = True
 
+        # Fix for manuf 1.1.5: the default GitLab raw URLs return 404.
+        # Override with the working Wireshark direct download URLs.
+        manuf.MacParser.MANUF_URL = "https://www.wireshark.org/download/automated/data/manuf"
+        manuf.MacParser.WFA_URL = "https://raw.githubusercontent.com/wireshark/wireshark/master/wka"
         try:
-            ouidb = manuf.MacParser(update=updateflag)
+            if updateflag:
+                ouidb = manuf.MacParser(manuf_name='manuf', update=True)
+            else:
+                ouidb = manuf.MacParser(manuf_name='manuf', update=False)
         except:
-            ouidb = None
+            try:
+                ouidb = manuf.MacParser(update=False)
+            except:
+                ouidb = None
     else:
         ouidb = None
 
