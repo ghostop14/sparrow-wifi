@@ -454,6 +454,26 @@ class WirelessNetwork(object):
     def getKey(self):
         return self.macAddr + self.ssid+str(self.channel)
         
+# Module-level compiled regex patterns for parseIWoutput() — compiled once, not per-call
+_P_BSS = re.compile(r'^BSS (.*?)\(')
+_P_SSID = re.compile('^.+?SSID: +(.*)')
+_P_ESS = re.compile('^	capability:.*(ESS)')
+_P_ESS_PRIVACY = re.compile('^	capability:.*(ESS Privacy)')
+_P_IBSS = re.compile('^	capability:.*(IBSS)')
+_P_IBSS_PRIVACY = re.compile('^	capability:.*(IBSS Privacy)')
+_P_AUTH_SUITES = re.compile('.*?Authentication suites: *(.*)')
+_P_PW_CIPHERS = re.compile('.*?Pairwise ciphers: *(.*)')
+_P_PARAM_CHANNEL = re.compile('^.*?DS Parameter set: channel +([0-9]+).*')
+_P_PRIMARY_CHANNEL = re.compile('^.*?primary channel: +([0-9]+).*')
+_P_FREQ = re.compile('^.*?freq:.*?([0-9]+).*')
+_P_SIGNAL = re.compile(r'^.*?signal:.*?([\-0-9]+).*?dBm')
+_P_HT = re.compile('.*?HT20/HT40.*')
+_P_BW = re.compile('.*?\\* channel width:.*?([0-9]+) MHz.*')
+_P_SECONDARY = re.compile('^.*?secondary channel offset: *([^ \\t]+).*')
+_P_THIRDFREQ = re.compile('^.*?center freq segment 1: *([^ \\t]+).*')
+_P_STATIONCOUNT = re.compile('.*station count: ([0-9]+)')
+_P_UTILIZATION = re.compile('.*channel utilisation: ([0-9]+)/255')
+
 class WirelessEngine(object):
     def __init__(self):
         super().__init__()
@@ -698,26 +718,25 @@ class WirelessEngine(object):
         
     def parseIWoutput(iwOutput):
         
-        # Define search regexes once:
-        p_bss = re.compile(r'^BSS (.*?)\(')
-        p_ssid = re.compile('^.+?SSID: +(.*)')
-        p_ess = re.compile('^	capability:.*(ESS)')
-        p_ess_privacy = re.compile('^	capability:.*(ESS Privacy)')
-        p_ibss = re.compile('^	capability:.*(IBSS)')
-        p_ibss_privacy = re.compile('^	capability:.*(IBSS Privacy)')
-        p_auth_suites = re.compile('.*?Authentication suites: *(.*)')
-        p_pw_ciphers = re.compile('.*?Pairwise ciphers: *(.*)')
-        p_param_channel = re.compile('^.*?DS Parameter set: channel +([0-9]+).*')
-        p_primary_channel = re.compile('^.*?primary channel: +([0-9]+).*')
-        p_freq = re.compile('^.*?freq:.*?([0-9]+).*')
-        p_signal = re.compile(r'^.*?signal:.*?([\-0-9]+).*?dBm')
-        p_ht = re.compile('.*?HT20/HT40.*')
-        p_bw = re.compile('.*?\\* channel width:.*?([0-9]+) MHz.*')
-        p_secondary = re.compile('^.*?secondary channel offset: *([^ \\t]+).*')
-        p_thirdfreq = re.compile('^.*?center freq segment 1: *([^ \\t]+).*')
-        p_stationcount = re.compile('.*station count: ([0-9]+)')
-        p_utilization = re.compile('.*channel utilisation: ([0-9]+)/255')
-        # start
+        # start (regex patterns are module-level constants _P_BSS, _P_SSID, etc.)
+        p_bss = _P_BSS
+        p_ssid = _P_SSID
+        p_ess = _P_ESS
+        p_ess_privacy = _P_ESS_PRIVACY
+        p_ibss = _P_IBSS
+        p_ibss_privacy = _P_IBSS_PRIVACY
+        p_auth_suites = _P_AUTH_SUITES
+        p_pw_ciphers = _P_PW_CIPHERS
+        p_param_channel = _P_PARAM_CHANNEL
+        p_primary_channel = _P_PRIMARY_CHANNEL
+        p_freq = _P_FREQ
+        p_signal = _P_SIGNAL
+        p_ht = _P_HT
+        p_bw = _P_BW
+        p_secondary = _P_SECONDARY
+        p_thirdfreq = _P_THIRDFREQ
+        p_stationcount = _P_STATIONCOUNT
+        p_utilization = _P_UTILIZATION
         retVal = {}
         curNetwork = None
         now=datetime.datetime.now()

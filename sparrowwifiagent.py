@@ -27,7 +27,9 @@ import requests
 
 import argparse
 import configparser
-# import subprocess
+import subprocess
+import signal
+import time
 
 from socket import *
 from time import sleep
@@ -57,6 +59,9 @@ except:
     hasOUILookup = False
 
 # ------   Global setup ------------
+_scanCache = {}   # {interface: (timestamp, jsonstr)}
+_SCAN_CACHE_TTL = 8.0  # seconds
+
 gpsEngine = None
 curTime = datetime.datetime.now()
 
@@ -199,14 +204,9 @@ def restartAgent():
     else:
         exefile = 'python3'
 
-    # params = [exefile, __file__, '--delaystart=2']
-
-    newCommand = exefile + ' ' + __file__ + ' --delaystart=2 &'
-    os.system(newCommand)
-    # subprocess.Popen(params, stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-    # result = subprocess.run(params, stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-    # restartResult = result.stdout.decode('UTF-8')
-    os.kill(os.getpid(), 9)
+    params = [exefile, __file__, '--delaystart=2']
+    subprocess.Popen(params, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    os.kill(os.getpid(), signal.SIGTERM)
 
 def updateRunningConfig(newCfg):
     global runningcfg
@@ -742,6 +742,8 @@ class AutoAgentScanThread(Thread):
         self.discoveredNetworks = {}
         self.discoveredBluetoothDevices = {}
         self.daemon = True
+        self._networksDirty = False
+        self._lastExportTime = 0.0
 
         try:
             self.hostname = os.uname()[1]
@@ -829,6 +831,7 @@ class AutoAgentScanThread(Thread):
                         curKey = curNet.getKey()
                         if curKey not in self.discoveredNetworks.keys():
                             self.discoveredNetworks[curKey] = curNet
+                            self._networksDirty = True
                         else:
                             # Network exists, need to update it.
                             pastNet = self.discoveredNetworks[curKey]
@@ -846,6 +849,7 @@ class AutoAgentScanThread(Thread):
                                 curNet.strongestgps.isValid = pastNet.strongestgps.isValid
 
                             self.discoveredNetworks[curKey] = curNet
+                            self._networksDirty = True
 
                     if not self.signalStop:
                         self.exportNetworks()
@@ -868,9 +872,13 @@ class AutoAgentScanThread(Thread):
                                 if curDevice.rssi >= curDevice.strongestRssi:
                                     curDevice.strongestRssi = curDevice.rssi
                                     curDevice.strongestgps.copy(gpsCoord)
-                        # export
-                        self.exportBluetoothDevices(bluetooth.devices)
+
+                        # Snapshot under lock, then release before disk I/O
+                        devicesCopy = dict(bluetooth.devices)
                         bluetooth.deviceLock.release()
+
+                        # export (lock is no longer held during file write)
+                        self.exportBluetoothDevices(devicesCopy)
 
             sleep(self.scanDelay)
 
@@ -924,6 +932,12 @@ class AutoAgentScanThread(Thread):
         btOutputFile.close()
 
     def exportNetworks(self):
+        now = time.monotonic()
+        if not self._networksDirty and (now - self._lastExportTime) < 5.0:
+            return
+        self._networksDirty = False
+        self._lastExportTime = now
+
         try:
             self.outputFile = open(self.filename, 'w')
         except:
@@ -1927,6 +1941,12 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
 
                 curLock = lockList[curInterface]
 
+                # Return cached result if fresh enough (avoids serializing concurrent requests)
+                cached = _scanCache.get(curInterface)
+                if cached and (time.monotonic() - cached[0]) < _SCAN_CACHE_TTL:
+                    s.wfile.write(cached[1].encode("UTF-8"))
+                    return
+
                 if (curLock):
                     curLock.acquire()
 
@@ -1951,6 +1971,9 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
 
                 if (curLock):
                     curLock.release()
+
+                # Cache the result for subsequent rapid requests on the same interface
+                _scanCache[curInterface] = (time.monotonic(), jsonstr)
 
                 s.wfile.write(jsonstr.encode("UTF-8"))
 

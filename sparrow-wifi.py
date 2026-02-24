@@ -109,10 +109,12 @@ def getOUIDB():
     return ouidb
     
 # ------------------  Global functions for agent HTTP requests ------------------------------
+_httpSession = requests.Session()
+
 def makeGetRequest(url, waitTimeout=6):
     try:
         # Not using a timeout can cause the request to hang indefinitely
-        response = requests.get(url, timeout=waitTimeout)
+        response = _httpSession.get(url, timeout=waitTimeout)
     except:
         return -1, ""
         
@@ -514,11 +516,12 @@ class ScanThread(BaseThreadClass):
                 if (retCode == 0):
                     # self.statusBar().showMessage('Scan complete.  Found ' + str(len(wirelessNetworks)) + ' networks')
                     if wirelessNetworks and (len(wirelessNetworks) > 0) and (not self.signalStop):
-                        self.mainWin.scanresults.emit(wirelessNetworks)
+                        if not self.mainWin._tableUpdateInProgress:
+                            self.mainWin.scanresults.emit(wirelessNetworks)
                 else:
                         if (retCode != WirelessNetwork.ERR_DEVICEBUSY):
                             self.mainWin.errmsg.emit(retCode, errString)
-            
+
                 if (retCode == WirelessNetwork.ERR_DEVICEBUSY):
                     # Shorter sleep for faster results
                     # sleep(0.2)
@@ -533,7 +536,8 @@ class ScanThread(BaseThreadClass):
                     if (retCode == 0):
                         # self.statusBar().showMessage('Scan complete.  Found ' + str(len(wirelessNetworks)) + ' networks')
                         if wirelessNetworks and (len(wirelessNetworks) > 0) and (not self.signalStop):
-                            self.mainWin.scanresults.emit(wirelessNetworks)
+                            if not self.mainWin._tableUpdateInProgress:
+                                self.mainWin.scanresults.emit(wirelessNetworks)
                     else:
                             if (retCode != WirelessNetwork.ERR_DEVICEBUSY):
                                 self.mainWin.errmsg.emit(retCode, errString)
@@ -590,17 +594,18 @@ class RemoteScanThread(BaseThreadClass):
             if (retCode == 0):
                 # self.statusBar().showMessage('Scan complete.  Found ' + str(len(wirelessNetworks)) + ' networks')
                 if wirelessNetworks and (len(wirelessNetworks) > 0) and (not self.signalStop):
-                    self.mainWin.scanresults.emit(wirelessNetworks)
+                    if not self.mainWin._tableUpdateInProgress:
+                        self.mainWin.scanresults.emit(wirelessNetworks)
             else:
                     if (retCode != WirelessNetwork.ERR_DEVICEBUSY):
                         self.mainWin.errmsg.emit(retCode, errString)
-            
+
             if (retCode == WirelessNetwork.ERR_DEVICEBUSY):
                 # Shorter sleep for faster results
                 sleep(0.2)
             else:
                 sleep(self.scanDelay)
-            
+
         self.threadRunning = False
 
 # ------------------  GPSEngine override onGPSResult to notify the main window when the GPS goes synchnronized  ------------------------------
@@ -729,6 +734,8 @@ class mainWindow(QMainWindow):
         self.lastSeries = None
 
         self.updateLock = Lock()
+        self._vendorCache = {}
+        self._tableUpdateInProgress = False
         self.scanThread = None
         self.scanDelay = 0.5
         self.scanresults.connect(self.scanResults)
@@ -2443,8 +2450,9 @@ class mainWindow(QMainWindow):
                 
                 while (self.remoteScanThread.threadRunning):
                     self.statusBar().showMessage('Waiting for active scan to terminate...')
-                    sleep(0.2)
-                    
+                    QApplication.processEvents()
+                    sleep(0.05)
+
                 self.remoteScanThread = None
                     
             self.statusBar().showMessage('Ready')
@@ -2497,8 +2505,9 @@ class mainWindow(QMainWindow):
 
                 while (self.scanThread.threadRunning):
                     self.statusBar().showMessage('Waiting for active scan to terminate...')
-                    sleep(0.2)
-                    
+                    QApplication.processEvents()
+                    sleep(0.05)
+
                 self.scanThread = None
                 
                 self.setArrowCursor()
@@ -2573,8 +2582,9 @@ class mainWindow(QMainWindow):
                 self.scanThread.signalStop = True
                 
                 while (self.scanThread.threadRunning):
-                    sleep(0.2)
-                    
+                    QApplication.processEvents()
+                    sleep(0.05)
+
                 self.scanThread = None
                 self.scanRunning = False
                 self.btnScan.setChecked(False)
@@ -2785,6 +2795,9 @@ class mainWindow(QMainWindow):
             # Loop through each network in the network table, and compare it against the new networks.
             # If we find one, then we already know the network.  Just update it.
             
+            # Build O(1) lookup dict once rather than O(N) inner loop per row
+            networkLookup = {net.getKey(): net for net in wirelessNetworks.values()}
+
             # Range goes to last # - 1
             for curRow in range(0, numRows):
                 try:
@@ -2793,79 +2806,76 @@ class mainWindow(QMainWindow):
                     curData = None
                     
                 if (curData):
-                    # We already have the network.  just update it
-                    for curKey in wirelessNetworks.keys():
-                        curNet = wirelessNetworks[curKey]
-                        if curData.getKey() == curNet.getKey():
-                            # Match.  Item was already in the table.  Let's update it
-                            clientVendor = self.ouiLookup(curNet.macAddr)
-                            if clientVendor is None:
-                                clientVendor = ''
-                            self.networkTable.item(curRow, 1).setText(clientVendor)
-                            
-                            self.networkTable.item(curRow, 3).setText(curNet.security)
-                            self.networkTable.item(curRow, 4).setText(curNet.privacy)
-                            self.networkTable.item(curRow, 5).setText(str(curNet.getChannelString()))
-                            self.networkTable.item(curRow, 6).setText(str(curNet.frequency))
-                            self.networkTable.item(curRow, 7).setText(str(curNet.signal))
-                            
-                            if FromAdvanced:
-                                # There are some fields that are not passed forward from advanced.  So let's update our curNet
-                                # attributes in the net object that comes from advanced.
-                                curNet.bandwidth = curData.bandwidth
-                                curNet.secondaryChannel = curData.secondaryChannel
-                                curNet.thirdChannel = curData.thirdChannel
-                                curNet.secondaryChannelLocation = curData.secondaryChannelLocation
-                                
-                            self.networkTable.item(curRow, 8).setText(str(curNet.bandwidth))
-                            self.networkTable.item(curRow, 9).setText(str(curNet.utilization))
-                            self.networkTable.item(curRow, 10).setText(str(curNet.stationcount))
-                            self.networkTable.item(curRow, 11).setText(curNet.lastSeen.strftime("%m/%d/%Y %H:%M:%S"))
-                            
-                            # Carry forward firstSeen
-                            curNet.firstSeen = curData.firstSeen # This is one field to carry forward
-                            
-                            # Check strongest signal
-                            # If we have a stronger signal, or we have an equal signal but we now have GPS
-                            # Note the 0.9.  Can be close to store strongest with GPS
-                            if curData.strongestsignal > curNet.signal or (curData.strongestsignal > (curNet.signal*0.9) and curData.gps.isValid and (not curNet.strongestgps.isValid)):
-                                curNet.strongestsignal = curData.signal
-                                curNet.strongestgps.latitude = curData.gps.latitude
-                                curNet.strongestgps.longitude = curData.gps.longitude
-                                curNet.strongestgps.altitude = curData.gps.altitude
-                                curNet.strongestgps.speed = curData.gps.speed
-                                curNet.strongestgps.isValid = curData.gps.isValid
-                            
-                            self.networkTable.item(curRow, 12).setText(curNet.firstSeen.strftime("%m/%d/%Y %H:%M:%S"))
-                            if curNet.gps.isValid:
-                                self.networkTable.item(curRow, 13).setText('Yes')
-                            else:
-                                self.networkTable.item(curRow, 13).setText('No')
-                                
-                            curNet.foundInList = True
-                            self.networkTable.item(curRow, 2).setData(Qt.UserRole+1, curNet)
-                            
-                            # Update series
-                            curSeries = self.networkTable.item(curRow, 2).data(Qt.UserRole)
-                            
-                            # Check if we have a telemetry window
-                            if curNet.getKey() in self.telemetryWindows.keys():
-                                telemetryWindow = self.telemetryWindows[curNet.getKey()]
-                                telemetryWindow.updateNetworkData(curNet)            
+                    # O(1) lookup using the pre-built dict (was O(N) inner loop)
+                    curNet = networkLookup.get(curData.getKey())
+                    if curNet:
+                        # Match.  Item was already in the table.  Let's update it
+                        if curNet.macAddr not in self._vendorCache:
+                            self._vendorCache[curNet.macAddr] = self.ouiLookup(curNet.macAddr) or ''
+                        clientVendor = self._vendorCache[curNet.macAddr]
+                        self.networkTable.item(curRow, 1).setText(clientVendor)
 
-                            # 3 scenarios: 
-                            # 20 MHz, 1 channel
-                            # 40 MHz, 2nd channel above/below or non-contiguous for 5 GHz
-                            # 80/160 MHz, Specified differently.  It's allocated as a contiguous block
-                            if curNet.channel < 15:  # Max 2.4 GHz CENTER channel is 14
-                                # 2.4 GHz
-                                # range function goes to max-1
-                                self.update24Net(curSeries, curNet)
-                            else:
-                                # 5 GHz
-                                self.update5Net(curSeries, curNet)
-                                        
-                            break  # We found one, so don't bother looping through more
+                        self.networkTable.item(curRow, 3).setText(curNet.security)
+                        self.networkTable.item(curRow, 4).setText(curNet.privacy)
+                        self.networkTable.item(curRow, 5).setText(str(curNet.getChannelString()))
+                        self.networkTable.item(curRow, 6).setText(str(curNet.frequency))
+                        self.networkTable.item(curRow, 7).setText(str(curNet.signal))
+
+                        if FromAdvanced:
+                            # There are some fields that are not passed forward from advanced.  So let's update our curNet
+                            # attributes in the net object that comes from advanced.
+                            curNet.bandwidth = curData.bandwidth
+                            curNet.secondaryChannel = curData.secondaryChannel
+                            curNet.thirdChannel = curData.thirdChannel
+                            curNet.secondaryChannelLocation = curData.secondaryChannelLocation
+
+                        self.networkTable.item(curRow, 8).setText(str(curNet.bandwidth))
+                        self.networkTable.item(curRow, 9).setText(str(curNet.utilization))
+                        self.networkTable.item(curRow, 10).setText(str(curNet.stationcount))
+                        self.networkTable.item(curRow, 11).setText(curNet.lastSeen.strftime("%m/%d/%Y %H:%M:%S"))
+
+                        # Carry forward firstSeen
+                        curNet.firstSeen = curData.firstSeen # This is one field to carry forward
+
+                        # Check strongest signal
+                        # If we have a stronger signal, or we have an equal signal but we now have GPS
+                        # Note the 0.9.  Can be close to store strongest with GPS
+                        if curData.strongestsignal > curNet.signal or (curData.strongestsignal > (curNet.signal*0.9) and curData.gps.isValid and (not curNet.strongestgps.isValid)):
+                            curNet.strongestsignal = curData.signal
+                            curNet.strongestgps.latitude = curData.gps.latitude
+                            curNet.strongestgps.longitude = curData.gps.longitude
+                            curNet.strongestgps.altitude = curData.gps.altitude
+                            curNet.strongestgps.speed = curData.gps.speed
+                            curNet.strongestgps.isValid = curData.gps.isValid
+
+                        self.networkTable.item(curRow, 12).setText(curNet.firstSeen.strftime("%m/%d/%Y %H:%M:%S"))
+                        if curNet.gps.isValid:
+                            self.networkTable.item(curRow, 13).setText('Yes')
+                        else:
+                            self.networkTable.item(curRow, 13).setText('No')
+
+                        curNet.foundInList = True
+                        self.networkTable.item(curRow, 2).setData(Qt.UserRole+1, curNet)
+
+                        # Update series
+                        curSeries = self.networkTable.item(curRow, 2).data(Qt.UserRole)
+
+                        # Check if we have a telemetry window
+                        if curNet.getKey() in self.telemetryWindows.keys():
+                            telemetryWindow = self.telemetryWindows[curNet.getKey()]
+                            telemetryWindow.updateNetworkData(curNet)
+
+                        # 3 scenarios:
+                        # 20 MHz, 1 channel
+                        # 40 MHz, 2nd channel above/below or non-contiguous for 5 GHz
+                        # 80/160 MHz, Specified differently.  It's allocated as a contiguous block
+                        if curNet.channel < 15:  # Max 2.4 GHz CENTER channel is 14
+                            # 2.4 GHz
+                            # range function goes to max-1
+                            self.update24Net(curSeries, curNet)
+                        else:
+                            # 5 GHz
+                            self.update5Net(curSeries, curNet)
 
     def getNextColor(self):
         nextColor = colors[self.nextColor]
@@ -2885,6 +2895,7 @@ class mainWindow(QMainWindow):
         return newSeries
 
     def populateTable(self, wirelessNetworks, FromAdvanced=False):
+        self._tableUpdateInProgress = True
         self.updateLock.acquire()
         
         # Update existing if we have it (this will mark the networ's foundInList flag if we did
@@ -2950,9 +2961,9 @@ class mainWindow(QMainWindow):
             newSSID.setData(Qt.UserRole+1, curNet)
             newSSID.setData(Qt.UserRole+2, None)
             
-            clientVendor = self.ouiLookup(curNet.macAddr)
-            if clientVendor is None:
-                clientVendor = ''
+            if curNet.macAddr not in self._vendorCache:
+                self._vendorCache[curNet.macAddr] = self.ouiLookup(curNet.macAddr) or ''
+            clientVendor = self._vendorCache[curNet.macAddr]
             self.networkTable.setItem(rowPosition, 1, QTableWidgetItem(clientVendor))
             self.networkTable.setItem(rowPosition, 2, newSSID)
             self.networkTable.setItem(rowPosition, 3, QTableWidgetItem(curNet.security))
@@ -2985,8 +2996,9 @@ class mainWindow(QMainWindow):
         # Last formatting tweaks on network table
         # self.networkTable.resizeColumnsToContents()
         # self.networkTable.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        
+
         self.updateLock.release()
+        self._tableUpdateInProgress = False
 
     def checkTelemetryWindows(self):
         # See if we have any telemetry windows that are no longer in the network table and not visible

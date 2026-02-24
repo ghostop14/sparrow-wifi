@@ -22,6 +22,7 @@ import os
 import subprocess
 import re
 import signal
+import time
 from time import sleep
 from threading import Lock
 import datetime
@@ -541,6 +542,10 @@ class specanThread(BaseThreadClass):
         
         self.threadRunning = False
 
+# Cache for getBlueHydraBluetoothDevices() to avoid re-reading the SQLite DB every call
+_bhCache = {'time': 0.0, 'result': None}
+_BH_CACHE_TTL = 5.0  # seconds
+
 # ------------------  Sparrow Bluetooth Class ----------------------------------
 class SparrowBluetooth(object):
     SCANTYPE_BLUEHYDRA = 1
@@ -821,9 +826,13 @@ class SparrowBluetooth(object):
     def getBlueHydraBluetoothDevices(filepath='/opt/bluetooth/blue_hydra/blue_hydra.db'):
         if not os.path.isfile(filepath):
             return -1, None
-            
+
+        # Return cached result if recent enough
+        if (time.monotonic() - _bhCache['time']) < _BH_CACHE_TTL and _bhCache['result'] is not None:
+            return 0, _bhCache['result']
+
         try:
-            blueHydraDB = sqlite3.connect(filepath)
+            blueHydraDB = sqlite3.connect(filepath, timeout=5.0)
         except:
             return -2, None
             
@@ -900,7 +909,10 @@ class SparrowBluetooth(object):
                 deviceList.append(btDevice)
         except:
             return -3, None
-        
+
+        _bhCache['time'] = time.monotonic()
+        _bhCache['result'] = deviceList
+
         return 0, deviceList
         
     def spectrumToChannels(self):

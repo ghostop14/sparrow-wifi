@@ -104,13 +104,13 @@ class HackrfSweepThread(BaseThreadClass):
                     # print('DEBUG: ' + str(startfreq) + "," + data[3])
                     
                     numSamples = len(data) - 6
-                    # self.parentHackrf.spectrumLock.acquire()
-                    
+                    self.parentHackrf.spectrumLock.acquire()
+
                     if numSamples > 0:
                         for i in range(0, numSamples):
                             self.parentHackrf.spectrum[startfreq + i * self.binWidth] = float(data[i+6])
-                    
-                    # self.parentHackrf.spectrumLock.release()
+
+                    self.parentHackrf.spectrumLock.release()
                 except:
                     pass
                     
@@ -257,7 +257,7 @@ class SparrowHackrf(object):
         # if len(self.spectrum) < 14001:
         #    return retVal
             
-        # self.spectrumLock.acquire()
+        self.spectrumLock.acquire()
         try:
             for curKey in self.spectrum.keys():
                 # curKey is frequency
@@ -270,8 +270,8 @@ class SparrowHackrf(object):
                     retVal[channel] = power
         except:
             pass
-            
-        # self.spectrumLock.release()
+
+        self.spectrumLock.release()
         
         return retVal
         
@@ -279,7 +279,7 @@ class SparrowHackrf(object):
     def spectrum5ToChannels(self):
         retVal = {}
         
-        # self.spectrumLock.acquire()
+        self.spectrumLock.acquire()
         try:
             for curKey in self.spectrum.keys():
                 # curKey is frequency
@@ -294,8 +294,8 @@ class SparrowHackrf(object):
                     retVal[channel] = power
         except:
             pass
-            
-        # self.spectrumLock.release()
+
+        self.spectrumLock.release()
         return retVal
         
     def fFreqTo24Channel(frequency):
