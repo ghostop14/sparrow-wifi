@@ -308,18 +308,30 @@ class BtmonThread(BaseThreadClass):
         return retVal
         
     def resetDevice(self):
-        # Have to kill btmon and hcitool if they're running
+        # Kill btmon and any bluetoothctl scanning session
         subprocess.run(['pkill', 'btmon'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-        subprocess.run(['pkill', '-f','hcitool.*scan'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-        
-        subprocess.run(['hciconfig', 'hci0', 'down'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-        subprocess.run(['hciconfig', 'hci0', 'up'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-        
+        subprocess.run(['pkill', 'bluetoothctl'], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        # Do NOT call hciconfig down/up — bluetoothd holds exclusive HCI access on
+        # Ubuntu 20.04+ and bringing the interface down/up conflicts with it.
+
     def startBTMon(self):
         self.btmonProc = subprocess.Popen(['btmon'],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
 
     def startHCITool(self):
-        self.hcitoolProc = subprocess.Popen(['hcitool', 'lescan', '--duplicates'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        # hcitool lescan is deprecated and fails when bluetoothd is running (Ubuntu 20.04+).
+        # Use bluetoothctl instead: open a persistent session and send "scan on" via stdin.
+        # The process stays alive keeping the scan active; killing it also stops the scan.
+        self.hcitoolProc = subprocess.Popen(
+            ['bluetoothctl'],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        try:
+            self.hcitoolProc.stdin.write(b'scan on\n')
+            self.hcitoolProc.stdin.flush()
+        except:
+            pass
 
     def btMonRunning(self):
         if not self.btmonProc:
@@ -343,8 +355,14 @@ class BtmonThread(BaseThreadClass):
             # May be stuck at readline
             if self.btmonProc:
                 self.btmonProc.kill()
-                
+
             if self.hcitoolProc:
+                # Ask bluetoothd to stop scanning before killing the session
+                try:
+                    self.hcitoolProc.stdin.write(b'scan off\n')
+                    self.hcitoolProc.stdin.flush()
+                except:
+                    pass
                 self.hcitoolProc.kill()
 
     def run(self):
