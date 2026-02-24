@@ -697,7 +697,15 @@ class SparrowBluetooth(object):
         # Because GPS comes from further up the stack, we maintain a local class list and have to
         # be sure to copy some fields like firstseen forward on updates
         if self.scanType == SparrowBluetooth.SCANTYPE_BLUEHYDRA:
-            errcode, retList = SparrowBluetooth.getBlueHydraBluetoothDevices()        
+            # Check if blue_hydra died mid-session and fall back if so
+            if self.blueHydraProc and self.blueHydraProc.poll() is not None:
+                print('WARNING: blue_hydra stopped unexpectedly. Falling back to BLE advertisement scan.')
+                self.blueHydraProc = None
+                self.scanType = SparrowBluetooth.SCANTYPE_ADVERTISEMENT
+                self.btmonThread = BtmonThread(self)
+                self.btmonThread.start()
+
+            errcode, retList = SparrowBluetooth.getBlueHydraBluetoothDevices()
             
             if errcode == 0:
                 self.deviceLock.acquire()
@@ -757,9 +765,20 @@ class SparrowBluetooth(object):
             self.scanType = SparrowBluetooth.SCANTYPE_BLUEHYDRA
             # Clear the sqlite table
             SparrowBluetooth.blueHydraClearDevices()
-            
+
             # -d says daemonize
             self.blueHydraProc = subprocess.Popen(['bin/blue_hydra', '-d'],cwd='/opt/bluetooth/blue_hydra', stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+
+            # Give blue_hydra a moment to start, then verify it's still running.
+            # A broken install (e.g. Ruby gem issues on Ubuntu 24) will exit almost immediately.
+            sleep(2)
+            if self.blueHydraProc.poll() is not None:
+                print('WARNING: blue_hydra exited immediately after launch. Falling back to BLE advertisement scan.')
+                self.blueHydraProc = None
+                self.scanType = SparrowBluetooth.SCANTYPE_ADVERTISEMENT
+                self.btmonThread = BtmonThread(self)
+                self.btmonThread.start()
+                return
         else:
             # If we're already running just return
             if self.btmonThread and self.btmonThread.threadRunning:
@@ -971,32 +990,38 @@ class SparrowBluetooth(object):
         
         
     def getBluetoothInterfaces(printResults=False):
+        retVal = []
+
         try:
             result = subprocess.run(['hcitool', 'dev'], stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+            if result.returncode == 0:
+                hciResult = result.stdout.decode('UTF-8')
+                p = re.compile('^.*(hci[0-9])', re.MULTILINE)
+                tmpInterfaces = p.findall(hciResult)
+                for curInterface in tmpInterfaces:
+                    tmpStr = curInterface.replace(' ', '')
+                    retVal.append(tmpStr)
+                    if printResults:
+                        print(tmpStr)
         except:
-            print('ERROR: Unable to run hcitool.  Reporting no bluetooth devices.')
-            return []
-        
-        if result.returncode != 0:
-            return []
-            
-        hciResult = result.stdout.decode('UTF-8')
-        p = re.compile('^.*(hci[0-9])', re.MULTILINE)
-        tmpInterfaces = p.findall(hciResult)
-        
-        retVal = []
-        
-        if (len(tmpInterfaces) > 0):
-            for curInterface in tmpInterfaces:
-                tmpStr=curInterface.replace(' ','')
-                retVal.append(tmpStr)
-                # debug
-                if (printResults):
-                    print(tmpStr)
-        else:
-            # debug
-            if (printResults):
-                print("Error: No wireless interfaces found.")
+            pass
+
+        if not retVal:
+            # hcitool unavailable or returned nothing (deprecated/privilege issue on Ubuntu 24+).
+            # Fall back to sysfs which requires no external tool or elevated privileges.
+            try:
+                sysfs_bt = '/sys/class/bluetooth'
+                if os.path.isdir(sysfs_bt):
+                    for entry in os.listdir(sysfs_bt):
+                        if entry.startswith('hci'):
+                            retVal.append(entry)
+                            if printResults:
+                                print(entry)
+            except:
+                pass
+
+        if not retVal and printResults:
+            print("Error: No wireless interfaces found.")
 
         return retVal
         
