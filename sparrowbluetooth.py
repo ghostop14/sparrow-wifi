@@ -768,8 +768,11 @@ class SparrowBluetooth(object):
                     return
                     
             self.scanType = SparrowBluetooth.SCANTYPE_BLUEHYDRA
-            # Clear the sqlite table
+            # Clear the sqlite table and invalidate the result cache so the
+            # first timer tick reads fresh data instead of the stale empty list
             SparrowBluetooth.blueHydraClearDevices()
+            _bhCache['time'] = 0.0
+            _bhCache['result'] = None
 
             # -d says daemonize
             self.blueHydraProc = subprocess.Popen(['bin/blue_hydra', '-d'],cwd='/opt/bluetooth/blue_hydra', stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -910,8 +913,11 @@ class SparrowBluetooth(object):
         except:
             return -3, None
 
-        _bhCache['time'] = time.monotonic()
-        _bhCache['result'] = deviceList
+        # Only cache a non-empty result; an empty list just means the DB
+        # hasn't been populated yet and should be retried next call.
+        if deviceList:
+            _bhCache['time'] = time.monotonic()
+            _bhCache['result'] = deviceList
 
         return 0, deviceList
         
