@@ -119,13 +119,12 @@ class Database:
         """Populate default settings."""
         defaults = {
             'port': '8097',
-            'bind_address': '127.0.0.1',
+            'bind_address': '0.0.0.0',
             'https_enabled': 'false',
-            'https_cert_path': '',
-            'https_key_path': '',
+            'https_cert_name': '',
             'auth_token': '',
             'allowed_ips': '',
-            'gps_mode': 'none',
+            'gps_mode': 'gpsd',
             'gps_static_lat': '0.0',
             'gps_static_lon': '0.0',
             'gps_static_alt': '0.0',

@@ -22,6 +22,7 @@ from backend.droneid_engine import DroneIDEngine, CaptureManager, check_prerequi
 from backend.gps_engine import GPSEngine
 from backend.alert_engine import AlertEngine
 from backend.cot_engine import CotEngine
+from backend.cert_manager import CertManager
 from backend.api_handler import (
     MultithreadHTTPServer, RequestHandler, set_engines,
 )
@@ -50,6 +51,7 @@ class SparrowDroneID:
         self.droneid_engine = None
         self.alert_engine = None
         self.cot_engine = None
+        self.cert_manager = None
 
     def _check_prerequisites(self):
         """Check root, tcpdump, iw. Exit on failure."""
@@ -84,6 +86,9 @@ class SparrowDroneID:
     def _init_engines(self):
         """Create and configure all engines."""
         db = self.db
+
+        # Certificate manager
+        self.cert_manager = CertManager(os.path.join(self.data_dir, 'certs'))
 
         # GPS engine
         self.gps_engine = GPSEngine()
@@ -202,6 +207,7 @@ class SparrowDroneID:
             db=db,
             data_dir=self.data_dir,
             html_dir=self.html_dir,
+            cert_manager=self.cert_manager,
         )
 
         # Bind address
@@ -218,15 +224,18 @@ class SparrowDroneID:
         https_enabled = db.get_setting('https_enabled', 'false').lower() == 'true'
         scheme = 'http'
         if https_enabled:
-            cert_path = db.get_setting('https_cert_path', '')
-            key_path = db.get_setting('https_key_path', '')
-            if cert_path and key_path and os.path.isfile(cert_path) and os.path.isfile(key_path):
-                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-                ctx.load_cert_chain(cert_path, key_path)
-                self._httpd.socket = ctx.wrap_socket(self._httpd.socket, server_side=True)
-                scheme = 'https'
+            cert_name = db.get_setting('https_cert_name', '')
+            if cert_name:
+                try:
+                    cert_path, key_path = self.cert_manager.get_cert_path(cert_name)
+                    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                    ctx.load_cert_chain(cert_path, key_path)
+                    self._httpd.socket = ctx.wrap_socket(self._httpd.socket, server_side=True)
+                    scheme = 'https'
+                except Exception as e:
+                    print(f"WARN: HTTPS setup failed: {e}. Falling back to HTTP.")
             else:
-                print("WARN: HTTPS enabled but cert/key files not found. Falling back to HTTP.")
+                print("WARN: HTTPS enabled but https_cert_name is not set. Falling back to HTTP.")
 
         # Start maintenance thread
         self._start_maintenance_thread()

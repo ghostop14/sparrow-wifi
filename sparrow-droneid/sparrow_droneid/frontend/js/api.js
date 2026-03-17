@@ -191,6 +191,32 @@ const Api = (() => {
     return put('/settings', changes);
   }
 
+  // ---- Certificates ----
+
+  function getCerts() {
+    return get('/certs');
+  }
+
+  function getCertDetail(name) {
+    return get(`/certs/${encodeURIComponent(name)}`);
+  }
+
+  function generateSelfSigned(data) {
+    return post('/certs/self-signed', data);
+  }
+
+  function generateCSR(data) {
+    return post('/certs/csr', data);
+  }
+
+  function importCert(data) {
+    return post('/certs/import', data);
+  }
+
+  function deleteCert(name) {
+    return request('DELETE', `/certs/${encodeURIComponent(name)}`);
+  }
+
   // ---- Error class ----
 
   class ApiError extends Error {
@@ -226,6 +252,12 @@ const Api = (() => {
     purgeTiles,
     getSettings,
     putSettings,
+    getCerts,
+    getCertDetail,
+    generateSelfSigned,
+    generateCSR,
+    importCert,
+    deleteCert,
     ApiError,
   };
 })();

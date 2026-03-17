@@ -564,7 +564,112 @@ html, body {
   background: rgba(59,130,246,0.25);
 }
 
-/* ---- Settings Modal ---- */
+/* ---- Settings Tab ---- */
+
+/* Pane scroll area (fills available height, leaving room for save bar) */
+.settings-pane-scroll {
+  flex: 1 1 0;
+  overflow-y: auto;
+}
+
+/* Sticky save bar at the bottom of the settings pane */
+.settings-save-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 8px 16px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+}
+
+/* Card styling */
+.settings-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.settings-card .card-header {
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+  font-weight: 600;
+  font-size: 13px;
+  padding: 0.6rem 1rem;
+  color: var(--text-primary);
+}
+
+.settings-card .card-body {
+  padding: 1rem;
+}
+
+.settings-card .form-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 0.2rem;
+}
+
+.settings-card small.text-muted,
+.settings-card .text-muted.small {
+  font-size: 11px;
+  color: var(--text-muted) !important;
+  display: block;
+  margin-top: 0.2rem;
+}
+
+/* Data stats grid inside the retention card */
+.settings-stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 8px;
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.settings-stats-grid div {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.settings-stats-grid span:first-child {
+  color: var(--text-secondary);
+}
+
+/* Inline cert form */
+.settings-inline-form {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+
+/* Cert table inside settings */
+.settings-cert-table {
+  font-size: 12px;
+}
+
+.settings-cert-table th {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.settings-cert-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(51,65,85,0.3);
+  vertical-align: middle;
+  color: var(--text-primary);
+}
+
+/* Legacy settings-row / section-title kept for any residual usage */
 .settings-section-title {
   font-size: 11px;
   font-weight: 700;
@@ -600,6 +705,13 @@ html, body {
   font-size: 10px;
   color: var(--text-muted);
   display: block;
+}
+
+/* The settings pane needs to be a flex column so the save bar sticks to bottom.
+   Only override display when Bootstrap makes it block (active state); leave hide alone. */
+#pane-settings.show.active {
+  display: flex !important;
+  flex-direction: column;
 }
 
 /* ---- Map Popup ---- */

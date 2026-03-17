@@ -104,6 +104,16 @@ const App = (() => {
       }
     });
 
+    document.getElementById('tab-settings')?.addEventListener('shown.bs.tab', () => {
+      if (_inReplay) {
+        _inReplay = false;
+        ReplayManager.stop();
+        MapManager.clearAll();
+        document.getElementById('replayIndicator').style.display = 'none';
+        _startPolling();
+      }
+    });
+
     // Listen for replay play state
     document.addEventListener('replayPlayStateChanged', e => {
       const label = document.getElementById('replayTimeLabel');

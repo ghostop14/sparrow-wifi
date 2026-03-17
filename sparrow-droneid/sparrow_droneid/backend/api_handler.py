@@ -28,6 +28,7 @@ from .alert_engine import AlertEngine
 from .cot_engine import CotEngine
 from .database import Database
 from .export import generate_kml
+from .cert_manager import CertManager
 
 
 # ---------------------------------------------------------------------------
@@ -41,6 +42,7 @@ _cot_engine: Optional[CotEngine] = None
 _db: Optional[Database] = None
 _data_dir: Optional[str] = None
 _html_dir: Optional[str] = None
+_cert_manager: Optional[CertManager] = None
 
 # Startup timestamp for uptime calculation
 _start_time: datetime = datetime.now(timezone.utc)
@@ -51,10 +53,11 @@ _tile_session.headers.update({'User-Agent': 'SparrowDroneID/1.0'})
 
 
 def set_engines(droneid: DroneIDEngine, gps: GPSEngine, alert: AlertEngine,
-                cot: CotEngine, db: Database, data_dir: str, html_dir: str) -> None:
+                cot: CotEngine, db: Database, data_dir: str, html_dir: str,
+                cert_manager: CertManager = None) -> None:
     """Called by app.py at startup to wire engine references into this module."""
     global _droneid_engine, _gps_engine, _alert_engine, _cot_engine
-    global _db, _data_dir, _html_dir
+    global _db, _data_dir, _html_dir, _cert_manager
     _droneid_engine = droneid
     _gps_engine = gps
     _alert_engine = alert
@@ -62,6 +65,7 @@ def set_engines(droneid: DroneIDEngine, gps: GPSEngine, alert: AlertEngine,
     _db = db
     _data_dir = data_dir
     _html_dir = html_dir
+    _cert_manager = cert_manager
 
 
 # ---------------------------------------------------------------------------
@@ -1103,13 +1107,13 @@ def api_data_purge_tiles(req: RequestHandler):
 
 # Keys whose change requires a server restart to take effect.
 _RESTART_REQUIRED_KEYS = frozenset({
-    'port', 'bind_address', 'https_enabled', 'https_cert_path', 'https_key_path',
+    'port', 'bind_address', 'https_enabled', 'https_cert_name',
 })
 
 # Settings keys that map directly to typed values (all others are passed through as strings).
 _SETTINGS_WRITABLE = frozenset({
     'port', 'bind_address',
-    'https_enabled', 'https_cert_path', 'https_key_path',
+    'https_enabled', 'https_cert_name',
     'auth_token', 'allowed_ips',
     'gps_mode', 'gps_static_lat', 'gps_static_lon', 'gps_static_alt',
     'retention_days',
@@ -1186,3 +1190,182 @@ def api_settings_put(req: RequestHandler):
         'settings': coerced,
         'restart_required': restart_required,
     }))
+
+# ---------------------------------------------------------------------------
+# Certificate Management
+# ---------------------------------------------------------------------------
+
+@router.route('GET', '/api/certs')
+def api_certs_list(req: RequestHandler):
+    if _cert_manager is None:
+        req._send_error_json(503, 5, 'Certificate manager not available')
+        return
+    try:
+        certs = _cert_manager.list_certs()
+    except Exception as e:
+        req._send_error_json(500, 5, f'Failed to list certs: {e}')
+        return
+    req._send_json(req._ok({'certs': certs}))
+
+
+@router.route('POST', '/api/certs/self-signed')
+def api_certs_self_signed(req: RequestHandler):
+    if _cert_manager is None:
+        req._send_error_json(503, 5, 'Certificate manager not available')
+        return
+    if req.json_data is None:
+        req._send_error_json(400, 1, 'JSON body required')
+        return
+
+    body = req.json_data
+    common_name = body.get('common_name', '').strip()
+    if not common_name:
+        req._send_error_json(400, 1, 'common_name is required')
+        return
+
+    try:
+        days = int(body.get('days', 365))
+    except (ValueError, TypeError):
+        req._send_error_json(400, 1, 'days must be an integer')
+        return
+
+    try:
+        key_size = int(body.get('key_size', 2048))
+    except (ValueError, TypeError):
+        req._send_error_json(400, 1, 'key_size must be an integer')
+        return
+
+    try:
+        cert_info = _cert_manager.generate_self_signed(
+            common_name=common_name,
+            days=days,
+            key_size=key_size,
+        )
+    except RuntimeError as e:
+        req._send_error_json(500, 5, str(e))
+        return
+    except Exception as e:
+        req._send_error_json(500, 5, f'Failed to generate certificate: {e}')
+        return
+
+    req._send_json(req._ok({'cert': cert_info}))
+
+
+@router.route('POST', '/api/certs/csr')
+def api_certs_csr(req: RequestHandler):
+    if _cert_manager is None:
+        req._send_error_json(503, 5, 'Certificate manager not available')
+        return
+    if req.json_data is None:
+        req._send_error_json(400, 1, 'JSON body required')
+        return
+
+    body = req.json_data
+    common_name = body.get('common_name', '').strip()
+    if not common_name:
+        req._send_error_json(400, 1, 'common_name is required')
+        return
+
+    organization = body.get('organization', '')
+    country = body.get('country', '')
+
+    try:
+        key_size = int(body.get('key_size', 2048))
+    except (ValueError, TypeError):
+        req._send_error_json(400, 1, 'key_size must be an integer')
+        return
+
+    try:
+        csr_info = _cert_manager.generate_csr(
+            common_name=common_name,
+            organization=organization,
+            country=country,
+            key_size=key_size,
+        )
+    except RuntimeError as e:
+        req._send_error_json(500, 5, str(e))
+        return
+    except Exception as e:
+        req._send_error_json(500, 5, f'Failed to generate CSR: {e}')
+        return
+
+    req._send_json(req._ok({'csr': csr_info}))
+
+
+@router.route('POST', '/api/certs/import')
+def api_certs_import(req: RequestHandler):
+    if _cert_manager is None:
+        req._send_error_json(503, 5, 'Certificate manager not available')
+        return
+    if req.json_data is None:
+        req._send_error_json(400, 1, 'JSON body required')
+        return
+
+    body = req.json_data
+    name = body.get('name', '').strip()
+    cert_pem = body.get('cert_pem', '').strip()
+    key_pem = body.get('key_pem', None)
+
+    if not name:
+        req._send_error_json(400, 1, 'name is required')
+        return
+    if not cert_pem:
+        req._send_error_json(400, 1, 'cert_pem is required')
+        return
+
+    try:
+        cert_info = _cert_manager.import_cert(
+            name=name,
+            cert_pem=cert_pem,
+            key_pem=key_pem if key_pem else None,
+        )
+    except (ValueError, RuntimeError) as e:
+        req._send_error_json(400, 1, str(e))
+        return
+    except Exception as e:
+        req._send_error_json(500, 5, f'Failed to import certificate: {e}')
+        return
+
+    req._send_json(req._ok({'cert': cert_info}))
+
+
+@router.route('GET', '/api/certs/{name}')
+def api_cert_detail(req: RequestHandler, name: str):
+    if _cert_manager is None:
+        req._send_error_json(503, 5, 'Certificate manager not available')
+        return
+
+    name = unquote(name)
+    try:
+        cert_info = _cert_manager.get_cert_info(name)
+    except FileNotFoundError as e:
+        req._send_error_json(404, 2, str(e))
+        return
+    except RuntimeError as e:
+        req._send_error_json(500, 5, str(e))
+        return
+    except Exception as e:
+        req._send_error_json(500, 5, f'Failed to get cert info: {e}')
+        return
+
+    req._send_json(req._ok({'cert': cert_info}))
+
+
+@router.route('DELETE', '/api/certs/{name}')
+def api_cert_delete(req: RequestHandler, name: str):
+    if _cert_manager is None:
+        req._send_error_json(503, 5, 'Certificate manager not available')
+        return
+
+    name = unquote(name)
+    try:
+        deleted = _cert_manager.delete_cert(name)
+    except Exception as e:
+        req._send_error_json(500, 5, f'Failed to delete cert: {e}')
+        return
+
+    if not deleted:
+        req._send_error_json(404, 2, f'Certificate {name!r} not found')
+        return
+
+    req._send_json(req._ok({'deleted': True, 'name': name}))

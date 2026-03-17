@@ -29,14 +29,23 @@ class _GpsdPoller(Thread):
         super().__init__(daemon=True, name="GpsdPoller")
         self._engine = engine
         self._stop = False
-        self._agps = AGPS3mechanism()
-        self._agps.stream_data()
-        self._agps.run_thread()
+        self._agps = None
+
+        try:
+            self._agps = AGPS3mechanism()
+            self._agps.stream_data()
+            self._agps.run_thread()
+        except Exception as e:
+            self._engine._set_gps_error(f"gpsd connection failed: {e}")
 
     def stop(self) -> None:
         self._stop = True
 
     def run(self) -> None:
+        if self._agps is None:
+            # Could not connect during __init__; nothing to poll.
+            return
+
         while not self._stop:
             try:
                 ds = self._agps.data_stream
@@ -55,9 +64,15 @@ class _GpsdPoller(Thread):
                         alt=alt if alt is not None else 0.0,
                         speed=spd if spd is not None else 0.0,
                     )
+                    # Clear any previous connection error once we get data.
+                    self._engine._set_gps_error('')
                 else:
                     self._engine._set_position(fix=False, lat=0.0, lon=0.0,
                                                 alt=0.0, speed=0.0)
+            except ConnectionError as e:
+                self._engine._set_gps_error(f"gpsd not running: {e}")
+                self._engine._set_position(fix=False, lat=0.0, lon=0.0,
+                                            alt=0.0, speed=0.0)
             except Exception:
                 # Never let a read error kill the thread.
                 pass
@@ -83,6 +98,7 @@ class GPSEngine:
         self._alt: float = 0.0
         self._speed: float = 0.0
         self._poller: "_GpsdPoller | None" = None
+        self._gps_error: str = ''
 
     # ------------------------------------------------------------------
     # Configuration / lifecycle
@@ -109,6 +125,8 @@ class GPSEngine:
         if mode == GPSMode.GPSD and not _GPS3_AVAILABLE:
             # Degrade gracefully rather than crashing.
             mode = GPSMode.NONE
+            with self._lock:
+                self._gps_error = 'gps3 not installed'
 
         with self._lock:
             self._mode = mode
@@ -117,6 +135,9 @@ class GPSEngine:
             self._lon = 0.0
             self._alt = 0.0
             self._speed = 0.0
+            if mode != GPSMode.GPSD:
+                # Clear any previous gpsd error when switching away from gpsd mode
+                self._gps_error = ''
 
         if mode == GPSMode.STATIC:
             with self._lock:
@@ -161,6 +182,11 @@ class GPSEngine:
             self._lon = lon
             self._alt = alt
             self._speed = speed
+
+    def _set_gps_error(self, error: str) -> None:
+        """Thread-safe setter for the GPS error string (called by _GpsdPoller)."""
+        with self._lock:
+            self._gps_error = error
 
     # ------------------------------------------------------------------
     # Thread-safe property getters
@@ -215,4 +241,5 @@ class GPSEngine:
                 "longitude": self._lon,
                 "altitude":  self._alt,
                 "speed":     self._speed,
+                "gps_error": self._gps_error,
             }
