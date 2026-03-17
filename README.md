@@ -1,17 +1,13 @@
 # Sparrow-WiFi
 
-A Linux-based wireless situational awareness platform combining WiFi scanning, Bluetooth discovery, RF spectrum analysis, and drone remote identification (RemoteID) in one integrated toolset.
+Sparrow-WiFi is a next-generation 2.4 GHz and 5 GHz WiFi and Bluetooth spectral awareness tool for Linux. It integrates WiFi scanning, Bluetooth Low Energy and Classic discovery, software-defined radio spectrum analysis (HackRF, Ubertooth), GPS tracking, and drone/rover-mounted remote operations into a single platform. Written entirely in Python 3.
 
-## What's in the Box
-
-Sparrow-WiFi is actually two applications that share a codebase:
+The project includes two applications:
 
 | Component | Interface | Purpose |
 |-----------|-----------|---------|
 | **Sparrow-WiFi** | PyQt5 desktop GUI | WiFi/BT scanning, spectrum analysis, source tracking, wardriving |
 | **Sparrow DroneID** | Web-based (browser) | FAA RemoteID drone detection via WiFi and Bluetooth LE |
-
-Both run on Linux and are written entirely in Python 3.
 
 ---
 
@@ -33,11 +29,11 @@ The original Sparrow application provides a comprehensive GUI-based replacement 
 ### Screenshots
 
 <p align="center">
-  <img src="https://github.com/ghostop14/sparrow-wifi/blob/master/sparrow-screenshot.png" width="800"/>
+  <img src="./sparrow-screenshot.png" width="800"/>
 </p>
 
 <p align="center">
-  <img src="https://github.com/ghostop14/sparrow-wifi/blob/master/telemetry-screenshot.png" width="600"/>
+  <img src="./telemetry-screenshot.png" width="600"/>
 </p>
 
 ---
@@ -68,12 +64,12 @@ A standalone web-based drone detection and tracking system that decodes FAA-mand
 cd sparrow-droneid
 pip3 install -r sparrow_droneid/requirements.txt
 sudo apt install tcpdump iw bluez
-sudo python3 -m sparrow_droneid
+sudo python3 sparrow_droneid/app.py
 ```
 
 The web UI is available at `http://localhost:8097`. Configure the monitor interface and GPS in Settings, then click Start.
 
-For full documentation, see [`sparrow-droneid/README.md`](sparrow-droneid/README.md) and the [API reference](sparrow-droneid/sparrow_drone_id_api.md).
+For full API documentation, see the [API reference](sparrow-droneid/sparrow_drone_id_api.md).
 
 ---
 
@@ -140,7 +136,7 @@ sudo apt install tcpdump iw iproute2
 sudo apt install bluez
 
 # Run
-sudo python3 -m sparrow_droneid
+sudo python3 sparrow_droneid/app.py
 ```
 
 Open `http://localhost:8097` in a browser.
@@ -166,13 +162,13 @@ Sparrow-WiFi supports several Bluetooth scanning modes:
 | Mode | Hardware | What You See |
 |------|----------|-------------|
 | BLE advertisement scan | Standard BT adapter | LE devices that are actively advertising |
-| Promiscuous scan | Ubertooth One | All BLE and Classic BT devices in range |
+| Promiscuous scan | Ubertooth One + Blue Hydra | All BLE and Classic BT devices in range |
 | iBeacon advertising | Standard BT adapter | Advertise your own iBeacons |
 | **RemoteID scan** | Standard BT adapter | **FAA-compliant drone identification (DroneID only)** |
 
-Test your adapter first: `hcitool dev` should list it. For BLE scanning: `bluetoothctl scan on`.
+A standard built-in or USB Bluetooth adapter is sufficient for BLE advertisement scanning and RemoteID drone detection. Test your adapter with `bluetoothctl scan on`.
 
-For Ubertooth promiscuous mode, install [Blue Hydra](https://github.com/ZeroChaos-/blue_hydra) into `/opt/bluetooth/blue_hydra`.
+For full promiscuous discovery of both Classic and BLE devices, you'll need an [Ubertooth One](https://greatscottgadgets.com/ubertoothone/) and [Blue Hydra](https://github.com/ZeroChaos-/blue_hydra) installed into `/opt/bluetooth/blue_hydra`. This is optional and not required for basic BLE or RemoteID scanning.
 
 ---
 
@@ -192,7 +188,7 @@ Real-time spectral overlays on top of WiFi channel views:
 - Test with: `hackrf_sweep`
 
 <p align="center">
-  <img src="https://github.com/ghostop14/sparrow-wifi/blob/master/spectrum-screenshot.png" width="500"/>
+  <img src="./spectrum-screenshot.png" width="500"/>
 </p>
 
 ---
@@ -323,7 +319,7 @@ sparrow-wifi/
   plugins/                   # Falcon and other plugins
   sparrow-droneid/           # DroneID web application
     sparrow_droneid/
-      __main__.py            # Entry point
+      app.py                 # Entry point (sudo python3 app.py)
       requirements.txt       # Python dependencies (DroneID)
       backend/               # API server, capture engine, database
       frontend/              # HTML, JS, CSS (served by backend)
