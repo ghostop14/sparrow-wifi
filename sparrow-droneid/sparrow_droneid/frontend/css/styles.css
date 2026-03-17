@@ -424,6 +424,29 @@ html, body {
 
 .alerts-empty { color: var(--text-muted); }
 
+/* Alert state styling */
+.alert-item.acked { opacity: 0.55; }
+.alert-item.acked .alert-icon { color: var(--text-muted) !important; }
+.alert-item.resolved { opacity: 0.4; }
+.alert-item.resolved .alert-detail { text-decoration: line-through; }
+
+/* Per-alert acknowledge button */
+.btn-ack {
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 5px;
+  transition: border-color 0.15s, color 0.15s;
+}
+.btn-ack:hover {
+  border-color: var(--drone-active);
+  color: var(--drone-active);
+}
+
 /* ---- Replay ---- */
 .replay-container { height: 100%; display: flex; flex-direction: column; }
 

@@ -95,7 +95,11 @@ class Database:
                     detail TEXT DEFAULT '',
                     drone_lat REAL DEFAULT 0.0,
                     drone_lon REAL DEFAULT 0.0,
-                    drone_height_agl REAL DEFAULT 0.0
+                    drone_height_agl REAL DEFAULT 0.0,
+                    state TEXT NOT NULL DEFAULT 'ACTIVE',
+                    acknowledged_by TEXT DEFAULT '',
+                    acknowledged_at TEXT DEFAULT '',
+                    resolved_at TEXT DEFAULT ''
                 )
             """)
 
@@ -107,11 +111,26 @@ class Database:
                 )
             """)
 
+            # Migrate existing DBs: add new alert columns if they don't exist yet.
+            # This must run BEFORE the idx_alerts_state index creation below.
+            # SQLite does not support ALTER TABLE ADD COLUMN IF NOT EXISTS, so use try/except.
+            for col_def in (
+                "ADD COLUMN state TEXT NOT NULL DEFAULT 'ACTIVE'",
+                "ADD COLUMN acknowledged_by TEXT DEFAULT ''",
+                "ADD COLUMN acknowledged_at TEXT DEFAULT ''",
+                "ADD COLUMN resolved_at TEXT DEFAULT ''",
+            ):
+                try:
+                    cursor.execute(f"ALTER TABLE alerts {col_def}")
+                except Exception:
+                    pass  # Column already exists
+
             # Indexes for performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_detections_serial ON detections(serial_number)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_detections_timestamp ON detections(timestamp)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_detections_serial_ts ON detections(serial_number, timestamp)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_alerts_state ON alerts(state)")
 
             self._init_defaults(cursor)
 
@@ -142,6 +161,8 @@ class Database:
             'alert_slack_display_name': 'Sparrow DroneID',
             'tile_cache_enabled': 'true',
             'monitor_interface': '',
+            'operator_name': '',
+            'airport_geozone_radius_mi': '2.0',
         }
         for key, value in defaults.items():
             cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
@@ -345,8 +366,14 @@ class Database:
             return cursor.lastrowid
 
     def get_alerts(self, from_ts: str = None, to_ts: str = None,
-                   limit: int = 100, offset: int = 0) -> Tuple[List[Dict], int]:
-        """Get alert log entries. Returns (alerts, total_count)."""
+                   limit: int = 100, offset: int = 0,
+                   state: str = None) -> Tuple[List[Dict], int]:
+        """Get alert log entries. Returns (alerts, total_count).
+
+        Args:
+            state: Optional filter — 'ACTIVE', 'ACKNOWLEDGED', or 'RESOLVED'.
+                   None returns all states.
+        """
         with self.get_cursor() as cursor:
             where_parts = []
             params = []
@@ -356,6 +383,9 @@ class Database:
             if to_ts:
                 where_parts.append("timestamp <= ?")
                 params.append(to_ts)
+            if state:
+                where_parts.append("state = ?")
+                params.append(state)
 
             where = "WHERE " + " AND ".join(where_parts) if where_parts else ""
 
@@ -369,6 +399,39 @@ class Database:
             """, params + [limit, offset])
             alerts = [dict(row) for row in cursor.fetchall()]
             return alerts, total
+
+    def acknowledge_alert(self, alert_id: int, operator: str = '') -> bool:
+        """Set a single alert to ACKNOWLEDGED state. Returns True if a row was updated."""
+        now = datetime.utcnow().isoformat() + 'Z'
+        with self.get_cursor() as cursor:
+            cursor.execute("""
+                UPDATE alerts
+                SET state = 'ACKNOWLEDGED', acknowledged_by = ?, acknowledged_at = ?
+                WHERE id = ? AND state = 'ACTIVE'
+            """, (operator, now, alert_id))
+            return cursor.rowcount > 0
+
+    def acknowledge_all_active(self, operator: str = '') -> int:
+        """Acknowledge all ACTIVE alerts. Returns the count of rows updated."""
+        now = datetime.utcnow().isoformat() + 'Z'
+        with self.get_cursor() as cursor:
+            cursor.execute("""
+                UPDATE alerts
+                SET state = 'ACKNOWLEDGED', acknowledged_by = ?, acknowledged_at = ?
+                WHERE state = 'ACTIVE'
+            """, (operator, now))
+            return cursor.rowcount
+
+    def resolve_alert(self, alert_id: int) -> bool:
+        """Set an alert to RESOLVED state. Returns True if a row was updated."""
+        now = datetime.utcnow().isoformat() + 'Z'
+        with self.get_cursor() as cursor:
+            cursor.execute("""
+                UPDATE alerts
+                SET state = 'RESOLVED', resolved_at = ?
+                WHERE id = ? AND state != 'RESOLVED'
+            """, (now, alert_id))
+            return cursor.rowcount > 0
 
     # ==================== Settings Operations ====================
 

@@ -150,6 +150,24 @@ const Api = (() => {
     return get('/alerts/log', params);
   }
 
+  function acknowledgeAlert(id, operator = '') {
+    return put(`/alerts/${id}/acknowledge`, { operator });
+  }
+
+  function acknowledgeAllAlerts(operator = '') {
+    return put('/alerts/acknowledge', { operator });
+  }
+
+  // ---- Geozones ----
+
+  function getGeozoneAirports(lat, lon, radiusMi = 50) {
+    return get('/geozones/airports', { lat, lon, radius_mi: radiusMi });
+  }
+
+  function getGeozoneNofly(lat, lon) {
+    return get('/geozones/nofly', { lat, lon });
+  }
+
   // ---- GPS ----
 
   function getGps() {
@@ -244,6 +262,10 @@ const Api = (() => {
     getAlertConfig,
     putAlertConfig,
     getAlertLog,
+    acknowledgeAlert,
+    acknowledgeAllAlerts,
+    getGeozoneAirports,
+    getGeozoneNofly,
     getGps,
     getCotStatus,
     putCotConfig,

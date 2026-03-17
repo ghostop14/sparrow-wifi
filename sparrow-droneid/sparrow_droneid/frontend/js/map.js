@@ -111,9 +111,10 @@ const MapManager = (() => {
 
     if (!_rangeRingsVisible || !lat || !lon) return;
 
-    const radii = [250, 500, 1000]; // meters
+    const imperial = Utils.getUnits && Utils.getUnits() === 'imperial';
+    const radii  = imperial ? [804.7, 1609.3, 2414.0] : [500, 1000, 2500]; // meters
     const colors = ['rgba(37,99,235,0.8)', 'rgba(37,99,235,0.6)', 'rgba(37,99,235,0.4)'];
-    const labels = ['250 m', '500 m', '1 km'];
+    const labels = imperial ? ['0.5 mi', '1 mi', '1.5 mi'] : ['500 m', '1 km', '2.5 km'];
 
     radii.forEach((r, i) => {
       const circle = L.circle([lat, lon], {

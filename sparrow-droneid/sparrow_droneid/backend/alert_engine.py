@@ -167,8 +167,13 @@ class AlertEngine:
                         )
                 else:
                     # Condition cleared — allow alert to fire again if it recurs.
+                    was_violated = False
                     with self._lock:
-                        self._alerted_violations.get(key, set()).discard(AlertType.ALTITUDE_MAX.value)
+                        violations = self._alerted_violations.get(key, set())
+                        was_violated = AlertType.ALTITUDE_MAX.value in violations
+                        violations.discard(AlertType.ALTITUDE_MAX.value)
+                    if was_violated:
+                        self._auto_resolve(AlertType.ALTITUDE_MAX.value, key)
 
             elif rtype == AlertType.SPEED_MAX.value:
                 max_spd = rule.params.get('max_speed_mps', 44.7)
@@ -185,14 +190,23 @@ class AlertEngine:
                         )
                 else:
                     # Condition cleared — allow alert to fire again if it recurs.
+                    was_violated = False
                     with self._lock:
-                        self._alerted_violations.get(key, set()).discard(AlertType.SPEED_MAX.value)
+                        violations = self._alerted_violations.get(key, set())
+                        was_violated = AlertType.SPEED_MAX.value in violations
+                        violations.discard(AlertType.SPEED_MAX.value)
+                    if was_violated:
+                        self._auto_resolve(AlertType.SPEED_MAX.value, key)
 
             # SIGNAL_LOST is not evaluated here; handled by check_signal_lost().
 
         # Mark drone as seen (clears any previously alerted-lost entry).
+        was_lost = False
         with self._lock:
+            was_lost = key in self._alerted_lost
             self._alerted_lost.discard(key)
+        if was_lost:
+            self._auto_resolve(AlertType.SIGNAL_LOST.value, key)
 
     def check_signal_lost(self, active_drones: Dict[str, DroneIDDevice]) -> None:
         """Periodically check for drones that have gone silent.
@@ -250,6 +264,20 @@ class AlertEngine:
     # ------------------------------------------------------------------ #
     # Internal helpers                                                     #
     # ------------------------------------------------------------------ #
+
+    def _auto_resolve(self, alert_type: str, key: str) -> None:
+        """Auto-resolve the most recent active or acknowledged alert of this type for this drone."""
+        try:
+            alerts, _ = self._db.get_alerts(limit=20)
+            for a in alerts:
+                if (a.get('alert_type') == alert_type
+                        and a.get('serial_number') == key
+                        and a.get('state', 'ACTIVE') != 'RESOLVED'):
+                    self._db.resolve_alert(a['id'])
+                    log.info("alert_engine: auto-resolved %s for %s (id=%s)", alert_type, key, a['id'])
+                    break
+        except Exception:
+            log.exception("alert_engine: failed to auto-resolve %s for %s", alert_type, key)
 
     def _fire_alert(self, alert_type: str, device: DroneIDDevice, detail: str) -> None:
         """Create an AlertEvent, persist it, enqueue for frontend, and run script."""

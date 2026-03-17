@@ -118,6 +118,11 @@
       <!-- right-side controls aligned to end -->
       <li class="nav-item ms-auto d-flex align-items-center pe-1">
         <!-- Fix #22: add aria-label to icon-only buttons -->
+        <button class="btn btn-xs btn-icon text-info" id="btnGeozones"
+                title="Toggle airport/no-fly zones"
+                aria-label="Toggle geozones">
+          <i class="bi bi-shield-exclamation"></i>
+        </button>
         <button class="btn btn-xs btn-icon" id="btnRangeRings"
                 title="Toggle range rings"
                 aria-label="Toggle range rings">
@@ -328,6 +333,7 @@
 <script src="js/utils.js"></script>
 <script src="js/api.js"></script>
 <script src="js/map.js"></script>
+<script src="js/geozones.js"></script>
 <script src="js/table.js"></script>
 <script src="js/alerts.js"></script>
 <script src="js/replay.js"></script>

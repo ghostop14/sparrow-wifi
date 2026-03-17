@@ -63,6 +63,17 @@ const App = (() => {
       TableManager.hideDetailSidebar();
     });
 
+    // Geozones
+    if (typeof GeozoneManager !== 'undefined') {
+      GeozoneManager.init(MapManager.getMap());
+      document.getElementById('btnGeozones')?.addEventListener('click', () => {
+        const on = GeozoneManager.toggle();
+        document.getElementById('btnGeozones')?.classList.toggle('text-info', on);
+      });
+      // Set initial button state
+      document.getElementById('btnGeozones')?.classList.toggle('text-info', true);
+    }
+
     // Range rings toggle
     document.getElementById('btnRangeRings')?.addEventListener('click', () => {
       const on = MapManager.toggleRangeRings();
@@ -269,6 +280,11 @@ const App = (() => {
 
       // Fix #15: update GPS UI with mode from receiver.source (e.g. 'gpsd', 'static', 'none')
       if (receiver) _updateGpsUi(receiver.gps_fix, receiver.source);
+
+      // Load geozones when receiver position is known
+      if (receiver && receiver.lat && receiver.lon && typeof GeozoneManager !== 'undefined') {
+        GeozoneManager.loadData(receiver.lat, receiver.lon);
+      }
 
       // Re-fetch track for selected drone if still visible
       if (_selectedSerial) {

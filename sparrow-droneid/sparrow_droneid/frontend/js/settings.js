@@ -76,6 +76,22 @@ const SettingsManager = (() => {
         <!-- ===== Col 1 ===== -->
         <div class="col-lg-6">
 
+          <!-- Operator Identity -->
+          <div class="card settings-card mb-3">
+            <div class="card-header">
+              <i class="bi bi-person-badge me-2"></i>Operator Identity
+            </div>
+            <div class="card-body">
+              <div class="mb-0">
+                <label class="form-label" for="s_operator_name">Operator Name / Callsign</label>
+                <input type="text" class="form-control form-control-sm" id="s_operator_name"
+                  value="${_esc(localStorage.getItem('sparrow_operator_name') || '')}" placeholder="e.g. KILO-1"
+                  style="max-width:220px;">
+                <small class="text-muted">Stored on this device only — each operator sets their own</small>
+              </div>
+            </div>
+          </div>
+
           <!-- Network & Security -->
           <div class="card settings-card mb-3">
             <div class="card-header">
@@ -154,12 +170,22 @@ const SettingsManager = (() => {
                 <small class="text-muted">Interface to use for drone detection</small>
               </div>
 
-              <div class="mb-0">
+              <div class="mb-3">
                 <label class="form-label">Tile Cache</label>
                 <div class="form-check form-switch">
                   <input class="form-check-input" type="checkbox" id="s_tile_cache" ${_checked(s.tile_cache_enabled)}>
                   <label class="form-check-label" for="s_tile_cache">Cache map tiles locally for offline use</label>
                 </div>
+              </div>
+
+              <div class="mb-0">
+                <label class="form-label" for="s_airport_radius">Airport Geozone Radius</label>
+                <div class="d-flex align-items-center gap-2">
+                  <input type="number" class="form-control form-control-sm" id="s_airport_radius"
+                    value="${s.airport_geozone_radius_mi || 2}" min="0.5" max="10" step="0.5" style="max-width:80px;">
+                  <span class="text-secondary small">miles</span>
+                </div>
+                <small class="text-muted">Radius of airport zone circles on map</small>
               </div>
 
             </div>
@@ -466,6 +492,16 @@ const SettingsManager = (() => {
       }
     });
 
+    // Operator name — mirror to localStorage so alerts module can read it synchronously
+    document.getElementById('s_operator_name')?.addEventListener('change', e => {
+      const val = e.target.value.trim();
+      if (val) {
+        localStorage.setItem('sparrow_operator_name', val);
+      } else {
+        localStorage.removeItem('sparrow_operator_name');
+      }
+    });
+
     // Auth token — store in localStorage for API usage
     document.getElementById('s_token')?.addEventListener('change', e => {
       const val = e.target.value.trim();
@@ -758,6 +794,7 @@ const SettingsManager = (() => {
     const strField   = (id, key) => { const el = document.getElementById(id); if (el) changes[key] = el.value.trim(); };
     const boolField  = (id, key) => { const el = document.getElementById(id); if (el) changes[key] = el.checked; };
 
+    // operator_name is localStorage-only (per device), not saved to DB
     intField  ('s_port',             'port');
     strField  ('s_bind',             'bind_address');
     boolField ('s_https',            'https_enabled');
@@ -769,6 +806,7 @@ const SettingsManager = (() => {
     floatField('s_alt',              'gps_static_alt');
     strField  ('s_iface',            'monitor_interface');
     boolField ('s_tile_cache',       'tile_cache_enabled');
+    floatField('s_airport_radius',   'airport_geozone_radius_mi');
     boolField ('s_cot_enabled',      'cot_enabled');
     strField  ('s_cot_addr',         'cot_address');
     intField  ('s_cot_port',         'cot_port');
@@ -802,6 +840,8 @@ const SettingsManager = (() => {
     try {
       const result = await Api.putSettings(changes);
       _settings = result.settings;
+
+      // operator_name is managed in localStorage only (per-device), not from DB
 
       const restartWarn = document.getElementById('settingsRestartWarn');
       if (result.restart_required) {

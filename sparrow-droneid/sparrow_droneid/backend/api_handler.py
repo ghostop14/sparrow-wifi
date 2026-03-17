@@ -879,14 +879,68 @@ def api_alerts_log(req: RequestHandler):
     to_ts = req._qparam('to') or None
     limit = req._qparam_int('limit', 100)
     offset = req._qparam_int('offset', 0)
+    state = req._qparam('state') or None
+
+    # Validate state filter if provided
+    if state and state not in ('ACTIVE', 'ACKNOWLEDGED', 'RESOLVED'):
+        req._send_error_json(400, 1, "state must be 'ACTIVE', 'ACKNOWLEDGED', or 'RESOLVED'")
+        return
 
     try:
-        alerts, total = _db.get_alerts(from_ts, to_ts, limit, offset)
+        alerts, total = _db.get_alerts(from_ts, to_ts, limit, offset, state=state)
     except Exception as e:
         req._send_error_json(500, 5, f'Database error: {e}')
         return
 
     req._send_json(req._ok({'alerts': alerts, 'total_count': total}))
+
+
+@router.route('PUT', '/api/alerts/acknowledge')
+def api_alerts_acknowledge_all(req: RequestHandler):
+    """Bulk-acknowledge all ACTIVE alerts."""
+    if _db is None:
+        req._send_error_json(503, 5, 'Database not available')
+        return
+
+    body = req.json_data or {}
+    operator = str(body.get('operator', '')).strip()
+
+    try:
+        count = _db.acknowledge_all_active(operator)
+    except Exception as e:
+        req._send_error_json(500, 5, f'Database error: {e}')
+        return
+
+    req._send_json(req._ok({'count': count}))
+
+
+@router.route('PUT', '/api/alerts/{alert_id}/acknowledge')
+def api_alert_acknowledge(req: RequestHandler, alert_id: str):
+    """Acknowledge a single alert by ID."""
+    if _db is None:
+        req._send_error_json(503, 5, 'Database not available')
+        return
+
+    try:
+        aid = int(alert_id)
+    except (ValueError, TypeError):
+        req._send_error_json(400, 1, 'alert_id must be an integer')
+        return
+
+    body = req.json_data or {}
+    operator = str(body.get('operator', '')).strip()
+
+    try:
+        updated = _db.acknowledge_alert(aid, operator)
+    except Exception as e:
+        req._send_error_json(500, 5, f'Database error: {e}')
+        return
+
+    if not updated:
+        req._send_error_json(404, 2, f'Alert {aid} not found or not in ACTIVE state')
+        return
+
+    req._send_json(req._ok())
 
 
 # ---------------------------------------------------------------------------
@@ -1114,6 +1168,49 @@ def api_data_purge_tiles(req: RequestHandler):
 
 
 # ---------------------------------------------------------------------------
+# Geozones (airports + FAA no-fly zones)
+# ---------------------------------------------------------------------------
+
+_geozone_cache = None  # Lazy-initialized GeozoneCache
+
+
+def _get_geozone_cache():
+    """Lazy-init the geozone cache using the same data_dir as tile cache."""
+    global _geozone_cache
+    if _geozone_cache is None:
+        from .geozone_cache import GeozoneCache
+        _geozone_cache = GeozoneCache(_data_dir or 'data')
+    return _geozone_cache
+
+
+@router.route('GET', '/api/geozones/airports')
+def api_geozones_airports(req: RequestHandler):
+    cache = _get_geozone_cache()
+    lat = float(req._qparam('lat') or 0)
+    lon = float(req._qparam('lon') or 0)
+    radius = float(req._qparam('radius_mi') or 50)
+
+    if (lat == 0 and lon == 0) and _gps_engine:
+        lat, lon, _ = _gps_engine.get_receiver_position()
+
+    airports = cache.get_airports(lat, lon, radius)
+    req._send_json(req._ok({'airports': airports}))
+
+
+@router.route('GET', '/api/geozones/nofly')
+def api_geozones_nofly(req: RequestHandler):
+    cache = _get_geozone_cache()
+    lat = float(req._qparam('lat') or 0)
+    lon = float(req._qparam('lon') or 0)
+
+    if (lat == 0 and lon == 0) and _gps_engine:
+        lat, lon, _ = _gps_engine.get_receiver_position()
+
+    nofly = cache.get_nofly_zones(lat, lon)
+    req._send_json(req._ok({'features': nofly.get('features', [])}))
+
+
+# ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
 
@@ -1135,6 +1232,8 @@ _SETTINGS_WRITABLE = frozenset({
     'alert_slack_enabled', 'alert_slack_webhook_url', 'alert_slack_display_name',
     'tile_cache_enabled',
     'monitor_interface',
+    'operator_name',
+    'airport_geozone_radius_mi',
 })
 
 

@@ -129,38 +129,74 @@ const AlertsManager = (() => {
     return detail;
   }
 
+  // ---- Filter state ----
+  // 'active' shows only ACTIVE alerts; 'all' shows everything
+  let _filterMode = 'active';
+
   // ---- Render alert list ----
 
   function _renderAlertList() {
     const list = document.getElementById('alertsList');
     if (!list) return;
 
-    if (_alerts.length === 0) {
+    // Apply filter
+    const visible = _filterMode === 'all'
+      ? _alerts
+      : _alerts.filter(a => (a.state || 'ACTIVE') === 'ACTIVE');
+
+    if (visible.length === 0) {
+      const emptyMsg = _filterMode === 'active' && _alerts.length > 0
+        ? 'All alerts acknowledged'
+        : 'No alerts';
       list.innerHTML = `<div class="alerts-empty text-center text-secondary py-4">
-        <i class="bi bi-bell-slash fs-3 d-block mb-2 opacity-25"></i>No alerts</div>`;
-      _updateTabBadge(0);
+        <i class="bi bi-bell-slash fs-3 d-block mb-2 opacity-25"></i>${_esc(emptyMsg)}</div>`;
+      _updateTabBadge(_alerts.filter(a => (a.state || 'ACTIVE') === 'ACTIVE').length);
       return;
     }
 
-    const html = _alerts.map(a => {
+    const html = visible.map(a => {
+      const state = a.state || 'ACTIVE';
       const icon = _alertIcon(a.alert_type);
+
+      let stateClass = '';
+      let stateExtra = '';
+      if (state === 'ACKNOWLEDGED') {
+        stateClass = 'acked';
+        stateExtra = `<span style="font-size:10px;color:var(--text-muted);margin-left:4px;" title="Acknowledged${a.acknowledged_by ? ' by ' + _esc(a.acknowledged_by) : ''}">&#10003; acked</span>`;
+      } else if (state === 'RESOLVED') {
+        stateClass = 'resolved';
+        stateExtra = `<span style="font-size:10px;color:var(--text-muted);margin-left:4px;">&#10003; resolved</span>`;
+      }
+
+      const ackBtn = state === 'ACTIVE'
+        ? `<button class="btn-ack" title="Acknowledge" onclick="AlertsManager._ackOne(${a.id})">
+             <i class="bi bi-check-lg"></i>
+           </button>`
+        : '';
+
       return `
-        <div class="alert-item">
+        <div class="alert-item ${stateClass}">
           <i class="bi ${icon} alert-icon"></i>
           <div class="alert-content">
-            <div class="alert-title">${_esc(_alertTitle(a.alert_type))}</div>
+            <div class="alert-title">
+              ${_esc(_alertTitle(a.alert_type))}${stateExtra}
+            </div>
             <div class="alert-detail">${_esc(_localizeDetail(a.detail || ''))}</div>
             <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
               ${_esc(Utils.shortSerial(a.serial_number))}
               ${a.drone_height_agl ? ` &mdash; ${Utils.formatAlt(a.drone_height_agl)} AGL` : ''}
             </div>
           </div>
-          <span class="alert-time">${Utils.relativeTime(a.timestamp)}</span>
+          <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+            <span class="alert-time">${Utils.relativeTime(a.timestamp)}</span>
+            ${ackBtn}
+          </div>
         </div>`;
     }).join('');
 
     list.innerHTML = html;
-    _updateTabBadge(_alerts.length);
+    // Badge shows count of ACTIVE (unacknowledged) alerts regardless of filter
+    _updateTabBadge(_alerts.filter(a => (a.state || 'ACTIVE') === 'ACTIVE').length);
   }
 
   function _updateTabBadge(count) {
@@ -190,14 +226,16 @@ const AlertsManager = (() => {
       return;
     }
 
-    // Detect new alerts (not yet seen)
-    const freshAlerts = newAlerts.filter(a => !_seenIds.has(a.id));
+    // Detect new ACTIVE alerts not yet seen (acknowledged/resolved alerts never get toasts)
+    const freshAlerts = newAlerts.filter(
+      a => !_seenIds.has(a.id) && (a.state || 'ACTIVE') === 'ACTIVE'
+    );
 
-    // Prepend new alerts to display list
-    _alerts = [...newAlerts.slice(0, 100)]; // cap display at 100
+    // Update display list (cap at 100)
+    _alerts = [...newAlerts.slice(0, 100)];
     newAlerts.forEach(a => _seenIds.add(a.id));
 
-    // Notify for fresh alerts only
+    // Notify for fresh ACTIVE alerts only
     freshAlerts.forEach(a => {
       // Visual toast
       if (_visualEnabled) {
@@ -218,9 +256,67 @@ const AlertsManager = (() => {
   }
 
   function clearAlerts() {
-    _alerts = [];
-    _seenIds.clear();
+    // Switch to 'active' filter which hides acknowledged/resolved alerts.
+    // Don't clear _seenIds — acknowledged alerts must not re-trigger toasts.
+    _filterMode = 'active';
+    _updateFilterButtons();
     _renderAlertList();
+  }
+
+  function _updateFilterButtons() {
+    const btnActive = document.getElementById('btnFilterActive');
+    const btnAll    = document.getElementById('btnFilterAll');
+    if (btnActive) btnActive.classList.toggle('active', _filterMode === 'active');
+    if (btnAll)    btnAll.classList.toggle('active', _filterMode === 'all');
+  }
+
+  function _requireOperatorName() {
+    let name = localStorage.getItem('sparrow_operator_name') || '';
+    if (name) return name;
+    name = (prompt('Enter your operator name / callsign:') || '').trim();
+    if (!name) return null;  // user cancelled
+    localStorage.setItem('sparrow_operator_name', name);
+    // Sync to settings field if it's open
+    const el = document.getElementById('s_operator_name');
+    if (el) el.value = name;
+    return name;
+  }
+
+  async function _ackOne(alertId) {
+    const operator = _requireOperatorName();
+    if (operator === null) return;
+    try {
+      await Api.acknowledgeAlert(alertId, operator);
+      await _repoll();
+    } catch (e) {
+      Utils.toast('Acknowledge failed: ' + e.message, 'alert');
+    }
+  }
+
+  async function _ackAll() {
+    const operator = _requireOperatorName();
+    if (operator === null) return;
+    try {
+      const result = await Api.acknowledgeAllAlerts(operator);
+      await _repoll();
+      if (result.count > 0) {
+        Utils.toast(`${result.count} alert${result.count !== 1 ? 's' : ''} acknowledged.`, 'success');
+      }
+    } catch (e) {
+      Utils.toast('Acknowledge all failed: ' + e.message, 'alert');
+    }
+  }
+
+  async function _repoll() {
+    try {
+      const result = await Api.getAlertLog({ limit: 100 });
+      if (result && result.alerts) {
+        _alerts = result.alerts.slice(0, 100);
+        _renderAlertList();
+      }
+    } catch (e) {
+      // Non-fatal — stale display is acceptable
+    }
   }
 
   function _esc(str) {
@@ -382,8 +478,43 @@ const AlertsManager = (() => {
   // ---- Init ----
   function init() {
     document.getElementById('btnAlertConfig')?.addEventListener('click', () => openConfigModal());
-    document.getElementById('btnClearAlerts')?.addEventListener('click', () => clearAlerts());
     document.getElementById('btnSaveAlertConfig')?.addEventListener('click', () => saveAlertConfig());
+
+    // Repurpose the existing "Clear" button as "Acknowledge All"
+    const btnClear = document.getElementById('btnClearAlerts');
+    if (btnClear) {
+      btnClear.innerHTML = '<i class="bi bi-check-all me-1"></i>Ack All';
+      btnClear.title = 'Acknowledge all active alerts';
+      btnClear.addEventListener('click', () => _ackAll());
+    }
+
+    // Inject filter toggle buttons into the alerts toolbar
+    const toolbar = document.querySelector('#pane-alerts .alerts-toolbar');
+    if (toolbar) {
+      const filterGroup = document.createElement('div');
+      filterGroup.className = 'd-flex gap-1';
+      filterGroup.innerHTML = `
+        <button class="btn btn-xs btn-outline-secondary active" id="btnFilterActive" title="Show active alerts only">Active</button>
+        <button class="btn btn-xs btn-outline-secondary" id="btnFilterAll" title="Show all alerts">All</button>`;
+      // Insert before the Configure button (the ms-auto element)
+      const cfgBtn = document.getElementById('btnAlertConfig');
+      if (cfgBtn) {
+        toolbar.insertBefore(filterGroup, cfgBtn);
+      } else {
+        toolbar.appendChild(filterGroup);
+      }
+
+      document.getElementById('btnFilterActive')?.addEventListener('click', () => {
+        _filterMode = 'active';
+        _updateFilterButtons();
+        _renderAlertList();
+      });
+      document.getElementById('btnFilterAll')?.addEventListener('click', () => {
+        _filterMode = 'all';
+        _updateFilterButtons();
+        _renderAlertList();
+      });
+    }
 
     // Unlock audio on first user interaction
     document.addEventListener('click', () => {
@@ -400,5 +531,7 @@ const AlertsManager = (() => {
     playChime,
     playAlertTone,
     _testAudio,
+    _ackOne,
+    _ackAll,
   };
 })();
