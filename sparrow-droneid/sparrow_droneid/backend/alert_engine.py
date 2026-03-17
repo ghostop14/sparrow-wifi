@@ -1,0 +1,255 @@
+"""
+Alert evaluation and dispatch engine for Sparrow DroneID.
+
+Evaluates incoming drone detections against configurable rules and dispatches
+alert events to the database, pending queue, and optional external scripts.
+"""
+import json
+import logging
+import subprocess
+import threading
+from datetime import datetime
+from typing import Dict, List, Optional
+
+from .models import AlertEvent, AlertRule, AlertType, DEFAULT_ALERT_RULES, DroneIDDevice
+from .database import Database
+
+log = logging.getLogger(__name__)
+
+
+class AlertEngine:
+    """Evaluates drone detections against alert rules and dispatches events.
+
+    Thread-safe: _pending_alerts and _known_serials are protected by
+    _lock.  _alerted_lost is accessed only from the periodic
+    check_signal_lost() caller and does not require separate locking
+    provided that caller is single-threaded (e.g. one background timer).
+    """
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+        self._lock = threading.Lock()
+
+        # Set of drone keys (serial / registration / MAC) seen at least once.
+        # Used to differentiate "new drone" from a returning one.
+        self._known_serials: set = set()
+
+        # Alerts fired for signal-lost but not yet cleared by reappearance.
+        self._alerted_lost: set = set()
+
+        # Alerts waiting to be consumed by the frontend polling endpoint.
+        self._pending_alerts: List[dict] = []
+
+        self._load_config()
+
+    # ------------------------------------------------------------------ #
+    # Configuration                                                        #
+    # ------------------------------------------------------------------ #
+
+    def _load_config(self) -> None:
+        """Read all alert configuration from DB settings (no lock needed —
+        called from __init__ and reload_config before public access)."""
+        raw_rules = self._db.get_setting('alert_rules', '')
+        if raw_rules:
+            try:
+                rule_dicts = json.loads(raw_rules)
+                self._rules: List[AlertRule] = [AlertRule.from_dict(r) for r in rule_dicts]
+            except (json.JSONDecodeError, TypeError):
+                log.warning("alert_engine: corrupt alert_rules in DB; using defaults")
+                self._rules = list(DEFAULT_ALERT_RULES)
+        else:
+            self._rules = list(DEFAULT_ALERT_RULES)
+
+        def _bool(key: str, default: bool) -> bool:
+            val = self._db.get_setting(key, str(default).lower())
+            return val.lower() in ('1', 'true', 'yes')
+
+        self._audio_enabled: bool  = _bool('alert_audio_enabled',  True)
+        self._visual_enabled: bool = _bool('alert_visual_enabled', True)
+        self._script_enabled: bool = _bool('alert_script_enabled', False)
+        self._script_path: str     = self._db.get_setting('alert_script_path', '') or ''
+
+    def reload_config(self) -> None:
+        """Re-read alert configuration from the database."""
+        self._load_config()
+
+    def get_config(self) -> dict:
+        """Return current alert configuration as a plain dict."""
+        return {
+            'rules': [r.to_dict() for r in self._rules],
+            'audio_enabled':  self._audio_enabled,
+            'visual_enabled': self._visual_enabled,
+            'script_enabled': self._script_enabled,
+            'script_path':    self._script_path,
+        }
+
+    def set_config(self, config: dict) -> None:
+        """Persist updated alert configuration to DB and reload in-memory state."""
+        if 'rules' in config:
+            self._db.set_setting('alert_rules', json.dumps(config['rules']))
+        if 'audio_enabled' in config:
+            self._db.set_setting('alert_audio_enabled', str(config['audio_enabled']).lower())
+        if 'visual_enabled' in config:
+            self._db.set_setting('alert_visual_enabled', str(config['visual_enabled']).lower())
+        if 'script_enabled' in config:
+            self._db.set_setting('alert_script_enabled', str(config['script_enabled']).lower())
+        if 'script_path' in config:
+            self._db.set_setting('alert_script_path', config['script_path'])
+        self.reload_config()
+
+    # ------------------------------------------------------------------ #
+    # Public evaluation interface                                          #
+    # ------------------------------------------------------------------ #
+
+    def evaluate(self, device: DroneIDDevice) -> None:
+        """Evaluate a freshly-received detection against all enabled rules.
+
+        Must be called from the detection ingestion path (one call per frame).
+        """
+        key = device.get_key()
+        if not key:
+            return
+
+        for rule in self._rules:
+            if not rule.enabled:
+                continue
+
+            rtype = rule.type
+
+            if rtype == AlertType.NEW_DRONE.value:
+                with self._lock:
+                    is_new = key not in self._known_serials
+                    self._known_serials.add(key)
+                if is_new:
+                    self._fire_alert(
+                        AlertType.NEW_DRONE.value, device,
+                        f"First detection of {key}",
+                    )
+
+            elif rtype == AlertType.ALTITUDE_MAX.value:
+                max_alt = rule.params.get('max_altitude_m', 122.0)
+                if device.drone_height_agl > max_alt:
+                    self._fire_alert(
+                        AlertType.ALTITUDE_MAX.value, device,
+                        f"AGL {device.drone_height_agl:.1f} m exceeds limit {max_alt} m",
+                    )
+
+            elif rtype == AlertType.SPEED_MAX.value:
+                max_spd = rule.params.get('max_speed_mps', 44.7)
+                if device.speed > max_spd:
+                    self._fire_alert(
+                        AlertType.SPEED_MAX.value, device,
+                        f"Speed {device.speed:.1f} m/s exceeds limit {max_spd} m/s",
+                    )
+
+            # SIGNAL_LOST is not evaluated here; handled by check_signal_lost().
+
+        # Mark drone as seen (clears any previously alerted-lost entry).
+        with self._lock:
+            self._alerted_lost.discard(key)
+
+    def check_signal_lost(self, active_drones: Dict[str, DroneIDDevice]) -> None:
+        """Periodically check for drones that have gone silent.
+
+        Args:
+            active_drones: Mapping of drone-key -> DroneIDDevice for every
+                           drone the caller considers currently tracked.
+        """
+        # Find the signal_lost rule (there should be at most one).
+        lost_rule: Optional[AlertRule] = None
+        for rule in self._rules:
+            if rule.enabled and rule.type == AlertType.SIGNAL_LOST.value:
+                lost_rule = rule
+                break
+
+        if lost_rule is None:
+            return
+
+        timeout = float(lost_rule.params.get('timeout_seconds', 180))
+        now = datetime.utcnow()
+
+        for key, device in active_drones.items():
+            try:
+                last_seen = datetime.fromisoformat(
+                    device.last_seen.replace('Z', '+00:00').replace('+00:00', '')
+                )
+            except (ValueError, AttributeError):
+                continue
+
+            age = (now - last_seen).total_seconds()
+            if age <= timeout:
+                continue
+
+            with self._lock:
+                already_alerted = key in self._alerted_lost
+                if not already_alerted:
+                    self._alerted_lost.add(key)
+
+            if not already_alerted:
+                self._fire_alert(
+                    AlertType.SIGNAL_LOST.value, device,
+                    f"No signal for {int(age)} s (timeout {int(timeout)} s)",
+                )
+
+    def get_pending_alerts(self) -> List[dict]:
+        """Return and clear the list of pending alert dicts.
+
+        Consumed by the frontend polling endpoint.
+        """
+        with self._lock:
+            pending = list(self._pending_alerts)
+            self._pending_alerts.clear()
+        return pending
+
+    # ------------------------------------------------------------------ #
+    # Internal helpers                                                     #
+    # ------------------------------------------------------------------ #
+
+    def _fire_alert(self, alert_type: str, device: DroneIDDevice, detail: str) -> None:
+        """Create an AlertEvent, persist it, enqueue for frontend, and run script."""
+        event = AlertEvent(
+            timestamp=datetime.utcnow().isoformat() + 'Z',
+            alert_type=alert_type,
+            serial_number=device.get_key(),
+            detail=detail,
+            drone_lat=device.drone_lat,
+            drone_lon=device.drone_lon,
+            drone_height_agl=device.drone_height_agl,
+        )
+
+        try:
+            row_id = self._db.insert_alert(event)
+            event.id = row_id
+        except Exception:
+            log.exception("alert_engine: failed to persist alert to DB")
+
+        alert_dict = event.to_dict()
+
+        with self._lock:
+            self._pending_alerts.append(alert_dict)
+
+        log.info("alert_engine: %s — %s — %s", alert_type, event.serial_number, detail)
+
+        if self._script_enabled and self._script_path:
+            self._run_script(alert_dict)
+
+    def _run_script(self, alert_dict: dict) -> None:
+        """Invoke the external alert script in a daemon thread.
+
+        The script receives the JSON-encoded alert as its first positional
+        argument.  Errors are logged but never propagate to the caller.
+        """
+        payload = json.dumps(alert_dict)
+
+        def _invoke() -> None:
+            try:
+                subprocess.Popen(
+                    [self._script_path, payload],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                log.exception("alert_engine: script invocation failed: %s", self._script_path)
+
+        t = threading.Thread(target=_invoke, daemon=True, name="alert-script")
+        t.start()

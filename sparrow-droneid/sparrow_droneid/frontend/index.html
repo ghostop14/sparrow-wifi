@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sparrow DroneID</title>
+
+  <!-- Bootstrap 5 -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" />
+  <!-- Bootstrap Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <!-- App styles -->
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+
+<!-- ===== TOP NAVBAR ===== -->
+<nav class="navbar navbar-expand-lg app-navbar px-3 py-1" id="mainNavbar">
+  <div class="d-flex align-items-center gap-2 me-3">
+    <i class="bi bi-broadcast-pin text-warning fs-5"></i>
+    <span class="navbar-brand mb-0 fw-bold">Sparrow DroneID</span>
+  </div>
+
+  <!-- Monitoring controls -->
+  <div class="d-flex align-items-center gap-2 me-3">
+    <select class="form-select form-select-sm iface-select" id="ifaceSelect" title="Select interface">
+      <option value="">-- interface --</option>
+    </select>
+    <button class="btn btn-sm btn-start-monitor" id="btnMonitor" title="Start/stop monitoring">
+      <i class="bi bi-play-fill"></i> <span id="btnMonitorLabel">Start</span>
+    </button>
+  </div>
+
+  <!-- Status indicators -->
+  <div class="d-flex align-items-center gap-3 ms-auto me-2 status-strip">
+    <!-- Monitoring state -->
+    <span class="status-badge" id="statusMonitor" title="Monitoring state">
+      <span class="status-dot" id="monitorDot"></span>
+      <span id="monitorLabel">Idle</span>
+    </span>
+
+    <!-- GPS fix -->
+    <span class="status-badge" id="statusGps" title="GPS state">
+      <i class="bi bi-geo-alt-fill me-1"></i>
+      <span id="gpsLabel">GPS: —</span>
+    </span>
+
+    <!-- Drone count -->
+    <span class="badge drone-count-badge" id="droneCountBadge" title="Active drones">
+      <i class="bi bi-aircraft-horizontal me-1"></i>
+      <span id="droneCountLabel">0</span>
+    </span>
+  </div>
+
+  <!-- Theme toggle + Settings -->
+  <div class="d-flex align-items-center gap-2">
+    <button class="btn btn-sm btn-icon" id="btnTheme" title="Toggle light/dark mode">
+      <i class="bi bi-moon-fill" id="themeIcon"></i>
+    </button>
+    <button class="btn btn-sm btn-icon" id="btnSettings" title="Settings" data-bs-toggle="modal" data-bs-target="#settingsModal">
+      <i class="bi bi-gear-fill"></i>
+    </button>
+  </div>
+</nav>
+
+<!-- ===== MAIN LAYOUT ===== -->
+<div class="app-layout" id="appLayout">
+
+  <!-- MAP AREA -->
+  <div class="map-container" id="mapContainer">
+    <div id="map"></div>
+
+    <!-- Map overlay controls -->
+    <div class="map-overlay-top-left">
+      <div class="map-badge" id="replayIndicator" style="display:none;">
+        <i class="bi bi-skip-backward-circle-fill text-warning me-1"></i>
+        <span id="replayTimeLabel">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM PANEL -->
+  <div class="bottom-panel" id="bottomPanel">
+    <!-- Resize handle -->
+    <div class="panel-resize-handle" id="panelResizeHandle"></div>
+
+    <!-- Tab nav -->
+    <ul class="nav nav-tabs panel-tabs px-2 pt-1" id="bottomTabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="tab-drones" data-bs-toggle="tab" data-bs-target="#pane-drones" type="button" role="tab">
+          <i class="bi bi-aircraft-horizontal me-1"></i>Drones
+          <span class="badge ms-1 tab-count" id="droneTabCount">0</span>
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-alerts" data-bs-toggle="tab" data-bs-target="#pane-alerts" type="button" role="tab">
+          <i class="bi bi-bell-fill me-1"></i>Alerts
+          <span class="badge ms-1 tab-count alert-count-badge" id="alertTabCount" style="display:none;">0</span>
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-replay" data-bs-toggle="tab" data-bs-target="#pane-replay" type="button" role="tab">
+          <i class="bi bi-clock-history me-1"></i>Replay
+        </button>
+      </li>
+
+      <!-- right-side controls aligned to end -->
+      <li class="nav-item ms-auto d-flex align-items-center pe-1">
+        <button class="btn btn-xs btn-icon" id="btnRangeRings" title="Toggle range rings">
+          <i class="bi bi-circle"></i>
+        </button>
+        <button class="btn btn-xs btn-icon ms-1" id="btnPanelCollapse" title="Collapse panel">
+          <i class="bi bi-chevron-down" id="panelCollapseIcon"></i>
+        </button>
+      </li>
+    </ul>
+
+    <!-- Tab content -->
+    <div class="tab-content panel-tab-content flex-grow-1 overflow-hidden" id="bottomTabContent">
+
+      <!-- Drones pane -->
+      <div class="tab-pane fade show active h-100" id="pane-drones" role="tabpanel">
+        <div class="table-wrapper h-100 overflow-auto">
+          <table class="table table-sm table-drone mb-0" id="droneTable">
+            <thead>
+              <tr>
+                <th data-col="serial_number" class="sortable">Serial <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                <th data-col="ua_type" class="sortable">Type <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                <th data-col="drone_height_agl" class="sortable">Alt AGL <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                <th data-col="speed" class="sortable">Speed <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                <th data-col="range_m" class="sortable">Range <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                <th data-col="bearing_deg" class="sortable">Bearing <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                <th data-col="rssi" class="sortable">RSSI <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                <th data-col="protocol">Protocol</th>
+                <th data-col="last_seen" class="sortable">Last Seen <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                <th data-col="state">State</th>
+              </tr>
+            </thead>
+            <tbody id="droneTableBody">
+              <tr class="table-empty-row">
+                <td colspan="10" class="text-center text-secondary py-4">
+                  <i class="bi bi-radar fs-3 d-block mb-2 opacity-25"></i>
+                  No drones detected
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Alerts pane -->
+      <div class="tab-pane fade h-100" id="pane-alerts" role="tabpanel">
+        <div class="alerts-toolbar px-3 py-2 border-bottom d-flex align-items-center gap-2">
+          <span class="text-secondary small">Recent alerts</span>
+          <button class="btn btn-xs btn-outline-secondary ms-auto" id="btnAlertConfig">
+            <i class="bi bi-sliders2 me-1"></i>Configure
+          </button>
+          <button class="btn btn-xs btn-outline-secondary" id="btnClearAlerts">
+            <i class="bi bi-x-lg me-1"></i>Clear
+          </button>
+        </div>
+        <div class="alerts-list overflow-auto" id="alertsList">
+          <div class="alerts-empty text-center text-secondary py-4">
+            <i class="bi bi-bell-slash fs-3 d-block mb-2 opacity-25"></i>
+            No alerts
+          </div>
+        </div>
+      </div>
+
+      <!-- Replay pane -->
+      <div class="tab-pane fade h-100" id="pane-replay" role="tabpanel">
+        <div class="replay-container h-100 px-3 py-2">
+
+          <!-- Time range row -->
+          <div class="row g-2 align-items-end mb-2">
+            <div class="col-auto">
+              <label class="form-label mb-0 small text-secondary">From</label>
+              <input type="datetime-local" class="form-control form-control-sm" id="replayFrom" />
+            </div>
+            <div class="col-auto">
+              <label class="form-label mb-0 small text-secondary">To</label>
+              <input type="datetime-local" class="form-control form-control-sm" id="replayTo" />
+            </div>
+            <div class="col-auto">
+              <button class="btn btn-sm btn-primary" id="btnReplayLoad">
+                <i class="bi bi-download me-1"></i>Load
+              </button>
+            </div>
+            <div class="col-auto ms-auto">
+              <button class="btn btn-sm btn-outline-secondary" id="btnExportKml">
+                <i class="bi bi-file-earmark-code me-1"></i>KML Export
+              </button>
+            </div>
+          </div>
+
+          <!-- Serial list -->
+          <div class="replay-serials mb-2" id="replaySerials">
+            <span class="text-secondary small">Load a time range to see detected drones.</span>
+          </div>
+
+          <!-- Playback controls -->
+          <div class="replay-controls d-flex align-items-center gap-2 mb-2">
+            <button class="btn btn-sm btn-outline-secondary" id="btnReplaySkipBack" disabled>
+              <i class="bi bi-skip-backward-fill"></i>
+            </button>
+            <button class="btn btn-sm btn-primary" id="btnReplayPlay" disabled>
+              <i class="bi bi-play-fill" id="replayPlayIcon"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-secondary" id="btnReplaySkipFwd" disabled>
+              <i class="bi bi-skip-forward-fill"></i>
+            </button>
+            <span class="text-secondary small ms-1" id="replayCurrentTime">—</span>
+            <div class="ms-auto d-flex align-items-center gap-1">
+              <span class="text-secondary small">Speed:</span>
+              <div class="btn-group btn-group-sm" id="replaySpeedGroup">
+                <button class="btn btn-outline-secondary replay-speed active" data-speed="1">1x</button>
+                <button class="btn btn-outline-secondary replay-speed" data-speed="2">2x</button>
+                <button class="btn btn-outline-secondary replay-speed" data-speed="5">5x</button>
+                <button class="btn btn-outline-secondary replay-speed" data-speed="10">10x</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Timeline slider -->
+          <div class="replay-slider-wrap">
+            <input type="range" class="form-range" id="replaySlider" min="0" max="100" value="0" disabled />
+            <div class="replay-timeline-labels d-flex justify-content-between">
+              <span class="text-secondary small" id="replaySliderStart">—</span>
+              <span class="text-secondary small" id="replaySliderEnd">—</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+    </div><!-- /tab-content -->
+  </div><!-- /bottom-panel -->
+
+</div><!-- /app-layout -->
+
+<!-- ===== DETAIL SIDEBAR ===== -->
+<div class="detail-sidebar" id="detailSidebar">
+  <div class="detail-header d-flex align-items-center justify-content-between px-3 py-2 border-bottom">
+    <span class="fw-semibold text-truncate" id="detailTitle">Drone Detail</span>
+    <button class="btn btn-xs btn-icon" id="btnCloseDetail" title="Close">
+      <i class="bi bi-x-lg"></i>
+    </button>
+  </div>
+  <div class="detail-body overflow-auto" id="detailBody">
+    <!-- Populated by table.js / map.js -->
+  </div>
+</div>
+
+<!-- ===== TOAST CONTAINER ===== -->
+<div class="toast-container position-fixed bottom-0 end-0 p-3" id="toastContainer" style="z-index:2000;"></div>
+
+<!-- ===== ALERT CONFIG MODAL ===== -->
+<div class="modal fade" id="alertConfigModal" tabindex="-1" aria-labelledby="alertConfigModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="alertConfigModalLabel"><i class="bi bi-sliders2 me-2"></i>Alert Configuration</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="alertConfigBody">
+        <!-- Populated by alerts.js -->
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btnSaveAlertConfig">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== SETTINGS MODAL ===== -->
+<div class="modal fade" id="settingsModal" tabindex="-1" aria-labelledby="settingsModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="settingsModalLabel"><i class="bi bi-gear-fill me-2"></i>Settings</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="settingsBody">
+        <!-- Populated by settings.js -->
+      </div>
+      <div class="modal-footer d-flex align-items-center">
+        <span class="text-warning small me-auto" id="restartWarning" style="display:none!important;">
+          <i class="bi bi-exclamation-triangle-fill me-1"></i>Restart required for some changes to take effect.
+        </span>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btnSaveSettings">Save Settings</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Scripts: CDN -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<!-- App modules (order matters) -->
+<script src="js/utils.js"></script>
+<script src="js/api.js"></script>
+<script src="js/map.js"></script>
+<script src="js/table.js"></script>
+<script src="js/alerts.js"></script>
+<script src="js/replay.js"></script>
+<script src="js/settings.js"></script>
+<script src="js/app.js"></script>
+
+</body>
+</html>
