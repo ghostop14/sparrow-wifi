@@ -241,7 +241,37 @@ const App = (() => {
       _updateMonitorUi();
       // Fix #15: pass null for mode here; mode comes from drone poll via receiver.source
       _updateGpsUi(status.gps_fix, null);
+
+      // Show monitor health warning if the adapter isn't delivering frames
+      if (status.monitor_warning) {
+        _showMonitorWarning(status.monitor_warning);
+      } else {
+        _clearMonitorWarning();
+      }
     } catch (e) { /* ignore */ }
+  }
+
+  let _monitorWarningShown = false;
+  function _showMonitorWarning(msg) {
+    if (_monitorWarningShown) return;
+    _monitorWarningShown = true;
+    Utils.toast(msg, 'warning');
+    // Also show a persistent banner below the navbar
+    let banner = document.getElementById('monitorWarningBanner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'monitorWarningBanner';
+      banner.className = 'monitor-warning-banner';
+      banner.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i> ' + msg;
+      const main = document.querySelector('.main-content') || document.body;
+      main.insertBefore(banner, main.firstChild);
+    }
+  }
+  function _clearMonitorWarning() {
+    if (!_monitorWarningShown) return;
+    _monitorWarningShown = false;
+    const banner = document.getElementById('monitorWarningBanner');
+    if (banner) banner.remove();
   }
 
   function _updateGpsUi(fix, mode) {

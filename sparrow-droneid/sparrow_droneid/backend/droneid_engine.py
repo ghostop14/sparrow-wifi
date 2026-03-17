@@ -615,6 +615,9 @@ class DroneIDEngine:
         self._droneid_frame_count = 0
         self._capture_errors = 0
 
+        # Monitor mode health check
+        self._monitor_warning = ""  # Non-empty = problem detected
+
         # Callback for alert engine
         self.on_detection = None
 
@@ -635,9 +638,14 @@ class DroneIDEngine:
         self._frame_count = 0
         self._droneid_frame_count = 0
         self._capture_errors = 0
+        self._monitor_warning = ""
 
         self._parse_thread = threading.Thread(target=self._parse_loop, daemon=True)
         self._parse_thread.start()
+
+        # Background health check: verify frames are actually arriving
+        threading.Thread(target=self._monitor_health_check, daemon=True,
+                         name='monitor-health').start()
 
     def stop(self):
         """Stop monitoring and restore interface."""
@@ -865,6 +873,60 @@ class DroneIDEngine:
         track = self._db.get_drone_track(serial, track_minutes)
         return drone_dict, track
 
+    def _monitor_health_check(self):
+        """Background check: verify the adapter is actually delivering frames.
+
+        Some drivers (notably iwlwifi on Intel AX200/AX201/AX203/AX210) report
+        monitor mode as supported but the firmware silently drops all frames.
+        We wait a few seconds after capture starts and check if any raw 802.11
+        frames have arrived.  If not, set a warning for the user.
+        """
+        # Wait 8 seconds — even on a quiet channel, APs beacon every ~100ms
+        # so we should see dozens of frames if the adapter is working
+        for _ in range(16):
+            sleep(0.5)
+            if not self._monitoring:
+                return
+            if self._frame_count > 0:
+                # Frames are flowing — adapter works
+                driver = self._get_driver_name()
+                if driver:
+                    print(f"  Monitor:  Receiving frames on {self._interface} (driver: {driver})")
+                return
+
+        # Zero frames after 8 seconds — something is wrong
+        driver = self._get_driver_name()
+        driver_hint = f" (driver: {driver})" if driver else ""
+        msg = (
+            f"WARNING: No frames received on {self._interface}{driver_hint} after 8 seconds. "
+            f"The adapter may not support monitor mode at the firmware level."
+        )
+        self._monitor_warning = msg
+        print(f"  {msg}")
+
+        if driver and 'iwlwifi' in driver:
+            print(
+                "  NOTE: Intel iwlwifi adapters (AX200/AX201/AX203/AX210) often report "
+                "monitor mode as supported but the firmware filters all frames. "
+                "Use an external USB adapter (Alfa, Realtek RTL8812AU, Atheros) instead."
+            )
+
+    @staticmethod
+    def _get_driver_name():
+        """Try to identify the WiFi driver from sysfs."""
+        try:
+            for iface_dir in os.listdir('/sys/class/net/'):
+                driver_link = f'/sys/class/net/{iface_dir}/device/driver'
+                if os.path.islink(driver_link):
+                    driver = os.path.basename(os.readlink(driver_link))
+                    if driver in ('iwlwifi', 'ath9k_htc', 'rtl8812au', 'rt2800usb',
+                                  'mt76x2u', 'rtl88xxau', 'ath10k_pci', 'ath11k_pci',
+                                  'brcmfmac', 'rtw88_8822bu', 'rtw89_8852be'):
+                        return driver
+        except OSError:
+            pass
+        return None
+
     def get_status(self):
         """Get monitoring status."""
         duration = 0
@@ -880,6 +942,7 @@ class DroneIDEngine:
             'frame_count': self._frame_count,
             'droneid_frame_count': self._droneid_frame_count,
             'capture_errors': self._capture_errors,
+            'monitor_warning': self._monitor_warning,
         }
 
     def cleanup_stale(self, max_age=300):

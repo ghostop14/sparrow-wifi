@@ -888,3 +888,23 @@ html, body {
   color: var(--text-primary);
   border-color: var(--text-secondary);
 }
+
+/* Monitor warning banner */
+.monitor-warning-banner {
+  background: #78350f;
+  color: #fef3c7;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border-bottom: 1px solid #92400e;
+  z-index: 900;
+}
+.monitor-warning-banner i {
+  color: #f59e0b;
+  margin-right: 6px;
+}
+[data-bs-theme="light"] .monitor-warning-banner {
+  background: #fef3c7;
+  color: #78350f;
+  border-bottom-color: #f59e0b;
+}
