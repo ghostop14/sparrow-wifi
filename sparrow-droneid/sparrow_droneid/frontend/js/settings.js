@@ -11,19 +11,11 @@ const SettingsManager = (() => {
 
   // ---- Public: called from app.js init ----
   function init() {
-    // Wire up the gear button in navbar to switch to settings tab
-    document.getElementById('btnSettings')?.addEventListener('click', () => {
-      const settingsTab = document.getElementById('tab-settings');
-      if (settingsTab) {
-        bootstrap.Tab.getOrCreateInstance(settingsTab).show();
-      }
-    });
-
     // Wire up Save button
     document.getElementById('btnSaveSettings')?.addEventListener('click', () => save());
 
-    // Load data whenever the settings tab becomes visible
-    document.getElementById('tab-settings')?.addEventListener('shown.bs.tab', () => {
+    // Load data whenever the settings modal opens
+    document.getElementById('settingsModal')?.addEventListener('show.bs.modal', () => {
       _loadAndRender();
     });
   }
@@ -775,6 +767,14 @@ const SettingsManager = (() => {
     boolField ('s_alert_slack',      'alert_slack_enabled');
     strField  ('s_slack_webhook',    'alert_slack_webhook_url');
     strField  ('s_slack_name',       'alert_slack_display_name');
+
+    // Slack guard: can't enable notifications without a webhook URL
+    if (changes.alert_slack_enabled && !changes.alert_slack_webhook_url) {
+      changes.alert_slack_enabled = false;
+      const slackToggle = document.getElementById('s_alert_slack');
+      if (slackToggle) slackToggle.checked = false;
+      Utils.toast('Slack notifications require a webhook URL — disabled.', 'warning');
+    }
     intField  ('s_retention',        'retention_days');
 
     // Token only if entered
@@ -792,15 +792,25 @@ const SettingsManager = (() => {
       _settings = result.settings;
 
       const restartWarn = document.getElementById('settingsRestartWarn');
-      if (result.restart_required && restartWarn) {
-        restartWarn.style.display = '';
+      if (result.restart_required) {
+        if (restartWarn) restartWarn.style.display = '';
+        Utils.toast('Settings saved. Restart required for some changes.', 'warning');
+      } else {
+        if (restartWarn) restartWarn.style.display = 'none';
+        Utils.toast('Settings saved.', 'success');
+        // Close the modal after a brief pause to let the toast appear
+        setTimeout(() => {
+          const modalEl = document.getElementById('settingsModal');
+          if (modalEl) {
+            const modal = bootstrap.Modal.getInstance(modalEl);
+            if (modal) modal.hide();
+          }
+        }, 500);
       }
-
-      Utils.toast('Settings saved.', 'success');
     } catch (e) {
       Utils.toast('Failed to save settings: ' + e.message, 'danger');
     } finally {
-      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Settings'; }
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i> Save Settings'; }
     }
   }
 

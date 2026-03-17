@@ -104,16 +104,6 @@ const App = (() => {
       }
     });
 
-    document.getElementById('tab-settings')?.addEventListener('shown.bs.tab', () => {
-      if (_inReplay) {
-        _inReplay = false;
-        ReplayManager.stop();
-        MapManager.clearAll();
-        document.getElementById('replayIndicator').style.display = 'none';
-        _startPolling();
-      }
-    });
-
     // Listen for replay play state
     document.addEventListener('replayPlayStateChanged', e => {
       const label = document.getElementById('replayTimeLabel');
@@ -372,51 +362,64 @@ const App = (() => {
 
   // ---- Panel resize handle ----
   function _initResizeHandle() {
-    const handle = document.getElementById('panelResizeHandle');
-    const layout = document.getElementById('appLayout');
-    const panel  = document.getElementById('bottomPanel');
-    if (!handle || !layout || !panel) return;
+    const handle       = document.getElementById('panelResizeHandle');
+    const mapContainer = document.getElementById('mapContainer');
+    const bottomPanel  = document.getElementById('bottomPanel');
+    if (!handle || !mapContainer || !bottomPanel) return;
 
-    // Fix #23: make keyboard-accessible
-    handle.setAttribute('tabindex', '0');
-    handle.setAttribute('role', 'separator');
-    handle.setAttribute('aria-orientation', 'horizontal');
-    handle.setAttribute('aria-label', 'Resize panel');
-
-    let dragging = false;
-    let startY = 0;
-    let startH = 0;
+    let startY, startMapH, startPanelH;
 
     handle.addEventListener('mousedown', e => {
-      dragging = true;
-      startY = e.clientY;
-      startH = panel.getBoundingClientRect().height;
-      document.body.style.cursor = 'ns-resize';
+      e.preventDefault();
+      startY      = e.clientY;
+      startMapH   = mapContainer.offsetHeight;
+      startPanelH = bottomPanel.offsetHeight;
+      document.body.style.cursor    = 'ns-resize';
       document.body.style.userSelect = 'none';
+      handle.classList.add('active');
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup',   onUp);
     });
 
-    document.addEventListener('mousemove', e => {
-      if (!dragging) return;
-      const delta = startY - e.clientY; // dragging up increases panel height
-      const newH = Math.max(160, Math.min(window.innerHeight * 0.75, startH + delta));
-      panel.style.flex = `0 0 ${newH}px`;
-    });
+    function onMove(e) {
+      const dy      = e.clientY - startY;
+      const totalH  = startMapH + startPanelH;
+      const newMapH = Math.max(100, Math.min(totalH - 100, startMapH + dy));
+      mapContainer.style.flex = `0 0 ${newMapH}px`;
+      bottomPanel.style.flex  = `0 0 ${totalH - newMapH}px`;
+      // Tell Leaflet the map size changed
+      if (typeof MapManager !== 'undefined' && MapManager.invalidateSizeDelayed) {
+        MapManager.invalidateSizeDelayed(0);
+      }
+    }
 
-    document.addEventListener('mouseup', () => {
-      if (!dragging) return;
-      dragging = false;
-      document.body.style.cursor = '';
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup',   onUp);
+      document.body.style.cursor    = '';
       document.body.style.userSelect = '';
-    });
+      handle.classList.remove('active');
+      // Final Leaflet resize
+      if (typeof MapManager !== 'undefined' && MapManager.invalidateSizeDelayed) {
+        MapManager.invalidateSizeDelayed(100);
+      }
+    }
 
-    // Fix #23: keyboard resize — ArrowUp/ArrowDown adjusts panel height by 20px
+    // Keyboard support: ArrowUp/ArrowDown adjust by 20px steps
     handle.addEventListener('keydown', e => {
+      const step = 20;
       if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
       e.preventDefault();
-      const currentH = panel.getBoundingClientRect().height;
-      const delta = e.key === 'ArrowUp' ? 20 : -20;
-      const newH = Math.max(160, Math.min(window.innerHeight * 0.75, currentH + delta));
-      panel.style.flex = `0 0 ${newH}px`;
+      const dy      = e.key === 'ArrowUp' ? -step : step;
+      const mapH    = mapContainer.offsetHeight;
+      const panelH  = bottomPanel.offsetHeight;
+      const totalH  = mapH + panelH;
+      const newMapH = Math.max(100, Math.min(totalH - 100, mapH + dy));
+      mapContainer.style.flex = `0 0 ${newMapH}px`;
+      bottomPanel.style.flex  = `0 0 ${totalH - newMapH}px`;
+      if (typeof MapManager !== 'undefined' && MapManager.invalidateSizeDelayed) {
+        MapManager.invalidateSizeDelayed(50);
+      }
     });
   }
 

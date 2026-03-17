@@ -68,10 +68,12 @@
             aria-label="Toggle dark/light theme">
       <i class="bi bi-moon-fill" id="themeIcon"></i>
     </button>
-    <!-- Settings button now switches to the Settings tab in the bottom panel -->
+    <!-- Settings button opens the settings modal -->
     <button class="btn btn-sm btn-icon" id="btnSettings"
             title="Settings"
-            aria-label="Settings">
+            aria-label="Settings"
+            data-bs-toggle="modal"
+            data-bs-target="#settingsModal">
       <i class="bi bi-gear-fill"></i>
     </button>
   </div>
@@ -93,11 +95,11 @@
     </div>
   </div>
 
+  <!-- RESIZE HANDLE — between map and bottom panel -->
+  <div id="panelResizeHandle" tabindex="0" role="separator" aria-label="Resize panels"></div>
+
   <!-- BOTTOM PANEL -->
   <div class="bottom-panel" id="bottomPanel">
-    <!-- Resize handle -->
-    <!-- Fix #22/#23: tabindex and aria-label on resize handle added by app.js at runtime -->
-    <div class="panel-resize-handle" id="panelResizeHandle"></div>
 
     <!-- Tab nav -->
     <ul class="nav nav-tabs panel-tabs px-2 pt-1" id="bottomTabs" role="tablist">
@@ -118,12 +120,6 @@
           <i class="bi bi-clock-history me-1"></i>Replay
         </button>
       </li>
-      <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-settings" data-bs-toggle="tab" data-bs-target="#pane-settings" type="button" role="tab">
-          <i class="bi bi-gear me-1"></i>Settings
-        </button>
-      </li>
-
       <!-- right-side controls aligned to end -->
       <li class="nav-item ms-auto d-flex align-items-center pe-1">
         <!-- Fix #22: add aria-label to icon-only buttons -->
@@ -260,24 +256,6 @@
         </div>
       </div>
 
-      <!-- Settings pane -->
-      <div class="tab-pane fade h-100" id="pane-settings" role="tabpanel">
-        <div class="settings-pane-scroll overflow-auto h-100">
-          <div class="px-3 py-3" id="settingsTabContent">
-            <!-- Populated by settings.js on tab show -->
-          </div>
-        </div>
-        <!-- Sticky save bar -->
-        <div class="settings-save-bar">
-          <span id="settingsRestartWarn" class="text-warning me-3" style="display:none;">
-            <i class="bi bi-exclamation-triangle me-1"></i>Restart required for some changes
-          </span>
-          <button class="btn btn-primary btn-sm" id="btnSaveSettings">
-            <i class="bi bi-check-lg me-1"></i>Save Settings
-          </button>
-        </div>
-      </div>
-
     </div><!-- /tab-content -->
   </div><!-- /bottom-panel -->
 
@@ -301,6 +279,30 @@
 
 <!-- ===== TOAST CONTAINER ===== -->
 <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toastContainer" style="z-index:2000;"></div>
+
+<!-- ===== SETTINGS MODAL ===== -->
+<div class="modal fade" id="settingsModal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-gear me-2"></i>Settings</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="settingsTabContent">
+        <!-- card grid rendered here by settings.js -->
+      </div>
+      <div class="modal-footer">
+        <div id="settingsRestartWarn" class="text-warning me-auto" style="display:none;">
+          <i class="bi bi-exclamation-triangle me-1"></i> Restart required for some changes
+        </div>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btnSaveSettings">
+          <i class="bi bi-check-lg me-1"></i> Save Settings
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- ===== ALERT CONFIG MODAL ===== -->
 <div class="modal fade" id="alertConfigModal" tabindex="-1" aria-labelledby="alertConfigModalLabel" aria-hidden="true">

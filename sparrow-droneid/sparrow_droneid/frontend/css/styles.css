@@ -170,7 +170,8 @@ html, body {
 /* ---- Map ---- */
 .map-container {
   flex: 0 0 var(--map-height);
-  min-height: 200px;
+  min-height: 100px;
+  overflow: hidden;
   position: relative;
   background: #192231;
 }
@@ -223,37 +224,37 @@ html, body {
   flex: 1 1 auto;
   min-height: var(--panel-min-height);
   background: var(--bg-secondary);
-  border-top: 2px solid var(--border-color);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   position: relative;
 }
 
-.panel-resize-handle {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+#panelResizeHandle {
   height: 6px;
+  background: var(--border-color);
   cursor: ns-resize;
-  z-index: 10;
-  background: transparent;
-  transition: background 0.2s;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 500;
+  transition: background 0.15s;
 }
 
-/* Larger invisible grab target above the visual handle */
-.panel-resize-handle::before {
+#panelResizeHandle:hover,
+#panelResizeHandle:active,
+#panelResizeHandle.active {
+  background: var(--accent-blue);
+}
+
+/* Larger invisible grab target */
+#panelResizeHandle::before {
   content: '';
   position: absolute;
   top: -5px;
   left: 0;
   right: 0;
   height: 16px;
-  cursor: ns-resize;
 }
-
-.panel-resize-handle:hover { background: rgba(59,130,246,0.4); }
 
 .panel-tabs {
   background: var(--bg-secondary);
@@ -564,24 +565,7 @@ html, body {
   background: rgba(59,130,246,0.25);
 }
 
-/* ---- Settings Tab ---- */
-
-/* Pane scroll area (fills available height, leaving room for save bar) */
-.settings-pane-scroll {
-  flex: 1 1 0;
-  overflow-y: auto;
-}
-
-/* Sticky save bar at the bottom of the settings pane */
-.settings-save-bar {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 8px 16px;
-  background: var(--bg-secondary);
-  border-top: 1px solid var(--border-color);
-}
+/* ---- Settings Modal ---- */
 
 /* Card styling */
 .settings-card {
@@ -705,13 +689,6 @@ html, body {
   font-size: 10px;
   color: var(--text-muted);
   display: block;
-}
-
-/* The settings pane needs to be a flex column so the save bar sticks to bottom.
-   Only override display when Bootstrap makes it block (active state); leave hide alone. */
-#pane-settings.show.active {
-  display: flex !important;
-  flex-direction: column;
 }
 
 /* ---- Map Popup ---- */

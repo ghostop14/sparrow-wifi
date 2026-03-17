@@ -21,6 +21,7 @@ const MapManager = (() => {
   // Default center (Washington DC area) — will update from receiver position
   const DEFAULT_CENTER = [38.8977, -77.0365];
   const DEFAULT_ZOOM   = 14;
+  let _hasAutocentered = false;  // only auto-center once on first receiver position
 
   // ---- Tile URL builder (proxied through backend) ----
   function tileUrl(source) {
@@ -92,6 +93,12 @@ const MapManager = (() => {
       });
       _receiverMarker = L.marker(latLng, { icon, zIndexOffset: 500, title: 'Receiver' }).addTo(_map);
       _receiverMarker.bindPopup('<b>Receiver</b><br>GPS fix: ' + (gpsFix ? 'Yes' : 'No'));
+    }
+
+    // Auto-center map on first valid receiver position (GPS fix or static coords)
+    if (!_hasAutocentered) {
+      _map.setView(latLng, DEFAULT_ZOOM);
+      _hasAutocentered = true;
     }
 
     updateRangeRings(lat, lon);
