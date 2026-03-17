@@ -835,6 +835,19 @@ def api_alerts_config_put(req: RequestHandler):
     req._send_json(req._ok())
 
 
+@router.route('POST', '/api/alerts/slack-test')
+def api_alerts_slack_test(req: RequestHandler):
+    if req.json_data is None:
+        req._send_error_json(400, 1, 'JSON body required')
+        return
+    webhook_url = req.json_data.get('webhook_url', '')
+    display_name = req.json_data.get('display_name', 'Sparrow DroneID')
+    result = AlertEngine.test_slack(webhook_url, display_name)
+    resp = req._ok()
+    resp.update(result)
+    req._send_json(resp)
+
+
 @router.route('GET', '/api/alerts/log')
 def api_alerts_log(req: RequestHandler):
     from_ts = req._qparam('from') or None

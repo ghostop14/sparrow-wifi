@@ -138,6 +138,9 @@ class Database:
             'alert_script_enabled': 'false',
             'alert_script_path': '',
             'alert_rules': json.dumps([r.to_dict() for r in DEFAULT_ALERT_RULES]),
+            'alert_slack_enabled': 'false',
+            'alert_slack_webhook_url': '',
+            'alert_slack_display_name': 'Sparrow DroneID',
             'tile_cache_enabled': 'true',
             'monitor_interface': '',
         }

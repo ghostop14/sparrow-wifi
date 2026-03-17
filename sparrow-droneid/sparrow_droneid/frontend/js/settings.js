@@ -186,6 +186,31 @@ const SettingsManager = (() => {
           value="${_esc(s.alert_script_path || '')}" style="width:220px;" placeholder="/path/to/alert.sh">
       </div>
 
+      <!-- Slack -->
+      <div class="settings-section-title">Slack Notifications</div>
+      <div class="settings-row">
+        <span class="settings-label">Enable Slack</span>
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="s_alert_slack" ${s.alert_slack_enabled ? 'checked' : ''}>
+        </div>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">Webhook URL</span>
+        <input type="text" class="form-control form-control-sm" id="s_slack_webhook"
+          value="${_esc(s.alert_slack_webhook_url || '')}" style="width:280px;" placeholder="https://hooks.slack.com/services/...">
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">Display Name</span>
+        <input type="text" class="form-control form-control-sm" id="s_slack_name"
+          value="${_esc(s.alert_slack_display_name || 'Sparrow DroneID')}" style="width:180px;">
+      </div>
+      <div class="settings-row">
+        <span class="settings-label"></span>
+        <button class="btn btn-sm btn-outline-secondary" id="btn_slack_test" title="Send a test message to Slack">
+          Test Slack
+        </button>
+      </div>
+
       <!-- Data -->
       <div class="settings-section-title">Data &amp; Retention</div>
       <div class="settings-row">
@@ -259,6 +284,28 @@ const SettingsManager = (() => {
       const val = e.target.value.trim();
       if (val) Api.setToken(val);
     });
+
+    // Slack test button
+    document.getElementById('btn_slack_test')?.addEventListener('click', async () => {
+      const url = document.getElementById('s_slack_webhook')?.value?.trim();
+      const name = document.getElementById('s_slack_name')?.value?.trim() || 'Sparrow DroneID';
+      if (!url) { Utils.toast('Enter a webhook URL first', 'warning'); return; }
+      const btn = document.getElementById('btn_slack_test');
+      btn.disabled = true;
+      btn.textContent = 'Sending...';
+      try {
+        const resp = await Api.post('/api/alerts/slack-test', { webhook_url: url, display_name: name });
+        if (resp.success) {
+          Utils.toast('Slack test message sent', 'success');
+        } else {
+          Utils.toast('Slack test failed: ' + (resp.error || 'Unknown error'), 'danger');
+        }
+      } catch (e) {
+        Utils.toast('Slack test error: ' + e.message, 'danger');
+      }
+      btn.disabled = false;
+      btn.textContent = 'Test Slack';
+    });
   }
 
   // ---- Save ----
@@ -303,6 +350,9 @@ const SettingsManager = (() => {
     boolField('s_alert_visual', 'alert_visual_enabled');
     boolField('s_alert_script', 'alert_script_enabled');
     strField('s_alert_script_path', 'alert_script_path');
+    boolField('s_alert_slack', 'alert_slack_enabled');
+    strField('s_slack_webhook', 'alert_slack_webhook_url');
+    strField('s_slack_name', 'alert_slack_display_name');
     intField('s_retention', 'retention_days');
 
     // Token only if non-empty

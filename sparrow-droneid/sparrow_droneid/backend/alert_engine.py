@@ -2,7 +2,8 @@
 Alert evaluation and dispatch engine for Sparrow DroneID.
 
 Evaluates incoming drone detections against configurable rules and dispatches
-alert events to the database, pending queue, and optional external scripts.
+alert events to the database, pending queue, optional external scripts, and
+optional Slack webhook notifications.
 """
 import json
 import logging
@@ -10,6 +11,8 @@ import subprocess
 import threading
 from datetime import datetime
 from typing import Dict, List, Optional
+
+import requests as _requests
 
 from .models import AlertEvent, AlertRule, AlertType, DEFAULT_ALERT_RULES, DroneIDDevice
 from .database import Database
@@ -69,6 +72,11 @@ class AlertEngine:
         self._script_enabled: bool = _bool('alert_script_enabled', False)
         self._script_path: str     = self._db.get_setting('alert_script_path', '') or ''
 
+        # Slack webhook notifications
+        self._slack_enabled: bool    = _bool('alert_slack_enabled', False)
+        self._slack_webhook_url: str = self._db.get_setting('alert_slack_webhook_url', '') or ''
+        self._slack_display_name: str = self._db.get_setting('alert_slack_display_name', 'Sparrow DroneID') or 'Sparrow DroneID'
+
     def reload_config(self) -> None:
         """Re-read alert configuration from the database."""
         self._load_config()
@@ -81,6 +89,9 @@ class AlertEngine:
             'visual_enabled': self._visual_enabled,
             'script_enabled': self._script_enabled,
             'script_path':    self._script_path,
+            'slack_enabled':      self._slack_enabled,
+            'slack_webhook_url':  self._slack_webhook_url,
+            'slack_display_name': self._slack_display_name,
         }
 
     def set_config(self, config: dict) -> None:
@@ -95,6 +106,12 @@ class AlertEngine:
             self._db.set_setting('alert_script_enabled', str(config['script_enabled']).lower())
         if 'script_path' in config:
             self._db.set_setting('alert_script_path', config['script_path'])
+        if 'slack_enabled' in config:
+            self._db.set_setting('alert_slack_enabled', str(config['slack_enabled']).lower())
+        if 'slack_webhook_url' in config:
+            self._db.set_setting('alert_slack_webhook_url', config['slack_webhook_url'])
+        if 'slack_display_name' in config:
+            self._db.set_setting('alert_slack_display_name', config['slack_display_name'])
         self.reload_config()
 
     # ------------------------------------------------------------------ #
@@ -233,6 +250,9 @@ class AlertEngine:
         if self._script_enabled and self._script_path:
             self._run_script(alert_dict)
 
+        if self._slack_enabled and self._slack_webhook_url:
+            self._post_slack(alert_dict)
+
     def _run_script(self, alert_dict: dict) -> None:
         """Invoke the external alert script in a daemon thread.
 
@@ -253,3 +273,70 @@ class AlertEngine:
 
         t = threading.Thread(target=_invoke, daemon=True, name="alert-script")
         t.start()
+
+    def _format_slack_message(self, alert_dict: dict) -> str:
+        """Build a Slack-formatted alert message."""
+        from .models import UAType
+        alert_type = alert_dict.get('alert_type', 'unknown')
+        serial = alert_dict.get('serial_number', 'Unknown')
+        detail = alert_dict.get('detail', '')
+        agl = alert_dict.get('drone_height_agl', 0)
+        lat = alert_dict.get('drone_lat', 0)
+        lon = alert_dict.get('drone_lon', 0)
+
+        type_labels = {
+            'new_drone': 'New Drone Detected',
+            'altitude_max': 'Altitude Violation',
+            'speed_max': 'Speed Violation',
+            'signal_lost': 'Signal Lost',
+        }
+        header = type_labels.get(alert_type, alert_type.replace('_', ' ').title())
+
+        parts = [f"*{header}*"]
+        parts.append(f"Drone: `{serial}`")
+        if detail:
+            parts.append(f"Detail: {detail}")
+        if lat != 0 or lon != 0:
+            parts.append(f"Position: {lat:.6f}, {lon:.6f}")
+        if agl and agl != 0:
+            parts.append(f"Altitude AGL: {agl:.1f} m")
+        return '\n'.join(parts)
+
+    def _post_slack(self, alert_dict: dict) -> None:
+        """Post an alert notification to Slack via webhook in a daemon thread."""
+        text = self._format_slack_message(alert_dict)
+        url = self._slack_webhook_url
+        name = self._slack_display_name
+
+        def _send():
+            try:
+                resp = _requests.post(
+                    url,
+                    json={'username': name, 'text': text},
+                    timeout=10,
+                )
+                resp.raise_for_status()
+            except Exception:
+                log.exception("alert_engine: Slack webhook post failed")
+
+        t = threading.Thread(target=_send, daemon=True, name="alert-slack")
+        t.start()
+
+    @staticmethod
+    def test_slack(webhook_url: str, display_name: str = 'Sparrow DroneID') -> dict:
+        """Send a test message to Slack. Returns {success, message/error}."""
+        if not webhook_url:
+            return {'success': False, 'error': 'Webhook URL is required'}
+        try:
+            resp = _requests.post(
+                webhook_url,
+                json={
+                    'username': display_name,
+                    'text': f'Test message from {display_name}',
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
+            return {'success': True, 'message': 'Test message sent'}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
