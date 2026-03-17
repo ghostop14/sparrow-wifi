@@ -15,6 +15,7 @@
 - [History / Replay](#history--replay)
 - [Export](#export)
 - [Alerts](#alerts)
+- [Geozones](#geozones)
 - [GPS](#gps)
 - [Cursor on Target (CoT)](#cursor-on-target-cot)
 - [Map Tiles](#map-tiles)
@@ -99,6 +100,8 @@ Returns the current application state.
   "monitor_channel": 6,
   "monitor_duration_seconds": 0,
   "frame_count": 0,
+  "ble_enabled": true,
+  "ble_frame_count": 0,
   "active_drone_count": 0,
   "total_drones_seen": 0,
   "gps_fix": true,
@@ -148,7 +151,7 @@ Enumerate available WiFi interfaces and their capabilities.
 
 ### POST /api/monitor/start
 
-Start Remote ID capture on the specified interface. Switches the interface to monitor mode on channel 6 if not already in monitor mode.
+Start Remote ID capture on the specified interface. Switches the interface to monitor mode on channel 6 if not already in monitor mode. BLE capture is started automatically alongside WiFi capture (no additional configuration required).
 
 **Request body:**
 
@@ -210,6 +213,8 @@ Returns current monitoring session status.
   "duration_seconds": 1847,
   "frame_count": 23456,
   "droneid_frame_count": 142,
+  "ble_enabled": true,
+  "ble_frame_count": 38,
   "capture_errors": 0
 }
 ```
@@ -296,6 +301,7 @@ Returns all currently active (non-aged-out) drones with the latest data and deri
 |-------|-------------|
 | `astm_nan` | ASTM F3411 via Wi-Fi NAN action frames |
 | `astm_beacon` | ASTM F3411 via Wi-Fi beacon vendor-specific IE (OUI FA:0B:BC) |
+| `astm_ble` | ASTM F3411 via BLE Legacy advertising (BT4/BT5, ASTM F3411-22a §A3) |
 | `dji_proprietary` | DJI proprietary DroneID via beacon vendor-specific IE (OUI 26:37:12) |
 
 **`id_type` values (ASTM F3411):**
@@ -625,6 +631,7 @@ Returns the alert event history.
 |-----------|------|----------|-------------|
 | `from` | string | No | ISO 8601 UTC start time |
 | `to` | string | No | ISO 8601 UTC end time |
+| `state` | string | No | Filter by alert state: `ACTIVE`, `ACKNOWLEDGED`, or `RESOLVED`. Omit to return all states |
 | `limit` | int | No | Maximum records (default 100) |
 | `offset` | int | No | Pagination offset |
 
@@ -643,12 +650,24 @@ Returns the alert event history.
       "detail": "New drone detected: Helicopter (or Multirotor), RSSI -68 dBm",
       "drone_lat": 38.8984,
       "drone_lon": -77.0352,
-      "drone_height_agl": 42.0
+      "drone_height_agl": 42.0,
+      "state": "ACKNOWLEDGED",
+      "acknowledged_by": "OPS1",
+      "acknowledged_at": "2026-03-17T14:35:00Z",
+      "resolved_at": null
     }
   ],
   "total_count": 7
 }
 ```
+
+**`state` field values:**
+
+| Value | Description |
+|-------|-------------|
+| `ACTIVE` | Alert is unacknowledged and the condition has not cleared |
+| `ACKNOWLEDGED` | Alert has been acknowledged by an operator |
+| `RESOLVED` | The triggering condition has cleared (e.g. drone departed) |
 
 **External script invocation:**
 
@@ -659,6 +678,141 @@ When `script_enabled` is true and `script_path` is set, the script is called on 
 ```
 
 The JSON payload matches the alert log entry structure above.
+
+### PUT /api/alerts/acknowledge
+
+Bulk-acknowledge all currently ACTIVE alerts. Sets their state to `ACKNOWLEDGED` and records the operator callsign.
+
+**Request body:**
+
+```json
+{
+  "operator": "OPS1"
+}
+```
+
+**Response:**
+
+```json
+{
+  "errcode": 0,
+  "count": 3
+}
+```
+
+`count` is the number of alerts that were transitioned from `ACTIVE` to `ACKNOWLEDGED`.
+
+### PUT /api/alerts/{alert_id}/acknowledge
+
+Acknowledge a single alert by ID.
+
+**Path parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `alert_id` | int | Alert ID from the alert log |
+
+**Request body:**
+
+```json
+{
+  "operator": "OPS1"
+}
+```
+
+**Response:**
+
+```json
+{
+  "errcode": 0
+}
+```
+
+**Error conditions:**
+- Alert not found → `errcode: 2`
+- Alert is not in ACTIVE state → `errcode: 3`
+
+---
+
+## Geozones
+
+Provides airport proximity lookup and FAA no-fly zone data for map overlay and proximity alerting.
+
+### GET /api/geozones/airports
+
+Returns airports within a specified radius of a coordinate.
+
+**Query parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `lat` | float | Yes | Center latitude (WGS84) |
+| `lon` | float | Yes | Center longitude (WGS84) |
+| `radius_mi` | float | No | Search radius in miles (default 50) |
+
+**Response:**
+
+```json
+{
+  "errcode": 0,
+  "airports": [
+    {
+      "ident": "KJFK",
+      "name": "John F Kennedy International Airport",
+      "type": "large_airport",
+      "lat": 40.63972,
+      "lon": -73.77889,
+      "country": "US"
+    },
+    {
+      "ident": "KLGA",
+      "name": "LaGuardia Airport",
+      "type": "large_airport",
+      "lat": 40.77724,
+      "lon": -73.87261,
+      "country": "US"
+    }
+  ]
+}
+```
+
+**`type` field values:** `large_airport`, `medium_airport`, `small_airport`, `heliport`, `seaplane_base`, `closed`
+
+### GET /api/geozones/nofly
+
+Returns FAA Prohibited and Restricted airspace zones that intersect with the area near the specified coordinate, as GeoJSON features.
+
+**Query parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `lat` | float | Yes | Query latitude (WGS84) |
+| `lon` | float | Yes | Query longitude (WGS84) |
+
+**Response:**
+
+```json
+{
+  "errcode": 0,
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "P-56A",
+        "type": "prohibited",
+        "lower_alt": "SFC",
+        "upper_alt": "UNLIMITED"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-77.0364, 38.8976], ["..."]]]
+      }
+    }
+  ]
+}
+```
+
+Each element of `features` is a standard GeoJSON Feature object. The `geometry` may be `Polygon` or `MultiPolygon`. `properties.type` is `prohibited` or `restricted`.
 
 ---
 
@@ -912,7 +1066,9 @@ Returns all application settings.
     "alert_script_enabled": false,
     "alert_script_path": "",
     "tile_cache_enabled": true,
-    "monitor_interface": ""
+    "monitor_interface": "",
+    "airport_geozone_radius_mi": 2.0,
+    "operator_name": ""
   }
 }
 ```
@@ -943,6 +1099,13 @@ Update one or more settings. Only include the keys you want to change.
 ```
 
 **`restart_required`** will be `true` if any of these settings were changed: `port`, `bind_address`, `https_enabled`, `https_cert_path`, `https_key_path`.
+
+**New settings added in this version:**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `airport_geozone_radius_mi` | float | 2.0 | Radius of airport exclusion zone circles drawn on the map (miles) |
+| `operator_name` | string | `""` | Operator callsign pre-filled in alert acknowledgment dialogs and recorded in `acknowledged_by` |
 
 **Note:** The `auth_token` value is write-only. GET responses will return `"auth_token": "(set)"` or `"auth_token": ""` to indicate whether a token is configured, but will never return the actual token value.
 
@@ -978,7 +1141,7 @@ The core data model representing a detected drone. All drone-related endpoints r
 | `mac_address` | string | Transmitter MAC address (may be randomized) |
 | `rssi` | int | Received signal strength (dBm) |
 | `rssi_trend` | string | `strengthening`, `stable`, `weakening` |
-| `protocol` | string | Detection protocol (see [protocol values](#get-apidrones)) |
+| `protocol` | string | Detection protocol — `astm_nan`, `astm_beacon`, `astm_ble`, or `dji_proprietary` (see [protocol values](#get-apidrones)) |
 | `first_seen` | string | ISO 8601 UTC timestamp of first detection |
 | `last_seen` | string | ISO 8601 UTC timestamp of most recent detection |
 | `time_in_area_seconds` | int | Duration since first detection |
@@ -1011,6 +1174,10 @@ Computed from drone position, receiver position, and temporal data. Only populat
 | `drone_lat` | float | Drone position at time of alert |
 | `drone_lon` | float | Drone position at time of alert |
 | `drone_height_agl` | float | Drone AGL altitude at time of alert |
+| `state` | string | `ACTIVE`, `ACKNOWLEDGED`, or `RESOLVED` |
+| `acknowledged_by` | string | Operator callsign that acknowledged the alert, or `null` |
+| `acknowledged_at` | string | ISO 8601 UTC timestamp of acknowledgment, or `null` |
+| `resolved_at` | string | ISO 8601 UTC timestamp when the condition cleared, or `null` |
 
 ---
 
