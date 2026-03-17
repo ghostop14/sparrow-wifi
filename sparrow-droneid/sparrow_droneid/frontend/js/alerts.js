@@ -139,9 +139,9 @@ const AlertsManager = (() => {
           <div class="alert-content">
             <div class="alert-title">${_esc(_alertTitle(a.alert_type))}</div>
             <div class="alert-detail">${_esc(a.detail || '')}</div>
-            <div style="font-size:11px;color:#64748B;margin-top:2px;">
+            <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
               ${_esc(Utils.shortSerial(a.serial_number))}
-              ${a.drone_height_agl ? ` &mdash; ${Math.round(a.drone_height_agl)} m AGL` : ''}
+              ${a.drone_height_agl ? ` &mdash; ${Utils.formatAlt(a.drone_height_agl)} AGL` : ''}
             </div>
           </div>
           <span class="alert-time">${Utils.relativeTime(a.timestamp)}</span>

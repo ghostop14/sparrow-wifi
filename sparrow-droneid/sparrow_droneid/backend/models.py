@@ -116,7 +116,6 @@ _EARTH_RADIUS_M = 6_371_000.0
 _ALT_GROUND = 3.0
 _ALT_LOW = 30.0
 _ALT_MEDIUM = 120.0
-_ALT_HIGH = 400.0   # ~122m ≈ 400ft FAA limit; using 400m as display bucket top
 
 # State age thresholds (seconds)
 _STATE_ACTIVE = 30.0

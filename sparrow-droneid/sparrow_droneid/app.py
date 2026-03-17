@@ -147,9 +147,9 @@ class SparrowDroneID:
                     self.droneid_engine.cleanup_stale(300)
 
                     # Check for signal-lost alerts
-                    self.alert_engine.check_signal_lost(
-                        self.droneid_engine._active_drones
-                    )
+                    with self.droneid_engine._lock:
+                        snapshot = dict(self.droneid_engine._active_drones)
+                    self.alert_engine.check_signal_lost(snapshot)
                 except Exception as e:
                     print(f"Maintenance error: {e}")
 

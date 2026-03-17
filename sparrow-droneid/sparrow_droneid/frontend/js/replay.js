@@ -6,7 +6,7 @@ const ReplayManager = (() => {
 
   let _records = [];        // flat array of all history records for range
   let _serials = [];        // summary list from /api/history/serials
-  let _buckets = [];        // timeline buckets
+  let _buckets = [];        // timeline buckets from /api/history/timeline
   let _playTimer = null;
   let _playing = false;
   let _speed = 1;
@@ -16,6 +16,8 @@ const ReplayManager = (() => {
   let _currentTimeMs = 0;
   let _onTimeUpdate = null; // callback(records_at_time, timeMs)
   let _isLoaded = false;
+  // Fix #11: track which serial is highlighted (null = show all)
+  let _filteredSerial = null;
 
   const REPLAY_WINDOW_MS = 30000; // show records within last 30s of slider pos
 
@@ -77,21 +79,40 @@ const ReplayManager = (() => {
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-arrow-repeat spin me-1"></i>Loading...'; }
 
     try {
-      // Load serials summary
-      const serialsResp = await Api.getHistorySerials(fromIso, toIso);
-      _serials = serialsResp.serials || [];
+      // Load serials summary, all records, and timeline buckets in parallel
+      const [serialsResp, histResp, timelineResp] = await Promise.all([
+        Api.getHistorySerials(fromIso, toIso),
+        Api.getHistory(fromIso, toIso),
+        Api.getHistoryTimeline(fromIso, toIso, 60).catch(() => null),
+      ]);
 
-      // Load all records for the range
-      const histResp = await Api.getHistory(fromIso, toIso);
+      _serials = serialsResp.serials || [];
       _records = (histResp.records || []).sort((a, b) =>
         new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
       );
 
+      // Fix #20: warn if results were truncated
+      const returnedCount = _records.length;
+      const totalCount = histResp.total_count ?? returnedCount;
+      if (totalCount > returnedCount) {
+        Utils.toast(
+          `Showing ${returnedCount.toLocaleString()} of ${totalCount.toLocaleString()} records. Narrow the time range for complete data.`,
+          'warning',
+          'Truncated Results',
+          6000
+        );
+      }
+
+      // Fix #19: store timeline buckets for activity bar
+      _buckets = (timelineResp && timelineResp.buckets) ? timelineResp.buckets : [];
+
+      _filteredSerial = null;
       _isLoaded = true;
       _sliderPos = 0;
       _currentTimeMs = _rangeFromMs;
 
       _renderSerials();
+      _renderActivityBar();
       _updateSliderLabels();
       _enableControls(true);
       _seekToPos(0);
@@ -114,14 +135,69 @@ const ReplayManager = (() => {
       return;
     }
 
-    const html = _serials.map(s => `
-      <span class="replay-serial-tag" title="${s.ua_type_name} | ${s.detection_count} records | RSSI peak ${s.max_rssi} dBm">
-        <i class="bi bi-aircraft-horizontal"></i>
-        ${Utils.shortSerial(s.serial_number)}
-        <span style="opacity:0.6;font-size:10px;">${s.detection_count}</span>
-      </span>`).join('');
+    // Fix #11: tags are clickable to filter/highlight a specific serial
+    const html = _serials.map(s => {
+      const isActive = _filteredSerial === s.serial_number;
+      return `
+        <span class="replay-serial-tag ${isActive ? 'active' : ''}"
+              data-serial="${s.serial_number}"
+              title="${s.ua_type_name} | ${s.detection_count} records | RSSI peak ${s.max_rssi} dBm&#10;Click to filter to this drone">
+          <i class="bi bi-aircraft-horizontal"></i>
+          ${Utils.shortSerial(s.serial_number)}
+          <span style="opacity:0.6;font-size:10px;">${s.detection_count}</span>
+        </span>`;
+    }).join('');
 
     container.innerHTML = html;
+
+    // Attach click handlers to serial tags
+    container.querySelectorAll('.replay-serial-tag').forEach(tag => {
+      tag.addEventListener('click', () => {
+        const serial = tag.dataset.serial;
+        if (_filteredSerial === serial) {
+          // Second click deselects (show all)
+          _filteredSerial = null;
+        } else {
+          _filteredSerial = serial;
+        }
+        // Re-render tags to update active state
+        _renderSerials();
+        // Re-seek to refresh the map with the filter applied
+        _seekToPos(_sliderPos);
+      });
+    });
+  }
+
+  // ---- Fix #19: Activity bar showing drone count per time bucket ----
+  function _renderActivityBar() {
+    // Find or create the activity bar container above the slider
+    let barEl = document.getElementById('replayActivityBar');
+    if (!barEl) {
+      const sliderWrap = document.querySelector('.replay-slider-wrap');
+      if (!sliderWrap) return;
+      barEl = document.createElement('div');
+      barEl.id = 'replayActivityBar';
+      barEl.className = 'replay-activity-bar';
+      sliderWrap.insertBefore(barEl, sliderWrap.firstChild);
+    }
+
+    if (_buckets.length === 0) {
+      barEl.innerHTML = '';
+      return;
+    }
+
+    // Normalize bucket counts to bar heights (max 20px)
+    const maxCount = Math.max(..._buckets.map(b => b.count || 0), 1);
+    const html = _buckets.map(b => {
+      const count = b.count || 0;
+      const heightPct = Math.max(10, Math.round((count / maxCount) * 100));
+      return `<div class="replay-activity-bucket"
+                   style="height:${heightPct}%"
+                   title="${Utils.formatDateTime(b.time_bucket)}: ${count} record${count !== 1 ? 's' : ''}">
+              </div>`;
+    }).join('');
+
+    barEl.innerHTML = html;
   }
 
   // ---- Controls enable/disable ----
@@ -154,10 +230,15 @@ const ReplayManager = (() => {
 
     // Filter records up to current time, within window
     const windowStart = _currentTimeMs - REPLAY_WINDOW_MS;
-    const visible = _records.filter(r => {
+    let visible = _records.filter(r => {
       const t = new Date(r.timestamp).getTime();
       return t <= _currentTimeMs && t >= windowStart;
     });
+
+    // Fix #11: apply serial filter if active
+    if (_filteredSerial) {
+      visible = visible.filter(r => r.serial_number === _filteredSerial);
+    }
 
     _updateCurrentTimeLabel();
     if (_onTimeUpdate) _onTimeUpdate(visible, _currentTimeMs);
@@ -251,6 +332,8 @@ const ReplayManager = (() => {
     stop();
     _records = [];
     _serials = [];
+    _buckets = [];
+    _filteredSerial = null;
     _isLoaded = false;
     _sliderPos = 0;
     _enableControls(false);
@@ -260,6 +343,10 @@ const ReplayManager = (() => {
 
     const timeLabel = document.getElementById('replayCurrentTime');
     if (timeLabel) timeLabel.textContent = '—';
+
+    // Clear activity bar
+    const barEl = document.getElementById('replayActivityBar');
+    if (barEl) barEl.innerHTML = '';
   }
 
   function isPlaying() { return _playing; }

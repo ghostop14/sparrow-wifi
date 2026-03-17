@@ -25,6 +25,8 @@
 
   <!-- Monitoring controls -->
   <div class="d-flex align-items-center gap-2 me-3">
+    <!-- Fix #22: add visually-hidden label for ifaceSelect -->
+    <label for="ifaceSelect" class="visually-hidden">WiFi Interface</label>
     <select class="form-select form-select-sm iface-select" id="ifaceSelect" title="Select interface">
       <option value="">-- interface --</option>
     </select>
@@ -54,12 +56,23 @@
     </span>
   </div>
 
-  <!-- Theme toggle + Settings -->
+  <!-- Unit toggle + Theme toggle + Settings -->
   <div class="d-flex align-items-center gap-2">
-    <button class="btn btn-sm btn-icon" id="btnTheme" title="Toggle light/dark mode">
+    <!-- NEW FEATURE: metric/imperial unit toggle -->
+    <button class="btn btn-sm btn-unit-toggle" id="btnUnitToggle"
+            title="Toggle metric/imperial units"
+            aria-label="Toggle metric/imperial units">m</button>
+    <!-- Fix #22: add aria-label to theme toggle button -->
+    <button class="btn btn-sm btn-icon" id="btnTheme"
+            title="Toggle light/dark mode"
+            aria-label="Toggle dark/light theme">
       <i class="bi bi-moon-fill" id="themeIcon"></i>
     </button>
-    <button class="btn btn-sm btn-icon" id="btnSettings" title="Settings" data-bs-toggle="modal" data-bs-target="#settingsModal">
+    <!-- Fix #22: add aria-label to settings button -->
+    <button class="btn btn-sm btn-icon" id="btnSettings"
+            title="Settings"
+            aria-label="Settings"
+            data-bs-toggle="modal" data-bs-target="#settingsModal">
       <i class="bi bi-gear-fill"></i>
     </button>
   </div>
@@ -84,6 +97,7 @@
   <!-- BOTTOM PANEL -->
   <div class="bottom-panel" id="bottomPanel">
     <!-- Resize handle -->
+    <!-- Fix #22/#23: tabindex and aria-label on resize handle added by app.js at runtime -->
     <div class="panel-resize-handle" id="panelResizeHandle"></div>
 
     <!-- Tab nav -->
@@ -108,10 +122,15 @@
 
       <!-- right-side controls aligned to end -->
       <li class="nav-item ms-auto d-flex align-items-center pe-1">
-        <button class="btn btn-xs btn-icon" id="btnRangeRings" title="Toggle range rings">
+        <!-- Fix #22: add aria-label to icon-only buttons -->
+        <button class="btn btn-xs btn-icon" id="btnRangeRings"
+                title="Toggle range rings"
+                aria-label="Toggle range rings">
           <i class="bi bi-circle"></i>
         </button>
-        <button class="btn btn-xs btn-icon ms-1" id="btnPanelCollapse" title="Collapse panel">
+        <button class="btn btn-xs btn-icon ms-1" id="btnPanelCollapse"
+                title="Collapse panel"
+                aria-label="Collapse panel">
           <i class="bi bi-chevron-down" id="panelCollapseIcon"></i>
         </button>
       </li>
@@ -128,8 +147,8 @@
               <tr>
                 <th data-col="serial_number" class="sortable">Serial <i class="bi bi-arrow-down-up sort-icon"></i></th>
                 <th data-col="ua_type" class="sortable">Type <i class="bi bi-arrow-down-up sort-icon"></i></th>
-                <th data-col="drone_height_agl" class="sortable">Alt AGL <i class="bi bi-arrow-down-up sort-icon"></i></th>
-                <th data-col="speed" class="sortable">Speed <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                <th data-col="drone_height_agl" class="sortable">Alt AGL (m) <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                <th data-col="speed" class="sortable">Speed (m/s) <i class="bi bi-arrow-down-up sort-icon"></i></th>
                 <th data-col="range_m" class="sortable">Range <i class="bi bi-arrow-down-up sort-icon"></i></th>
                 <th data-col="bearing_deg" class="sortable">Bearing <i class="bi bi-arrow-down-up sort-icon"></i></th>
                 <th data-col="rssi" class="sortable">RSSI <i class="bi bi-arrow-down-up sort-icon"></i></th>
@@ -223,9 +242,11 @@
             </div>
           </div>
 
-          <!-- Timeline slider -->
+          <!-- Timeline slider (activity bar injected above by replay.js) -->
           <div class="replay-slider-wrap">
-            <input type="range" class="form-range" id="replaySlider" min="0" max="100" value="0" disabled />
+            <!-- Fix #22: add aria-label to replay slider -->
+            <input type="range" class="form-range" id="replaySlider" min="0" max="100" value="0" disabled
+                   aria-label="Replay timeline" />
             <div class="replay-timeline-labels d-flex justify-content-between">
               <span class="text-secondary small" id="replaySliderStart">—</span>
               <span class="text-secondary small" id="replaySliderEnd">—</span>
@@ -244,7 +265,10 @@
 <div class="detail-sidebar" id="detailSidebar">
   <div class="detail-header d-flex align-items-center justify-content-between px-3 py-2 border-bottom">
     <span class="fw-semibold text-truncate" id="detailTitle">Drone Detail</span>
-    <button class="btn btn-xs btn-icon" id="btnCloseDetail" title="Close">
+    <!-- Fix #22: add aria-label to close detail button -->
+    <button class="btn btn-xs btn-icon" id="btnCloseDetail"
+            title="Close"
+            aria-label="Close details">
       <i class="bi bi-x-lg"></i>
     </button>
   </div>
@@ -262,7 +286,8 @@
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="alertConfigModalLabel"><i class="bi bi-sliders2 me-2"></i>Alert Configuration</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        <!-- Fix #22: add aria-label to modal close button -->
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body" id="alertConfigBody">
         <!-- Populated by alerts.js -->
@@ -281,7 +306,8 @@
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="settingsModalLabel"><i class="bi bi-gear-fill me-2"></i>Settings</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        <!-- Fix #22: add aria-label to modal close button -->
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body" id="settingsBody">
         <!-- Populated by settings.js -->

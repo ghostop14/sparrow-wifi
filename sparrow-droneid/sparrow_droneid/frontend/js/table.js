@@ -6,7 +6,8 @@ const TableManager = (() => {
 
   let _drones = [];
   let _sortCol = 'last_seen';
-  let _sortAsc = true;
+  // Fix #12: default descending so newest drones appear at top
+  let _sortAsc = false;
   let _selectedSerial = null;
   let _onSelect = null;    // callback(serial, drone)
 
@@ -49,6 +50,20 @@ const TableManager = (() => {
       });
     });
 
+    _updateSortIndicators();
+    _updateColumnHeaders();
+  }
+
+  // Update column header text to reflect current unit system
+  function _updateColumnHeaders() {
+    const altHeader = document.querySelector('#droneTable thead th[data-col="drone_height_agl"]');
+    const speedHeader = document.querySelector('#droneTable thead th[data-col="speed"]');
+    if (altHeader) {
+      altHeader.innerHTML = `Alt AGL (${Utils.formatAltUnit()}) <i class="bi bi-arrow-down-up sort-icon"></i>`;
+    }
+    if (speedHeader) {
+      speedHeader.innerHTML = `Speed (${Utils.formatSpeedUnit()}) <i class="bi bi-arrow-down-up sort-icon"></i>`;
+    }
     _updateSortIndicators();
   }
 
@@ -220,8 +235,9 @@ const TableManager = (() => {
       <div class="detail-state-bar ${state}"></div>
       <div class="detail-serial">${drone.serial_number || '—'}</div>`;
 
+    // Fix #14: use CSS var instead of hardcoded #94A3B8
     if (drone.self_id_text) {
-      html += `<div style="font-size:11px;color:#94A3B8;margin-bottom:10px;font-style:italic;">"${drone.self_id_text}"</div>`;
+      html += `<div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;font-style:italic;">"${drone.self_id_text}"</div>`;
     }
 
     html += section('Identity', [
@@ -241,6 +257,7 @@ const TableManager = (() => {
       ['Altitude Class', Utils.altBadge(d.altitude_class)],
     ]);
 
+    // Fix #14: use CSS var for V-Speed unit label
     html += section('Motion', [
       ['Speed', Utils.formatSpeed(drone.speed)],
       ['V-Speed', drone.vertical_speed != null ? `${drone.vertical_speed.toFixed(1)} m/s` : '—'],
@@ -311,6 +328,12 @@ const TableManager = (() => {
     document.getElementById('detailSidebar')?.classList.remove('open');
   }
 
+  // Refresh table and column headers after unit toggle
+  function refreshUnits() {
+    _updateColumnHeaders();
+    _render();
+  }
+
   return {
     init,
     update,
@@ -318,5 +341,6 @@ const TableManager = (() => {
     clearSelection,
     showDetailSidebar,
     hideDetailSidebar,
+    refreshUnits,
   };
 })();

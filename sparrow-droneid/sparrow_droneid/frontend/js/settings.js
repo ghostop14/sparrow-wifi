@@ -294,7 +294,7 @@ const SettingsManager = (() => {
       btn.disabled = true;
       btn.textContent = 'Sending...';
       try {
-        const resp = await Api.post('/api/alerts/slack-test', { webhook_url: url, display_name: name });
+        const resp = await Api.post('/alerts/slack-test', { webhook_url: url, display_name: name });
         if (resp.success) {
           Utils.toast('Slack test message sent', 'success');
         } else {

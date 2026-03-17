@@ -186,27 +186,23 @@ class Database:
         cutoff = (datetime.utcnow() - timedelta(seconds=max_age_seconds)).isoformat() + 'Z'
         with self.get_cursor() as cursor:
             cursor.execute("""
-                SELECT d.* FROM detections d
+                SELECT d.*, fs.first_seen FROM detections d
                 INNER JOIN (
                     SELECT serial_number, MAX(timestamp) as max_ts
                     FROM detections
                     WHERE timestamp > ?
                     GROUP BY serial_number
                 ) latest ON d.serial_number = latest.serial_number AND d.timestamp = latest.max_ts
+                INNER JOIN (
+                    SELECT serial_number, MIN(timestamp) as first_seen
+                    FROM detections
+                    GROUP BY serial_number
+                ) fs ON d.serial_number = fs.serial_number
                 ORDER BY d.timestamp DESC
             """, (cutoff,))
             rows = [dict(row) for row in cursor.fetchall()]
-
-            # Also get first_seen for each drone
             for row in rows:
-                cursor.execute(
-                    "SELECT MIN(timestamp) as first_seen FROM detections WHERE serial_number = ?",
-                    (row['serial_number'],)
-                )
-                fs = cursor.fetchone()
-                row['first_seen'] = fs['first_seen'] if fs else row['timestamp']
                 row['last_seen'] = row['timestamp']
-
             return rows
 
     def get_drone_by_serial(self, serial: str) -> Optional[Dict]:

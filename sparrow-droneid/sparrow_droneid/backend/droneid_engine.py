@@ -103,7 +103,7 @@ class ODIDParser:
         # Speed
         raw_speed = data[3]
         if speed_mult:
-            device.speed = (raw_speed * 10.0 + 255.0 * 0.25) * 0.25
+            device.speed = raw_speed * 0.75 + 63.75
         else:
             device.speed = raw_speed * 0.25
 

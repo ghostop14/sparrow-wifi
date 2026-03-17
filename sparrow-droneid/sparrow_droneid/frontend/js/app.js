@@ -24,6 +24,9 @@ const App = (() => {
     // Theme
     _initTheme();
 
+    // Unit toggle
+    _initUnitToggle();
+
     // Init sub-modules
     MapManager.init(_onDroneMapClick);
 
@@ -33,6 +36,8 @@ const App = (() => {
         MapManager.selectDrone(serial, drone);
         _fetchTrackAndShowDetail(serial);
       } else {
+        // Fix #18: also clear _selectedTrack on deselect
+        _selectedTrack = null;
         MapManager.clearTrack();
         TableManager.hideDetailSidebar();
       }
@@ -42,6 +47,7 @@ const App = (() => {
 
     ReplayManager.init((records, timeMs) => {
       // Replay time update — render snapshot on map and table
+      // Pass currentTimeMs so map filters tracks correctly (Fix #10)
       _renderReplaySnapshot(records, timeMs);
     });
 
@@ -50,6 +56,8 @@ const App = (() => {
     // Close detail sidebar button
     document.getElementById('btnCloseDetail')?.addEventListener('click', () => {
       _selectedSerial = null;
+      // Fix #18: reset _selectedTrack when closing detail sidebar
+      _selectedTrack = null;
       TableManager.clearSelection();
       MapManager.clearTrack();
       TableManager.hideDetailSidebar();
@@ -133,6 +141,23 @@ const App = (() => {
     if (icon) icon.className = theme === 'dark' ? 'bi bi-moon-fill' : 'bi bi-sun-fill';
   }
 
+  // ---- Unit toggle (metric / imperial) ----
+  function _initUnitToggle() {
+    const btn = document.getElementById('btnUnitToggle');
+    if (!btn) return;
+
+    // Set initial label
+    btn.textContent = Utils.getUnits() === 'imperial' ? 'ft' : 'm';
+
+    btn.addEventListener('click', () => {
+      const next = Utils.toggleUnits();
+      btn.textContent = next === 'imperial' ? 'ft' : 'm';
+      // Refresh all unit-aware displays
+      TableManager.refreshUnits();
+      // Force a drone re-render if we have data (popups will update on next poll)
+    });
+  }
+
   // ---- Interfaces ----
   async function _loadInterfaces() {
     try {
@@ -214,6 +239,7 @@ const App = (() => {
       const status = await Api.getStatus();
       _monitoring = status.monitoring;
       _updateMonitorUi();
+      // Fix #15: pass null for mode here; mode comes from drone poll via receiver.source
       _updateGpsUi(status.gps_fix, null);
     } catch (e) { /* ignore */ }
   }
@@ -238,6 +264,7 @@ const App = (() => {
       MapManager.updateDrones(drones, receiver);
       TableManager.update(drones);
 
+      // Fix #15: update GPS UI with mode from receiver.source (e.g. 'gpsd', 'static', 'none')
       if (receiver) _updateGpsUi(receiver.gps_fix, receiver.source);
 
       // Re-fetch track for selected drone if still visible
@@ -279,6 +306,8 @@ const App = (() => {
   async function _onDroneMapClick(serial) {
     if (!serial) {
       _selectedSerial = null;
+      // Fix #18: reset _selectedTrack on map deselect
+      _selectedTrack = null;
       TableManager.clearSelection();
       MapManager.clearTrack();
       TableManager.hideDetailSidebar();
@@ -303,6 +332,8 @@ const App = (() => {
       if (_selectedTrack.length > 1) {
         MapManager.showTrack(_selectedTrack);
       }
+      // Fix #24: invalidate map size after sidebar opens (sidebar transition = 250ms, add a bit more)
+      MapManager.invalidateSizeDelayed(300);
     } catch (e) {
       // Use cached drone data if detail endpoint fails
       _selectedTrack = null;
@@ -313,7 +344,8 @@ const App = (() => {
   function _renderReplaySnapshot(records, timeMs) {
     const receiverLat = null; // will use existing receiver marker
     const receiverLon = null;
-    MapManager.renderReplaySnapshot(records, receiverLat, receiverLon);
+    // Fix #10: pass currentTimeMs so renderReplaySnapshot filters tracks correctly
+    MapManager.renderReplaySnapshot(records, receiverLat, receiverLon, timeMs);
 
     const timeLabel = document.getElementById('replayTimeLabel');
     if (timeLabel) timeLabel.textContent = Utils.formatDateTime(new Date(timeMs).toISOString());
@@ -334,6 +366,12 @@ const App = (() => {
     const layout = document.getElementById('appLayout');
     const panel  = document.getElementById('bottomPanel');
     if (!handle || !layout || !panel) return;
+
+    // Fix #23: make keyboard-accessible
+    handle.setAttribute('tabindex', '0');
+    handle.setAttribute('role', 'separator');
+    handle.setAttribute('aria-orientation', 'horizontal');
+    handle.setAttribute('aria-label', 'Resize panel');
 
     let dragging = false;
     let startY = 0;
@@ -359,6 +397,16 @@ const App = (() => {
       dragging = false;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+    });
+
+    // Fix #23: keyboard resize — ArrowUp/ArrowDown adjusts panel height by 20px
+    handle.addEventListener('keydown', e => {
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      e.preventDefault();
+      const currentH = panel.getBoundingClientRect().height;
+      const delta = e.key === 'ArrowUp' ? 20 : -20;
+      const newH = Math.max(160, Math.min(window.innerHeight * 0.75, currentH + delta));
+      panel.style.flex = `0 0 ${newH}px`;
     });
   }
 

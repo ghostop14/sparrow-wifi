@@ -42,22 +42,67 @@ const Utils = (() => {
     return new Date(value).toISOString();
   }
 
+  // ---- Unit system preference ----
+
+  const UNITS_KEY = 'sparrow_units';
+
+  function getUnits() {
+    return localStorage.getItem(UNITS_KEY) || 'metric';
+  }
+
+  function setUnits(system) {
+    localStorage.setItem(UNITS_KEY, system === 'imperial' ? 'imperial' : 'metric');
+  }
+
+  function toggleUnits() {
+    const next = getUnits() === 'metric' ? 'imperial' : 'metric';
+    setUnits(next);
+    return next;
+  }
+
+  // ---- Unit label helpers ----
+
+  function formatAltUnit() {
+    return getUnits() === 'imperial' ? 'ft' : 'm';
+  }
+
+  function formatSpeedUnit() {
+    return getUnits() === 'imperial' ? 'mph' : 'm/s';
+  }
+
   // ---- Number Formatters ----
 
+  // Fix #17: guard only on null, not zero — 0m AGL is a valid altitude
   function formatAlt(m) {
-    if (m == null || m === 0) return '—';
+    if (m == null) return '—';
+    if (getUnits() === 'imperial') {
+      return `${Math.round(m * 3.28084)} ft`;
+    }
     return `${Math.round(m)} m`;
   }
 
   function formatSpeed(mps) {
     if (mps == null) return '—';
+    if (getUnits() === 'imperial') {
+      return `${(mps * 2.23694).toFixed(1)} mph`;
+    }
     return `${mps.toFixed(1)} m/s`;
   }
 
-  function formatRange(m) {
+  // Renamed from formatRange — unit-aware distance formatter
+  function formatDistance(m) {
     if (m == null) return '—';
+    if (getUnits() === 'imperial') {
+      if (m < 1609) return `${Math.round(m * 3.28084)} ft`;
+      return `${(m / 1609.34).toFixed(2)} mi`;
+    }
     if (m >= 1000) return `${(m / 1000).toFixed(2)} km`;
     return `${Math.round(m)} m`;
+  }
+
+  // Keep formatRange as alias for backward compatibility
+  function formatRange(m) {
+    return formatDistance(m);
   }
 
   function formatBearing(deg, cardinal) {
@@ -162,9 +207,24 @@ const Utils = (() => {
     const container = document.getElementById('toastContainer');
     if (!container) return;
 
-    const icons = { info: 'bi-info-circle', alert: 'bi-exclamation-triangle-fill', drone: 'bi-aircraft-horizontal', success: 'bi-check-circle-fill' };
+    // Fix #21: extend icon and title maps to include warning and danger types
+    const icons = {
+      info:    'bi-info-circle',
+      alert:   'bi-exclamation-triangle-fill',
+      drone:   'bi-aircraft-horizontal',
+      success: 'bi-check-circle-fill',
+      warning: 'bi-exclamation-triangle',
+      danger:  'bi-x-circle',
+    };
     const icon = icons[type] || icons.info;
-    const titleText = title || { info: 'Info', alert: 'Alert', drone: 'New Drone', success: 'Success' }[type] || 'Info';
+    const titleText = title || {
+      info:    'Info',
+      alert:   'Alert',
+      drone:   'New Drone',
+      success: 'Success',
+      warning: 'Warning',
+      danger:  'Error',
+    }[type] || 'Info';
 
     const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const div = document.createElement('div');
@@ -209,8 +269,14 @@ const Utils = (() => {
     formatDateTime,
     toLocalDatetimeInput,
     fromLocalDatetimeInput,
+    getUnits,
+    setUnits,
+    toggleUnits,
+    formatAltUnit,
+    formatSpeedUnit,
     formatAlt,
     formatSpeed,
+    formatDistance,
     formatRange,
     formatBearing,
     formatRssi,

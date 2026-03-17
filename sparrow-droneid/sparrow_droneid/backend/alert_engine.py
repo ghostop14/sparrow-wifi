@@ -40,6 +40,10 @@ class AlertEngine:
         # Alerts fired for signal-lost but not yet cleared by reappearance.
         self._alerted_lost: set = set()
 
+        # Per-drone, per-rule-type violation dedup: key -> set of alert type strings.
+        # Prevents altitude/speed alerts from firing on every frame while condition persists.
+        self._alerted_violations: Dict[str, set] = {}
+
         # Alerts waiting to be consumed by the frontend polling endpoint.
         self._pending_alerts: List[dict] = []
 
@@ -146,18 +150,38 @@ class AlertEngine:
             elif rtype == AlertType.ALTITUDE_MAX.value:
                 max_alt = rule.params.get('max_altitude_m', 122.0)
                 if device.drone_height_agl > max_alt:
-                    self._fire_alert(
-                        AlertType.ALTITUDE_MAX.value, device,
-                        f"AGL {device.drone_height_agl:.1f} m exceeds limit {max_alt} m",
-                    )
+                    with self._lock:
+                        violations = self._alerted_violations.setdefault(key, set())
+                        already = AlertType.ALTITUDE_MAX.value in violations
+                        if not already:
+                            violations.add(AlertType.ALTITUDE_MAX.value)
+                    if not already:
+                        self._fire_alert(
+                            AlertType.ALTITUDE_MAX.value, device,
+                            f"AGL {device.drone_height_agl:.1f} m exceeds limit {max_alt} m",
+                        )
+                else:
+                    # Condition cleared — allow alert to fire again if it recurs.
+                    with self._lock:
+                        self._alerted_violations.get(key, set()).discard(AlertType.ALTITUDE_MAX.value)
 
             elif rtype == AlertType.SPEED_MAX.value:
                 max_spd = rule.params.get('max_speed_mps', 44.7)
                 if device.speed > max_spd:
-                    self._fire_alert(
-                        AlertType.SPEED_MAX.value, device,
-                        f"Speed {device.speed:.1f} m/s exceeds limit {max_spd} m/s",
-                    )
+                    with self._lock:
+                        violations = self._alerted_violations.setdefault(key, set())
+                        already = AlertType.SPEED_MAX.value in violations
+                        if not already:
+                            violations.add(AlertType.SPEED_MAX.value)
+                    if not already:
+                        self._fire_alert(
+                            AlertType.SPEED_MAX.value, device,
+                            f"Speed {device.speed:.1f} m/s exceeds limit {max_spd} m/s",
+                        )
+                else:
+                    # Condition cleared — allow alert to fire again if it recurs.
+                    with self._lock:
+                        self._alerted_violations.get(key, set()).discard(AlertType.SPEED_MAX.value)
 
             # SIGNAL_LOST is not evaluated here; handled by check_signal_lost().
 

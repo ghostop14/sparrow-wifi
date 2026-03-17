@@ -201,6 +201,7 @@ const MapManager = (() => {
     return L.divIcon({ className: '', html, iconSize: [14,14], iconAnchor: [7,7] });
   }
 
+  // Fix #14: replace hardcoded hex colors with CSS custom properties
   function buildPopupContent(drone) {
     const d = drone.derived || {};
     return `
@@ -215,7 +216,7 @@ const MapManager = (() => {
           <span class="lbl">RSSI</span><span class="val">${Utils.formatRssi(drone.rssi)}</span>
           <span class="lbl">Last seen</span><span class="val">${Utils.relativeTime(drone.last_seen)}</span>
         </div>
-        ${drone.self_id_text ? `<div style="font-size:11px;color:#94A3B8;margin-bottom:6px;">ID: ${drone.self_id_text}</div>` : ''}
+        ${drone.self_id_text ? `<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px;">ID: ${drone.self_id_text}</div>` : ''}
         <button class="btn-popup-detail" onclick="MapManager._popupDetailClick('${drone.serial_number}')">
           <i class="bi bi-info-circle me-1"></i>Details
         </button>
@@ -365,15 +366,21 @@ const MapManager = (() => {
   }
 
   // ---- Replay mode: render snapshot ----
-  function renderReplaySnapshot(records, receiverLat, receiverLon) {
+  // Fix #10: filter records to only those at or before currentTimeMs for tracks
+  function renderReplaySnapshot(records, receiverLat, receiverLon, currentTimeMs) {
     if (!_map) return;
 
     // Clear all existing drone markers
     Object.keys(_droneMarkers).forEach(s => removeDroneMarker(s));
 
+    // If currentTimeMs provided, only consider records up to that time
+    const relevantRecords = (currentTimeMs != null)
+      ? records.filter(r => new Date(r.timestamp).getTime() <= currentTimeMs)
+      : records;
+
     // Group by serial, take most recent per serial
     const bySerial = {};
-    records.forEach(rec => {
+    relevantRecords.forEach(rec => {
       if (!bySerial[rec.serial_number] || rec.timestamp > bySerial[rec.serial_number].timestamp) {
         bySerial[rec.serial_number] = rec;
       }
@@ -416,11 +423,13 @@ const MapManager = (() => {
       _droneMarkers[rec.serial_number] = { marker, operatorMarker, line, track: null };
     });
 
-    // Draw tracks per serial
+    // Draw tracks per serial — only up to currentTimeMs
     const tracksBySerial = {};
-    records.forEach(rec => {
+    relevantRecords.forEach(rec => {
       if (!tracksBySerial[rec.serial_number]) tracksBySerial[rec.serial_number] = [];
-      tracksBySerial[rec.serial_number].push([rec.drone_lat, rec.drone_lon]);
+      if (rec.drone_lat && rec.drone_lon) {
+        tracksBySerial[rec.serial_number].push([rec.drone_lat, rec.drone_lon]);
+      }
     });
 
     Object.entries(tracksBySerial).forEach(([serial, latlngs]) => {
@@ -444,6 +453,13 @@ const MapManager = (() => {
     _map.fitBounds(bounds.pad(0.3));
   }
 
+  // Fix #24: invalidate map size after sidebar opens so Leaflet recalculates viewport
+  function invalidateSizeDelayed(ms) {
+    setTimeout(() => {
+      if (_map) _map.invalidateSize();
+    }, ms || 100);
+  }
+
   return {
     init,
     setReceiverPosition,
@@ -455,6 +471,7 @@ const MapManager = (() => {
     clearAll,
     fitToDrones,
     renderReplaySnapshot,
+    invalidateSizeDelayed,
     _popupDetailClick,
     getMap: () => _map,
   };

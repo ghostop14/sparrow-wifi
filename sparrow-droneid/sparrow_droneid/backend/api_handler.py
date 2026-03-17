@@ -251,11 +251,20 @@ class RequestHandler(BaseHTTPRequestHandler):
         required_token = _db.get_setting('auth_token', '') or ''
         if required_token:
             auth_header = self.headers.get('Authorization', '')
-            if not auth_header.startswith('Bearer '):
+            token = None
+            if auth_header.startswith('Bearer '):
+                token = auth_header[len('Bearer '):]
+            if not token:
+                # Fallback: check _token query parameter (for file downloads)
+                parsed = urlparse(self.path)
+                params = parse_qs(parsed.query)
+                token_list = params.get('_token', [])
+                if token_list:
+                    token = token_list[0]
+            if not token:
                 self._send_error_json(401, 401, 'Authentication required')
                 return False
-            provided_token = auth_header[len('Bearer '):]
-            if provided_token != required_token:
+            if token != required_token:
                 self._send_error_json(401, 401, 'Authentication required')
                 return False
 
@@ -928,6 +937,7 @@ def api_cot_config(req: RequestHandler):
 
 @router.route('GET', '/api/tiles/{source}/{z}/{x}/{y}')
 def api_tiles(req: RequestHandler, source: str, z: str, x: str, y: str):
+    y = y.rsplit('.', 1)[0]  # strip .png/.jpg suffix if present
     if source not in _TILE_UPSTREAM:
         req._send_error_json(400, 1, f'Unknown tile source {source!r}. Supported: {list(_TILE_UPSTREAM)}')
         return
@@ -1106,6 +1116,7 @@ _SETTINGS_WRITABLE = frozenset({
     'cot_enabled', 'cot_address', 'cot_port',
     'alert_audio_enabled', 'alert_visual_enabled',
     'alert_script_enabled', 'alert_script_path',
+    'alert_slack_enabled', 'alert_slack_webhook_url', 'alert_slack_display_name',
     'tile_cache_enabled',
     'monitor_interface',
 })
@@ -1145,6 +1156,27 @@ def api_settings_put(req: RequestHandler):
 
         if key in _RESTART_REQUIRED_KEYS:
             restart_required = True
+
+    data = req.json_data
+
+    # Apply GPS settings live if any GPS-related key changed.
+    if any(k in data for k in ('gps_mode', 'gps_static_lat', 'gps_static_lon', 'gps_static_alt')):
+        if _gps_engine:
+            _gps_engine.configure(
+                mode=_db.get_setting('gps_mode', 'none'),
+                static_lat=float(_db.get_setting('gps_static_lat', '0.0')),
+                static_lon=float(_db.get_setting('gps_static_lon', '0.0')),
+                static_alt=float(_db.get_setting('gps_static_alt', '0.0')),
+            )
+
+    # Apply CoT settings live if any CoT-related key changed.
+    if any(k in data for k in ('cot_enabled', 'cot_address', 'cot_port')):
+        if _cot_engine:
+            _cot_engine.configure(
+                enabled=_db.get_setting('cot_enabled', 'false').lower() == 'true',
+                address=_db.get_setting('cot_address', '239.2.3.1'),
+                port=int(_db.get_setting('cot_port', '6969')),
+            )
 
     # Re-read and return the updated settings
     raw = _db.get_all_settings()

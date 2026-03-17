@@ -33,8 +33,8 @@
   --bg-tertiary:   #F1F5F9;
   --bg-elevated:   #E2E8F0;
   --text-primary:  #0F172A;
-  --text-secondary:#475569;
-  --text-muted:    #94A3B8;
+  --text-secondary:#334155;
+  --text-muted:    #64748B;
   --border-color:  #CBD5E1;
   --drone-active:  #D97706;
   --drone-aging:   #607D8B;
@@ -235,11 +235,22 @@ html, body {
   top: 0;
   left: 0;
   right: 0;
-  height: 4px;
+  height: 6px;
   cursor: ns-resize;
   z-index: 10;
   background: transparent;
   transition: background 0.2s;
+}
+
+/* Larger invisible grab target above the visual handle */
+.panel-resize-handle::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  left: 0;
+  right: 0;
+  height: 16px;
+  cursor: ns-resize;
 }
 
 .panel-resize-handle:hover { background: rgba(59,130,246,0.4); }
@@ -737,4 +748,54 @@ html, body {
 /* ---- Responsive map height ---- */
 @media (max-height: 600px) {
   :root { --map-height: 55vh; }
+}
+
+/* ---- Spin animation (used for loading indicators) ---- */
+.spin { animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---- Toast type extensions: warning and danger ---- */
+.sparrow-toast.toast-warning { border-left: 3px solid var(--drone-active); }
+.sparrow-toast.toast-danger  { border-left: 3px solid var(--alert-color); }
+
+/* ---- Replay activity bar (timeline density indicator) ---- */
+.replay-activity-bar {
+  height: 20px;
+  position: relative;
+  margin-bottom: 2px;
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+}
+
+.replay-activity-bucket {
+  flex: 1;
+  background: rgba(59,130,246,0.35);
+  border-radius: 1px 1px 0 0;
+  min-height: 2px;
+  transition: background 0.1s;
+}
+
+.replay-activity-bucket:hover { background: rgba(59,130,246,0.7); }
+
+/* ---- Unit toggle button ---- */
+.btn-unit-toggle {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: all 0.15s;
+  min-width: 28px;
+  text-align: center;
+}
+
+.btn-unit-toggle:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
 }
