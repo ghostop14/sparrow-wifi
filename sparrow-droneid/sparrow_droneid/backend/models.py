@@ -78,6 +78,7 @@ class UAType(IntEnum):
 class Protocol(str, Enum):
     ASTM_NAN = "astm_nan"
     ASTM_BEACON = "astm_beacon"
+    ASTM_BLE = "astm_ble"
     DJI_PROPRIETARY = "dji_proprietary"
 
 

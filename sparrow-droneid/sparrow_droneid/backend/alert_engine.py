@@ -127,7 +127,12 @@ class AlertEngine:
 
         Must be called from the detection ingestion path (one call per frame).
         """
-        key = device.get_key()
+        # BLE devices cycle through multiple BasicID serials; use MAC for
+        # stable dedup so alerts fire once per physical device, not per serial.
+        if device.protocol == 'astm_ble' and device.mac_address:
+            key = device.mac_address
+        else:
+            key = device.get_key()
         if not key:
             return
 
@@ -266,6 +271,15 @@ class AlertEngine:
 
         alert_dict = event.to_dict()
 
+        # Enrich with device identity for Slack/script consumers
+        alert_dict['operator_id'] = device.operator_id or ''
+        alert_dict['registration_id'] = device.registration_id or ''
+        alert_dict['ua_type_name'] = getattr(device, 'ua_type_name', '') or ''
+        alert_dict['protocol'] = device.protocol or ''
+        alert_dict['mac_address'] = device.mac_address or ''
+        alert_dict['speed'] = device.speed
+        alert_dict['direction'] = device.direction
+
         with self._lock:
             self._pending_alerts.append(alert_dict)
 
@@ -300,13 +314,18 @@ class AlertEngine:
 
     def _format_slack_message(self, alert_dict: dict) -> str:
         """Build a Slack-formatted alert message."""
-        from .models import UAType
         alert_type = alert_dict.get('alert_type', 'unknown')
         serial = alert_dict.get('serial_number', 'Unknown')
         detail = alert_dict.get('detail', '')
         agl = alert_dict.get('drone_height_agl', 0)
         lat = alert_dict.get('drone_lat', 0)
         lon = alert_dict.get('drone_lon', 0)
+        op_id = alert_dict.get('operator_id', '')
+        reg_id = alert_dict.get('registration_id', '')
+        ua_type = alert_dict.get('ua_type_name', '')
+        protocol = alert_dict.get('protocol', '')
+        speed = alert_dict.get('speed', 0)
+        direction = alert_dict.get('direction', 0)
 
         type_labels = {
             'new_drone': 'New Drone Detected',
@@ -317,13 +336,23 @@ class AlertEngine:
         header = type_labels.get(alert_type, alert_type.replace('_', ' ').title())
 
         parts = [f"*{header}*"]
-        parts.append(f"Drone: `{serial}`")
+        parts.append(f"Serial: `{serial}`")
+        if op_id:
+            parts.append(f"Operator ID: `{op_id}`")
+        if reg_id:
+            parts.append(f"Registration: `{reg_id}`")
+        if ua_type:
+            parts.append(f"Type: {ua_type}")
         if detail:
             parts.append(f"Detail: {detail}")
         if lat != 0 or lon != 0:
             parts.append(f"Position: {lat:.6f}, {lon:.6f}")
         if agl and agl != 0:
-            parts.append(f"Altitude AGL: {agl:.1f} m")
+            parts.append(f"Alt AGL: {agl:.1f} m")
+        if speed and speed > 0:
+            parts.append(f"Speed: {speed:.1f} m/s  HDG {direction:.0f}°")
+        if protocol:
+            parts.append(f"Protocol: {protocol}")
         return '\n'.join(parts)
 
     def _post_slack(self, alert_dict: dict) -> None:

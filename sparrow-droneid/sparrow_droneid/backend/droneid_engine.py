@@ -6,9 +6,10 @@ Manages monitor-mode WiFi capture via tcpdump and decodes:
 - ASTM F3411 via Wi-Fi beacon vendor IE (OUI FA:0B:BC)
 - DJI proprietary DroneID via beacon vendor IE (OUI 26:37:12)
 """
+import asyncio
+import logging
 import struct
 import subprocess
-import re
 import shutil
 import threading
 import os
@@ -19,8 +20,6 @@ from .models import (
     DroneIDDevice, WifiInterface, Protocol, UAType,
     rssi_trend as calc_rssi_trend,
 )
-from .database import Database
-
 
 # --------------- Constants ------------------------------------------------
 
@@ -44,19 +43,28 @@ OUI_DJI = b'\x26\x37\x12'
 NAN_OUI_TYPE = 0x13
 ASTM_BEACON_OUI_TYPE = 0x0D
 
+# BLE constants
+BLE_ASTM_UUID = "0000fffa-0000-1000-8000-00805f9b34fb"
+BLE_SERVICE_DATA_HEADER_LEN = 2  # app_code(1) + counter(1)
+
+# BLE throttle: seconds between DB writes / alert callbacks per drone.
+# In-memory state is always updated immediately for API queries.
+_BLE_EMIT_INTERVAL = 3.0
+
 # 802.11 frame type/subtype values
 SUBTYPE_BEACON = 0x08
 SUBTYPE_PROBE_RESP = 0x05
 SUBTYPE_ACTION = 0x0D
 
-# Regex for parsing tcpdump header lines
-# Primary RSSI pattern: matches "-68dBm", "-68 dBm", "-68dB" (with word-boundary)
-_RE_SIGNAL = re.compile(r'(-?\d+)\s*dBm?\b', re.IGNORECASE)
-# Fallback: matches "signal -72" or "signal: -72" when no dBm suffix is present
-_RE_SIGNAL_BARE = re.compile(r'signal\s*:?\s*(-\d+)\b', re.IGNORECASE)
-_RE_HEX_LINE = re.compile(r'^\s+0x[0-9a-f]+:\s+(.+)$')
-_RE_FRAME_HEADER = re.compile(r'^\d{2}:\d{2}:\d{2}\.\d+')
-_RE_SA = re.compile(r'SA:([0-9a-fA-F:]{17})')
+# Radiotap field definitions: (bit_position, size_bytes, alignment)
+_RT_FIELD_INFO = [
+    (0, 8, 8),   # TSFT
+    (1, 1, 1),   # Flags
+    (2, 1, 1),   # Rate
+    (3, 4, 2),   # Channel (freq(2) + flags(2))
+    (4, 2, 2),   # FHSS
+    (5, 1, 1),   # dBm Antenna Signal
+]
 
 
 # --------------- ODID Message Parser --------------------------------------
@@ -554,14 +562,15 @@ class CaptureManager:
 
     @staticmethod
     def start_capture(interface):
-        """Launch tcpdump for ODID-relevant frame capture."""
-        bpf = '(type mgt subtype action) or (type mgt subtype beacon) or (type mgt subtype probe-resp)'
+        """Launch tcpdump for ODID-relevant frame capture (raw pcap output)."""
+        # Raw frame-control byte filter: 0xd0=Action, 0x80=Beacon, 0x50=Probe-Resp
+        # (the compound 'type mgt subtype X or ...' syntax fails on libpcap 1.10)
+        bpf = 'wlan[0] == 0xd0 or wlan[0] == 0x80 or wlan[0] == 0x50'
         cmd = [
             'tcpdump', '-i', interface,
-            '-e',                   # Print link-layer header (for SA, signal)
-            '-l',                   # Line-buffered output
-            '-x',                   # Hex dump of frame
-            '--immediate-mode',     # Immediate output
+            '-w', '-',              # Raw pcap to stdout
+            '-U',                   # Packet-buffered output
+            '--immediate-mode',
             '-s', '0',              # Full frame capture
             bpf,
         ]
@@ -569,7 +578,7 @@ class CaptureManager:
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            bufsize=1,
+            bufsize=0,
         )
         return proc
 
@@ -618,6 +627,13 @@ class DroneIDEngine:
         # Monitor mode health check
         self._monitor_warning = ""  # Non-empty = problem detected
 
+        # BLE scanning state
+        self._ble_thread = None
+        self._ble_loop = None        # asyncio event loop owned by BLE thread
+        self._ble_frame_count = 0
+        self._ble_enabled = False    # True when BLE adapter was found and scan started
+        self._ble_last_emit = {}     # MAC -> monotonic timestamp of last DB/alert emit
+
         # Callback for alert engine
         self.on_detection = None
 
@@ -643,6 +659,13 @@ class DroneIDEngine:
         self._parse_thread = threading.Thread(target=self._parse_loop, daemon=True)
         self._parse_thread.start()
 
+        # Start BLE scan in a daemon thread with its own asyncio event loop
+        self._ble_frame_count = 0
+        self._ble_enabled = False
+        self._ble_thread = threading.Thread(target=self._ble_thread_main, daemon=True,
+                                            name='ble-scan')
+        self._ble_thread.start()
+
         # Background health check: verify frames are actually arriving
         threading.Thread(target=self._monitor_health_check, daemon=True,
                          name='monitor-health').start()
@@ -657,6 +680,17 @@ class DroneIDEngine:
             self._parse_thread.join(timeout=5)
             self._parse_thread = None
 
+        # Signal the BLE event loop to stop and wait for its thread
+        if self._ble_loop is not None:
+            try:
+                self._ble_loop.call_soon_threadsafe(self._ble_loop.stop)
+            except Exception:
+                pass
+        if self._ble_thread:
+            self._ble_thread.join(timeout=5)
+            self._ble_thread = None
+        self._ble_loop = None
+
         if self._interface:
             try:
                 CaptureManager.stop_monitor(self._interface)
@@ -665,88 +699,118 @@ class DroneIDEngine:
             self._interface = ""
 
     def _parse_loop(self):
-        """Read tcpdump output and parse ODID frames."""
+        """Read raw pcap stream from tcpdump and parse ODID frames."""
         proc = self._capture_proc
         if proc is None or proc.stdout is None:
             return
 
-        hex_lines = []
-        header_info = {}  # rssi, mac from the tcpdump text header
+        f = proc.stdout
 
-        for raw_line in iter(proc.stdout.readline, b''):
-            if not self._monitoring:
+        # Read pcap global header (24 bytes)
+        global_hdr = self._read_exact(f, 24)
+        if global_hdr is None or len(global_hdr) < 24:
+            return
+
+        magic = struct.unpack_from('<I', global_hdr, 0)[0]
+        if magic == 0xa1b2c3d4:
+            endian = '<'
+        elif magic == 0xd4c3b2a1:
+            endian = '>'
+        else:
+            return  # Not a pcap stream
+
+        link_type = struct.unpack_from(f'{endian}I', global_hdr, 20)[0]
+        if link_type != 127:  # IEEE802_11_RADIO (radiotap + 802.11)
+            return
+
+        # Read packets
+        while self._monitoring:
+            rec_hdr = self._read_exact(f, 16)
+            if rec_hdr is None or len(rec_hdr) < 16:
                 break
 
+            incl_len = struct.unpack_from(f'{endian}I', rec_hdr, 8)[0]
+
+            if incl_len == 0 or incl_len > 65536:
+                break
+
+            pkt_data = self._read_exact(f, incl_len)
+            if pkt_data is None or len(pkt_data) < incl_len:
+                break
+
+            self._frame_count += 1
+
             try:
-                line = raw_line.decode('ascii', errors='replace').rstrip()
+                self._process_pcap_frame(pkt_data)
             except Exception:
-                continue
-
-            # Check if this is a hex continuation line
-            hex_match = _RE_HEX_LINE.match(line)
-            if hex_match:
-                hex_lines.append(hex_match.group(1))
-                continue
-
-            # This is a new frame header — process the previous frame
-            if hex_lines and _RE_FRAME_HEADER.match(line):
-                self._frame_count += 1
-                try:
-                    frame_bytes = self._hex_to_bytes(hex_lines)
-                    self._process_frame(frame_bytes, header_info)
-                except Exception:
-                    self._capture_errors += 1
-                hex_lines = []
-
-            # Parse the new header line for RSSI and MAC
-            if _RE_FRAME_HEADER.match(line):
-                header_info = self._parse_header_line(line)
-                hex_lines = []
-
-        # Process last frame
-        if hex_lines:
-            try:
-                frame_bytes = self._hex_to_bytes(hex_lines)
-                self._process_frame(frame_bytes, header_info)
-            except Exception:
-                pass
+                self._capture_errors += 1
 
     @staticmethod
-    def _hex_to_bytes(hex_lines):
-        """Convert tcpdump hex output lines to bytes."""
-        hex_str = ''
-        for line in hex_lines:
-            # Remove the offset prefix and join hex pairs
-            hex_str += line.replace(' ', '')
-        return bytes.fromhex(hex_str)
+    def _read_exact(f, n):
+        """Read exactly *n* bytes from binary stream *f*."""
+        data = b''
+        while len(data) < n:
+            chunk = f.read(n - len(data))
+            if not chunk:
+                return None
+            data += chunk
+        return data
+
+    def _process_pcap_frame(self, pkt_data):
+        """Parse radiotap + 802.11 frame from raw pcap packet data."""
+        if len(pkt_data) < 8:
+            return
+
+        # Radiotap header: version(1), pad(1), length(2LE)
+        rt_len = struct.unpack_from('<H', pkt_data, 2)[0]
+        if rt_len > len(pkt_data):
+            return
+
+        rssi = self._extract_radiotap_rssi(pkt_data[:rt_len])
+
+        # 802.11 frame starts after radiotap header
+        frame = pkt_data[rt_len:]
+        if len(frame) < 24:
+            return
+
+        # For management frames addr2 (bytes 10-15) = SA
+        sa_bytes = frame[10:16]
+        mac = ':'.join(f'{b:02x}' for b in sa_bytes)
+
+        header_info = {'rssi': rssi, 'mac': mac}
+        self._process_frame(frame, header_info)
 
     @staticmethod
-    def _parse_header_line(line):
-        """Extract RSSI and source MAC from tcpdump header line.
+    def _extract_radiotap_rssi(rt_data):
+        """Extract dBm Antenna Signal from radiotap header."""
+        if len(rt_data) < 8:
+            return 0
 
-        tcpdump can emit RSSI in two formats:
-          - "-68dBm" or "-68 dBm"  (matched by _RE_SIGNAL)
-          - "signal -72"           (matched by _RE_SIGNAL_BARE fallback)
-        """
-        info = {'rssi': 0, 'mac': ''}
-        sig = _RE_SIGNAL.search(line)
-        if sig:
-            try:
-                info['rssi'] = int(sig.group(1))
-            except ValueError:
-                pass
-        else:
-            # Fallback: "signal -72" without explicit dBm suffix
-            sig2 = _RE_SIGNAL_BARE.search(line)
-            if sig2:
-                try:
-                    info['rssi'] = int(sig2.group(1))
-                except ValueError:
-                    pass
-        sa = _RE_SA.search(line)
-        if sa:
-            info['mac'] = sa.group(1).lower()
-        return info
+        present = struct.unpack_from('<I', rt_data, 4)[0]
+
+        # Skip past any extended present-flag words
+        offset = 4
+        p = present
+        while p & (1 << 31):
+            offset += 4
+            if offset + 4 > len(rt_data):
+                return 0
+            p = struct.unpack_from('<I', rt_data, offset)[0]
+        offset += 4  # past last present word
+
+        # Walk fields in order until we reach bit 5 (dBm Antenna Signal)
+        for bit, size, align in _RT_FIELD_INFO:
+            if not (present & (1 << bit)):
+                continue
+            if align > 1:
+                offset = (offset + align - 1) & ~(align - 1)
+            if bit == 5:
+                if offset < len(rt_data):
+                    return struct.unpack_from('b', rt_data, offset)[0]
+                return 0
+            offset += size
+
+        return 0
 
     def _process_frame(self, frame_bytes, header_info):
         """Identify frame type and extract ODID data."""
@@ -776,10 +840,19 @@ class DroneIDEngine:
         device.channel = self._channel
         device.frequency = 2437 if self._channel == 6 else 2412 + (self._channel - 1) * 5
 
+        self._droneid_frame_count += 1
+        self._track_device(device)
+
+    def _track_device(self, device: DroneIDDevice):
+        """Update tracking state, persist to DB, and fire the detection callback.
+
+        Called from both the WiFi parse path and the BLE scan path so the
+        downstream logic (merging, RSSI history, DB write, alerts) is shared.
+        The caller is responsible for setting device.rssi / device.mac_address
+        before calling this method.
+        """
         now = datetime.utcnow().isoformat() + 'Z'
         key = device.get_key()
-
-        self._droneid_frame_count += 1
 
         # Update active drones dict
         with self._lock:
@@ -827,6 +900,269 @@ class DroneIDEngine:
                 self.on_detection(device)
             except Exception:
                 pass
+
+    def _track_ble_device(self, device: DroneIDDevice):
+        """Track a BLE RemoteID device, merging individual messages by MAC.
+
+        BLE broadcasts single ODID messages (BasicID, Location, System, etc.)
+        at ~20/sec.  We merge every advertisement into the in-memory state
+        immediately, but throttle DB writes and alert/callback firing to at
+        most once per drone per _BLE_EMIT_INTERVAL seconds.
+        """
+        import time as _time
+        now_ts = _time.monotonic()
+        now = datetime.utcnow().isoformat() + 'Z'
+        key = device.mac_address  # always use MAC for BLE
+        is_new = False
+
+        with self._lock:
+            if key in self._active_drones:
+                existing = self._active_drones[key]
+                device.first_seen = existing.first_seen
+                # Merge: keep existing data for fields the new message didn't set
+                if not device.serial_number and existing.serial_number:
+                    device.serial_number = existing.serial_number
+                if not device.registration_id and existing.registration_id:
+                    device.registration_id = existing.registration_id
+                if not device.self_id_text and existing.self_id_text:
+                    device.self_id_text = existing.self_id_text
+                if not device.operator_id and existing.operator_id:
+                    device.operator_id = existing.operator_id
+                if device.drone_lat == 0.0 and existing.drone_lat != 0.0:
+                    device.drone_lat = existing.drone_lat
+                    device.drone_lon = existing.drone_lon
+                if device.drone_alt_geo == 0.0 and existing.drone_alt_geo != 0.0:
+                    device.drone_alt_geo = existing.drone_alt_geo
+                    device.drone_alt_baro = existing.drone_alt_baro
+                    device.drone_height_agl = existing.drone_height_agl
+                if device.speed == 0.0 and existing.speed != 0.0:
+                    device.speed = existing.speed
+                    device.direction = existing.direction
+                    device.vertical_speed = existing.vertical_speed
+                if device.operator_lat == 0.0 and existing.operator_lat != 0.0:
+                    device.operator_lat = existing.operator_lat
+                    device.operator_lon = existing.operator_lon
+                    device.operator_alt = existing.operator_alt
+                if device.ua_type == 0 and existing.ua_type != 0:
+                    device.ua_type = existing.ua_type
+                if not device.protocol and existing.protocol:
+                    device.protocol = existing.protocol
+            else:
+                device.first_seen = now
+                is_new = True
+
+            device.last_seen = now
+            self._active_drones[key] = device
+
+            # RSSI history
+            if key not in self._rssi_history:
+                self._rssi_history[key] = []
+            self._rssi_history[key].append(device.rssi)
+            if len(self._rssi_history[key]) > 10:
+                self._rssi_history[key] = self._rssi_history[key][-10:]
+
+        # Throttle DB writes and alert callbacks to avoid flooding.
+        # The in-memory state (above) is always up-to-date for API queries.
+        last_emit = self._ble_last_emit.get(key, 0.0)
+        if not is_new and (now_ts - last_emit) < _BLE_EMIT_INTERVAL:
+            return  # silently merged — skip DB/alerts until interval elapses
+        self._ble_last_emit[key] = now_ts
+
+        # Persist to database
+        rx_lat, rx_lon, rx_alt = self._gps.get_receiver_position()
+        try:
+            self._db.insert_detection(device, rx_lat, rx_lon, rx_alt)
+        except Exception:
+            self._capture_errors += 1
+
+        # Fire callback (alert engine, CoT engine)
+        if self.on_detection:
+            try:
+                self.on_detection(device)
+            except Exception:
+                pass
+
+    # ----- BLE scan -------------------------------------------------------
+
+    def _ble_thread_main(self):
+        """Entry point for the BLE daemon thread.
+
+        Creates a dedicated asyncio event loop and runs _ble_scan_loop() on it.
+        On exit (monitoring stopped or no BLE adapter) the loop is closed.
+        """
+        loop = asyncio.new_event_loop()
+        self._ble_loop = loop
+        try:
+            loop.run_until_complete(self._ble_scan_loop())
+        except Exception as exc:
+            logging.warning("DroneID BLE thread exited with error: %s", exc)
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                pass
+            self._ble_loop = None
+
+    @staticmethod
+    def _ensure_bluetooth_ready():
+        """Ensure bluetoothd is running and the HCI adapter is available.
+
+        On many systems bluetoothd starts late or the adapter needs a driver
+        rebind before BlueZ exposes org.bluez.Adapter1 on DBus.
+        """
+        import shutil as _sh
+
+        # 1. Make sure bluetoothd is running
+        try:
+            result = subprocess.run(
+                ['pidof', 'bluetoothd'], capture_output=True, timeout=3
+            )
+            if result.returncode != 0:
+                daemon = _sh.which('bluetoothd') or '/usr/libexec/bluetooth/bluetoothd'
+                subprocess.Popen(
+                    [daemon], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                logging.info("DroneID BLE: started bluetoothd")
+                sleep(2)
+        except Exception:
+            pass
+
+        # 2. Bring the adapter up
+        try:
+            subprocess.run(
+                ['hciconfig', 'hci0', 'up'],
+                capture_output=True, timeout=5
+            )
+        except Exception:
+            pass
+
+        # 3. Check if Adapter1 is on DBus; if not, rebind the btusb driver
+        try:
+            probe = subprocess.run(
+                ['dbus-send', '--system', '--dest=org.bluez', '--print-reply',
+                 '/org/bluez/hci0',
+                 'org.freedesktop.DBus.Introspectable.Introspect'],
+                capture_output=True, text=True, timeout=5
+            )
+            if 'Adapter1' not in probe.stdout:
+                logging.info("DroneID BLE: Adapter1 not on DBus — rebinding btusb driver")
+                # Find the USB device backing hci0
+                dev_link = os.readlink('/sys/class/bluetooth/hci0/device')
+                usb_id = os.path.basename(dev_link)  # e.g. "3-14:1.0"
+                unbind = f'/sys/bus/usb/drivers/btusb/unbind'
+                bind = f'/sys/bus/usb/drivers/btusb/bind'
+                with open(unbind, 'w') as f:
+                    f.write(usb_id)
+                sleep(2)
+                with open(bind, 'w') as f:
+                    f.write(usb_id)
+                sleep(3)
+
+                # Restart bluetoothd so it picks up the fresh adapter
+                subprocess.run(['killall', 'bluetoothd'],
+                               capture_output=True, timeout=3)
+                sleep(1)
+                daemon = _sh.which('bluetoothd') or '/usr/libexec/bluetooth/bluetoothd'
+                subprocess.Popen(
+                    [daemon], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                sleep(3)
+                logging.info("DroneID BLE: btusb rebound, bluetoothd restarted")
+        except Exception as exc:
+            logging.debug("DroneID BLE: adapter init check failed: %s", exc)
+
+    async def _ble_scan_loop(self):
+        """Continuously scan for BLE Remote ID advertisements (ASTM F3411).
+
+        Runs until self._monitoring becomes False.  Uses BleakScanner in
+        detection_callback mode so each advertisement is processed immediately
+        rather than waiting for a full discover() batch.
+        """
+        try:
+            from bleak import BleakScanner
+        except ImportError:
+            logging.warning(
+                "DroneID BLE: bleak not installed — BLE Remote ID scanning disabled. "
+                "Install with: pip3 install bleak"
+            )
+            return
+
+        # Ensure the Bluetooth stack is ready before attempting to scan
+        try:
+            self._ensure_bluetooth_ready()
+        except Exception as exc:
+            logging.debug("DroneID BLE: adapter init error (non-fatal): %s", exc)
+
+        def _on_advertisement(ble_device, advertisement_data):
+            """Called by BleakScanner for every received BLE advertisement."""
+            if not self._monitoring:
+                return
+
+            # Only process advertisements that carry ASTM F3411 service data
+            service_data = advertisement_data.service_data
+            if not service_data or BLE_ASTM_UUID not in service_data:
+                return
+
+            payload = service_data[BLE_ASTM_UUID]
+
+            # Strip the 2-byte header: [app_code(1)][counter(1)] leaving the
+            # 25-byte ODID message (or message pack starting at offset 2)
+            if len(payload) < BLE_SERVICE_DATA_HEADER_LEN + 1:
+                return
+
+            odid_bytes = payload[BLE_SERVICE_DATA_HEADER_LEN:]
+
+            try:
+                device = ODIDParser.parse_message_pack(odid_bytes)
+            except Exception as exc:
+                logging.debug("DroneID BLE: parse error from %s: %s", ble_device.address, exc)
+                return
+
+            # BLE broadcasts individual messages, not packs — always key by
+            # MAC so Location/System/etc. merge with the BasicID entry.
+            device.mac_address = ble_device.address
+            device.protocol = Protocol.ASTM_BLE.value
+            device.rssi = advertisement_data.rssi if advertisement_data.rssi is not None else 0
+
+            self._ble_frame_count += 1
+            self._track_ble_device(device)
+
+        # bluetoothd / DBus may not be ready at app startup — retry a few times
+        scanner = None
+        for attempt in range(6):
+            if not self._monitoring:
+                return
+            try:
+                scanner = BleakScanner(detection_callback=_on_advertisement)
+                await scanner.start()
+                break
+            except Exception as exc:
+                if attempt < 5:
+                    delay = 2 * (attempt + 1)
+                    logging.info(
+                        "DroneID BLE: adapter not ready (attempt %d/6), "
+                        "retrying in %ds: %s", attempt + 1, delay, exc
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    self._ble_enabled = False
+                    logging.warning(
+                        "DroneID BLE: no adapter after 6 attempts — "
+                        "BLE scanning disabled: %s", exc
+                    )
+                    return
+
+        self._ble_enabled = True
+        logging.info("DroneID BLE: scanner started")
+
+        try:
+            while self._monitoring:
+                await asyncio.sleep(0.5)
+        finally:
+            if scanner is not None:
+                await scanner.stop()
+
+    # ----- Active drone queries -------------------------------------------
 
     def get_active_drones(self, max_age=180):
         """Get list of currently tracked drones with derived fields."""
@@ -943,6 +1279,8 @@ class DroneIDEngine:
             'droneid_frame_count': self._droneid_frame_count,
             'capture_errors': self._capture_errors,
             'monitor_warning': self._monitor_warning,
+            'ble_enabled': self._ble_enabled,
+            'ble_frame_count': self._ble_frame_count,
         }
 
     def cleanup_stale(self, max_age=300):

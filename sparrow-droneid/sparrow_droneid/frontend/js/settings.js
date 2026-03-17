@@ -172,11 +172,14 @@ const SettingsManager = (() => {
             </div>
             <div class="card-body">
 
-              <div class="mb-2">
-                <div class="form-check form-switch">
+              <div class="mb-2 d-flex align-items-center gap-2">
+                <div class="form-check form-switch mb-0">
                   <input class="form-check-input" type="checkbox" id="s_alert_audio" ${_checked(s.alert_audio_enabled)}>
                   <label class="form-check-label" for="s_alert_audio">Audio notifications</label>
                 </div>
+                <button class="btn btn-sm btn-outline-secondary" id="btn_audio_test" type="button">
+                  <i class="bi bi-volume-up me-1"></i>Test
+                </button>
               </div>
 
               <div class="mb-2">
@@ -467,6 +470,15 @@ const SettingsManager = (() => {
     document.getElementById('s_token')?.addEventListener('change', e => {
       const val = e.target.value.trim();
       if (val) Api.setToken(val);
+    });
+
+    // Audio test
+    document.getElementById('btn_audio_test')?.addEventListener('click', () => {
+      if (typeof AlertsManager !== 'undefined' && AlertsManager._testAudio) {
+        AlertsManager._testAudio();
+      } else {
+        Utils.toast('Audio system not available', 'warning');
+      }
     });
 
     // Slack test

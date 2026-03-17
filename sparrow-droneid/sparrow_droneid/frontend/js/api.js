@@ -258,6 +258,7 @@ const Api = (() => {
     generateCSR,
     importCert,
     deleteCert,
+    post,
     ApiError,
   };
 })();

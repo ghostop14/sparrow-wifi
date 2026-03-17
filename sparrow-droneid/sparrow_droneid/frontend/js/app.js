@@ -112,9 +112,6 @@ const App = (() => {
       }
     });
 
-    // Load interfaces
-    await _loadInterfaces();
-
     // Initial status poll
     await _pollStatus();
 
@@ -158,31 +155,6 @@ const App = (() => {
     });
   }
 
-  // ---- Interfaces ----
-  async function _loadInterfaces() {
-    try {
-      const resp = await Api.getInterfaces();
-      _interfaces = resp.interfaces || [];
-      const select = document.getElementById('ifaceSelect');
-      if (!select) return;
-
-      select.innerHTML = '<option value="">-- interface --</option>';
-      _interfaces.forEach(iface => {
-        const opt = document.createElement('option');
-        opt.value = iface.name;
-        opt.textContent = iface.name + (iface.monitor_capable ? '' : ' (no mon)');
-        if (!iface.monitor_capable) opt.disabled = true;
-        select.appendChild(opt);
-      });
-
-      // Auto-select if only one capable interface
-      const capable = _interfaces.filter(i => i.monitor_capable);
-      if (capable.length === 1) select.value = capable[0].name;
-    } catch (e) {
-      // Server may not be up yet — silently ignore
-    }
-  }
-
   // ---- Monitoring ----
   async function _toggleMonitoring() {
     const btn = document.getElementById('btnMonitor');
@@ -196,9 +168,11 @@ const App = (() => {
         _monitoring = false;
         Utils.toast('Monitoring stopped.', 'info');
       } else {
-        const iface = document.getElementById('ifaceSelect')?.value;
+        // Use interface from settings
+        const cfg = await Api.getSettings();
+        const iface = cfg.monitor_interface || '';
         if (!iface) {
-          Utils.toast('Select an interface first.', 'alert');
+          Utils.toast('Set a monitor interface in Settings first.', 'alert');
           btn.disabled = false;
           return;
         }
@@ -239,8 +213,7 @@ const App = (() => {
       const status = await Api.getStatus();
       _monitoring = status.monitoring;
       _updateMonitorUi();
-      // Fix #15: pass null for mode here; mode comes from drone poll via receiver.source
-      _updateGpsUi(status.gps_fix, null);
+      // GPS UI is updated exclusively from the drones poll (has receiver.source)
 
       // Show monitor health warning if the adapter isn't delivering frames
       if (status.monitor_warning) {

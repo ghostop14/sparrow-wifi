@@ -285,12 +285,15 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def _send_json(self, data: Any, status: int = 200) -> None:
         body = json.dumps(data, default=str).encode('utf-8')
-        self.send_response(status)
-        self.send_header('Content-Type', 'application/json; charset=utf-8')
-        self.send_header('Content-Length', str(len(body)))
-        self._send_cors_headers()
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self._send_cors_headers()
+            self.end_headers()
+            self.wfile.write(body)
+        except BrokenPipeError:
+            pass  # Client disconnected before response was sent
 
     def _send_error_json(self, http_status: int, errcode: int, errmsg: str) -> None:
         self._send_json({'errcode': errcode, 'errmsg': errmsg}, status=http_status)
@@ -304,15 +307,19 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def _send_raw(self, data: bytes, content_type: str, status: int = 200,
                   extra_headers: Dict[str, str] = None) -> None:
-        self.send_response(status)
-        self.send_header('Content-Type', content_type)
-        self.send_header('Content-Length', str(len(data)))
-        self._send_cors_headers()
-        if extra_headers:
-            for k, v in extra_headers.items():
-                self.send_header(k, v)
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(status)
+            self.send_header('Content-Type', content_type)
+            self.send_header('Content-Length', str(len(data)))
+            self.send_header('Cache-Control', 'no-cache, must-revalidate')
+            self._send_cors_headers()
+            if extra_headers:
+                for k, v in extra_headers.items():
+                    self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(data)
+        except BrokenPipeError:
+            pass
 
     # ------------------------------------------------------------------
     # Static file serving
@@ -392,9 +399,14 @@ class RequestHandler(BaseHTTPRequestHandler):
         if handler:
             try:
                 handler(self, **params)
+            except BrokenPipeError:
+                pass  # Client disconnected
             except Exception as e:
                 traceback.print_exc()
-                self._send_error_json(500, 5, f'Internal server error: {e}')
+                try:
+                    self._send_error_json(500, 5, f'Internal server error: {e}')
+                except BrokenPipeError:
+                    pass
         elif method == 'OPTIONS':
             self.send_response(204)
             self._send_cors_headers()

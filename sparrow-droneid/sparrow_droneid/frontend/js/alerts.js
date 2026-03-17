@@ -118,6 +118,17 @@ const AlertsManager = (() => {
     }
   }
 
+  // ---- Unit-aware detail formatting ----
+  function _localizeDetail(detail) {
+    if (Utils.getUnits && Utils.getUnits() === 'imperial') {
+      // Convert "X m/s" → "X mph" and "X m" → "X ft"
+      return detail
+        .replace(/(\d+\.?\d*)\s*m\/s/g, (_, v) => (parseFloat(v) * 2.23694).toFixed(1) + ' mph')
+        .replace(/(\d+\.?\d*)\s*m\b/g, (_, v) => Math.round(parseFloat(v) * 3.28084) + ' ft');
+    }
+    return detail;
+  }
+
   // ---- Render alert list ----
 
   function _renderAlertList() {
@@ -138,7 +149,7 @@ const AlertsManager = (() => {
           <i class="bi ${icon} alert-icon"></i>
           <div class="alert-content">
             <div class="alert-title">${_esc(_alertTitle(a.alert_type))}</div>
-            <div class="alert-detail">${_esc(a.detail || '')}</div>
+            <div class="alert-detail">${_esc(_localizeDetail(a.detail || ''))}</div>
             <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
               ${_esc(Utils.shortSerial(a.serial_number))}
               ${a.drone_height_agl ? ` &mdash; ${Utils.formatAlt(a.drone_height_agl)} AGL` : ''}
@@ -165,8 +176,19 @@ const AlertsManager = (() => {
 
   // ---- Poll / Update ----
 
+  let _initialLoadDone = false;
+
   function update(newAlerts) {
     if (!newAlerts || !newAlerts.length) return;
+
+    // On first load, seed _seenIds from DB history — no toasts/sounds
+    if (!_initialLoadDone) {
+      _initialLoadDone = true;
+      newAlerts.forEach(a => _seenIds.add(a.id));
+      _alerts = [...newAlerts.slice(0, 100)];
+      _renderAlertList();
+      return;
+    }
 
     // Detect new alerts (not yet seen)
     const freshAlerts = newAlerts.filter(a => !_seenIds.has(a.id));
@@ -175,7 +197,7 @@ const AlertsManager = (() => {
     _alerts = [...newAlerts.slice(0, 100)]; // cap display at 100
     newAlerts.forEach(a => _seenIds.add(a.id));
 
-    // Notify for fresh alerts
+    // Notify for fresh alerts only
     freshAlerts.forEach(a => {
       // Visual toast
       if (_visualEnabled) {
@@ -277,16 +299,21 @@ const AlertsManager = (() => {
     const hasMax = rule.params && (rule.params.max_altitude_m !== undefined || rule.params.max_speed_mps !== undefined);
     const hasTimeout = rule.params && rule.params.timeout_seconds !== undefined;
 
+    const imperial = Utils.getUnits && Utils.getUnits() === 'imperial';
     let paramHtml = '';
     if (hasMax && rule.params.max_altitude_m !== undefined) {
+      const val = imperial ? Math.round(rule.params.max_altitude_m * 3.28084) : rule.params.max_altitude_m;
+      const unit = imperial ? 'ft' : 'm';
       paramHtml = `<input type="number" class="form-control form-control-sm ms-2" style="width:80px"
-        id="rule_param_${rule.id}" value="${rule.params.max_altitude_m}" title="Max altitude (m)"> m`;
+        id="rule_param_${rule.id}" data-param="altitude" value="${val}" title="Max altitude (${unit})"> ${unit}`;
     } else if (hasMax && rule.params.max_speed_mps !== undefined) {
+      const val = imperial ? +(rule.params.max_speed_mps * 2.23694).toFixed(1) : rule.params.max_speed_mps;
+      const unit = imperial ? 'mph' : 'm/s';
       paramHtml = `<input type="number" class="form-control form-control-sm ms-2" style="width:80px"
-        id="rule_param_${rule.id}" value="${rule.params.max_speed_mps}" title="Max speed (m/s)"> m/s`;
+        id="rule_param_${rule.id}" data-param="speed" value="${val}" title="Max speed (${unit})"> ${unit}`;
     } else if (hasTimeout) {
       paramHtml = `<input type="number" class="form-control form-control-sm ms-2" style="width:80px"
-        id="rule_param_${rule.id}" value="${rule.params.timeout_seconds}" title="Timeout (s)"> s`;
+        id="rule_param_${rule.id}" data-param="timeout" value="${rule.params.timeout_seconds}" title="Timeout (s)"> s`;
     }
 
     return `
@@ -318,12 +345,17 @@ const AlertsManager = (() => {
       const newRule = { ...rule, enabled };
 
       if (paramEl) {
-        const val = parseFloat(paramEl.value);
+        let val = parseFloat(paramEl.value);
         if (!isNaN(val)) {
+          const imperial = Utils.getUnits && Utils.getUnits() === 'imperial';
           newRule.params = { ...rule.params };
-          if (rule.params.max_altitude_m !== undefined) newRule.params.max_altitude_m = val;
-          else if (rule.params.max_speed_mps !== undefined) newRule.params.max_speed_mps = val;
-          else if (rule.params.timeout_seconds !== undefined) newRule.params.timeout_seconds = val;
+          if (rule.params.max_altitude_m !== undefined) {
+            newRule.params.max_altitude_m = imperial ? val / 3.28084 : val;
+          } else if (rule.params.max_speed_mps !== undefined) {
+            newRule.params.max_speed_mps = imperial ? val / 2.23694 : val;
+          } else if (rule.params.timeout_seconds !== undefined) {
+            newRule.params.timeout_seconds = val;
+          }
         }
       }
       return newRule;

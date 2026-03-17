@@ -83,10 +83,10 @@ const MapManager = (() => {
         className: '',
         html: `<div style="
           width:16px;height:16px;
-          background:${gpsFix ? '#BFDBFE' : '#94A3B8'};
+          background:${gpsFix ? '#2563EB' : '#94A3B8'};
           border:2px solid #fff;
           border-radius:50%;
-          box-shadow:0 0 0 3px rgba(191,219,254,0.35);
+          box-shadow:0 0 0 3px rgba(37,99,235,0.4);
         "></div>`,
         iconSize: [16, 16],
         iconAnchor: [8, 8],
@@ -112,16 +112,16 @@ const MapManager = (() => {
     if (!_rangeRingsVisible || !lat || !lon) return;
 
     const radii = [250, 500, 1000]; // meters
-    const colors = ['rgba(191,219,254,0.5)', 'rgba(191,219,254,0.35)', 'rgba(191,219,254,0.2)'];
+    const colors = ['rgba(37,99,235,0.8)', 'rgba(37,99,235,0.6)', 'rgba(37,99,235,0.4)'];
     const labels = ['250 m', '500 m', '1 km'];
 
     radii.forEach((r, i) => {
       const circle = L.circle([lat, lon], {
         radius: r,
         color: colors[i],
-        weight: 1,
-        dashArray: '4 4',
-        fillOpacity: 0.03,
+        weight: 1.5,
+        dashArray: '6 4',
+        fillOpacity: 0.04,
         interactive: false,
       }).addTo(_map);
       _rangeRings.push(circle);
@@ -129,7 +129,7 @@ const MapManager = (() => {
       // Label
       const labelIcon = L.divIcon({
         className: '',
-        html: `<span style="font-size:10px;color:rgba(191,219,254,0.6);text-shadow:0 0 3px #000;">${labels[i]}</span>`,
+        html: `<span style="font-size:10px;font-weight:600;color:rgba(37,99,235,0.9);text-shadow:0 0 3px #fff, 0 0 3px #fff;">${labels[i]}</span>`,
         iconAnchor: [0, 0],
       });
       const bearing = 45; // NE label position
@@ -165,35 +165,49 @@ const MapManager = (() => {
     const state = drone.derived?.state || 'active';
     const color = state === 'active' ? '#F59E0B' : state === 'aging' ? '#78909C' : '#455A64';
     const dir = drone.direction || 0;
-    const size = 28;
+    const opacity = state === 'active' ? 1.0 : state === 'aging' ? 0.6 : 0.35;
 
-    // Arrow pointing in heading direction
-    const arrowHtml = `
-      <div style="transform:rotate(${dir}deg);position:absolute;top:0;left:0;width:${size}px;height:${size}px;display:flex;align-items:center;justify-content:center;">
-        <svg width="${size}" height="${size}" viewBox="0 0 28 28">
-          <polygon points="14,3 18,20 14,17 10,20" fill="${color}" opacity="0.85"/>
-        </svg>
-      </div>`;
+    // At-a-glance label: operator ID or serial (truncated), plus alt AGL
+    const label = drone.operator_id || Utils.shortSerial(drone.serial_number) || '';
+    const altText = (drone.drone_height_agl != null && drone.drone_height_agl !== 0)
+      ? Utils.formatAlt(drone.drone_height_agl) + ' AGL'
+      : '';
+    const labelHtml = (label || altText) ? `<div style="
+      position:absolute;top:100%;left:50%;transform:translateX(-50%);
+      white-space:nowrap;font-size:10px;font-weight:600;line-height:1.2;
+      color:#fff;text-shadow:0 0 3px #000,0 0 3px #000;text-align:center;
+      pointer-events:none;padding-top:1px;
+    ">${label}${label && altText ? '<br>' : ''}${altText}</div>` : '';
 
+    // Quadcopter SVG rotated to heading
     const html = `
-      <div style="position:relative;width:${size}px;height:${size}px;">
-        <div style="
-          position:absolute;top:50%;left:50%;
-          transform:translate(-50%,-50%);
-          width:18px;height:18px;
-          background:${color};
-          border-radius:50%;
-          border:2px solid rgba(0,0,0,0.4);
-          box-shadow:0 0 6px ${color}88;
-        "></div>
-        ${arrowHtml}
+      <div style="position:relative;width:36px;height:36px;opacity:${opacity};">
+        <div style="transform:rotate(${dir}deg);position:absolute;top:0;left:0;width:36px;height:36px;">
+          <svg viewBox="0 0 36 36" width="36" height="36">
+            <!-- Arms -->
+            <line x1="18" y1="18" x2="7"  y2="7"  stroke="${color}" stroke-width="2.2" stroke-linecap="round"/>
+            <line x1="18" y1="18" x2="29" y2="7"  stroke="${color}" stroke-width="2.2" stroke-linecap="round"/>
+            <line x1="18" y1="18" x2="7"  y2="29" stroke="${color}" stroke-width="2.2" stroke-linecap="round"/>
+            <line x1="18" y1="18" x2="29" y2="29" stroke="${color}" stroke-width="2.2" stroke-linecap="round"/>
+            <!-- Rotors -->
+            <circle cx="7"  cy="7"  r="5" fill="${color}" opacity="0.25" stroke="${color}" stroke-width="1"/>
+            <circle cx="29" cy="7"  r="5" fill="${color}" opacity="0.25" stroke="${color}" stroke-width="1"/>
+            <circle cx="7"  cy="29" r="5" fill="${color}" opacity="0.25" stroke="${color}" stroke-width="1"/>
+            <circle cx="29" cy="29" r="5" fill="${color}" opacity="0.25" stroke="${color}" stroke-width="1"/>
+            <!-- Body -->
+            <circle cx="18" cy="18" r="4.5" fill="${color}" stroke="rgba(0,0,0,0.5)" stroke-width="1"/>
+            <!-- Heading tick (front) -->
+            <line x1="18" y1="13" x2="18" y2="7" stroke="#fff" stroke-width="1.5" stroke-linecap="round" opacity="0.9"/>
+          </svg>
+        </div>
+        ${labelHtml}
       </div>`;
 
     return L.divIcon({
       className: '',
       html,
-      iconSize: [size, size],
-      iconAnchor: [size/2, size/2],
+      iconSize: [36, 36],
+      iconAnchor: [18, 18],
     });
   }
 
@@ -208,24 +222,86 @@ const MapManager = (() => {
     return L.divIcon({ className: '', html, iconSize: [14,14], iconAnchor: [7,7] });
   }
 
-  // Fix #14: replace hardcoded hex colors with CSS custom properties
+  function _popupRow(label, value) {
+    if (!value && value !== 0) return '';
+    return `<span class="lbl">${label}</span><span class="val">${value}</span>`;
+  }
+
+  function _headingStr(drone) {
+    const spd = Utils.formatSpeed(drone.speed);
+    const dir = drone.direction != null ? ` HDG ${Math.round(drone.direction)}°` : '';
+    return spd + dir;
+  }
+
+  function _vspdStr(drone) {
+    if (!drone.vertical_speed) return null;
+    const arrow = drone.vertical_speed > 0 ? '▲' : '▼';
+    // vertical_speed is m/s, formatSpeed handles unit conversion
+    return `${arrow} ${Utils.formatSpeed(Math.abs(drone.vertical_speed))}`;
+  }
+
+  function _bvlosStr(drone) {
+    if (!drone.operator_lat || !drone.operator_lon || !drone.drone_lat || !drone.drone_lon) return null;
+    const d = _haversineM(drone.operator_lat, drone.operator_lon, drone.drone_lat, drone.drone_lon);
+    const dist = Utils.formatRange(d);
+    const bvlos = d > 400 ? ' <span style="color:#EF4444;font-weight:700;">BVLOS</span>' : '';
+    return dist + bvlos;
+  }
+
+  function _haversineM(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const toRad = Math.PI / 180;
+    const dLat = (lat2 - lat1) * toRad;
+    const dLon = (lon2 - lon1) * toRad;
+    const a = Math.sin(dLat/2)**2 + Math.cos(lat1*toRad)*Math.cos(lat2*toRad)*Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
   function buildPopupContent(drone) {
     const d = drone.derived || {};
+
+    // Identity block
+    const idRows = [
+      _popupRow('Serial', drone.serial_number || '—'),
+      _popupRow('Reg ID', drone.registration_id),
+      _popupRow('Operator', drone.operator_id),
+      _popupRow('Type', drone.ua_type_name),
+    ].filter(Boolean).join('');
+
+    // Kinematics block
+    const kinRows = [
+      _popupRow('Alt AGL', Utils.formatAlt(drone.drone_height_agl)),
+      _popupRow('Alt MSL', Utils.formatAlt(drone.drone_alt_geo)),
+      _popupRow('Speed', _headingStr(drone)),
+      _popupRow('V/S', _vspdStr(drone)),
+      _popupRow('From Rx', Utils.formatBearing(d.bearing_deg, d.bearing_cardinal)
+        + (d.range_m != null ? ' @ ' + Utils.formatRange(d.range_m) : '')),
+    ].filter(Boolean).join('');
+
+    // Operator block
+    const opDist = _bvlosStr(drone);
+    const opRows = [
+      _popupRow('Pilot dist', opDist),
+    ].filter(Boolean).join('');
+
+    // Self-ID
+    const selfId = drone.self_id_text
+      ? `<div style="font-size:11px;color:var(--text-secondary);border-top:1px solid var(--border-color);padding-top:4px;margin-top:4px;">"${drone.self_id_text}"</div>`
+      : '';
+
+    // Signal line
+    const sigRow = _popupRow('Signal', `${Utils.formatRssi(drone.rssi)} · ${drone.protocol || '?'} · ${Utils.relativeTime(drone.last_seen)}`);
+
     return `
       <div class="drone-popup">
-        <div class="drone-popup-title">${Utils.shortSerial(drone.serial_number)}</div>
-        <div class="drone-popup-grid">
-          <span class="lbl">Type</span><span class="val">${drone.ua_type_name || '—'}</span>
-          <span class="lbl">Alt AGL</span><span class="val">${Utils.formatAlt(drone.drone_height_agl)}</span>
-          <span class="lbl">Speed</span><span class="val">${Utils.formatSpeed(drone.speed)}</span>
-          <span class="lbl">Bearing</span><span class="val">${Utils.formatBearing(d.bearing_deg, d.bearing_cardinal)}</span>
-          <span class="lbl">Range</span><span class="val">${Utils.formatRange(d.range_m)}</span>
-          <span class="lbl">RSSI</span><span class="val">${Utils.formatRssi(drone.rssi)}</span>
-          <span class="lbl">Last seen</span><span class="val">${Utils.relativeTime(drone.last_seen)}</span>
-        </div>
-        ${drone.self_id_text ? `<div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px;">ID: ${drone.self_id_text}</div>` : ''}
+        <div class="drone-popup-title">${drone.serial_number || drone.mac_address || '?'}</div>
+        <div class="drone-popup-grid">${idRows}</div>
+        <div class="drone-popup-grid" style="border-top:1px solid var(--border-color);padding-top:3px;margin-top:3px;">${kinRows}</div>
+        ${opRows ? `<div class="drone-popup-grid" style="border-top:1px solid var(--border-color);padding-top:3px;margin-top:3px;">${opRows}</div>` : ''}
+        ${selfId}
+        <div class="drone-popup-grid" style="border-top:1px solid var(--border-color);padding-top:3px;margin-top:3px;opacity:0.7;font-size:10px;">${sigRow}</div>
         <button class="btn-popup-detail" onclick="MapManager._popupDetailClick('${drone.serial_number}')">
-          <i class="bi bi-info-circle me-1"></i>Details
+          <i class="bi bi-info-circle me-1"></i>Full Details
         </button>
       </div>`;
   }
@@ -290,7 +366,7 @@ const MapManager = (() => {
           title: serial,
         }).addTo(_map);
 
-        marker.bindPopup(buildPopupContent(drone), { maxWidth: 260, minWidth: 200 });
+        marker.bindPopup(buildPopupContent(drone), { maxWidth: 300, minWidth: 220 });
         marker.on('click', (e) => {
           L.DomEvent.stopPropagation(e);
           selectDrone(serial, drone);
