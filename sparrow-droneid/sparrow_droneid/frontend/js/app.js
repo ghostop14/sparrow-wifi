@@ -24,6 +24,14 @@ const App = (() => {
     // Theme
     _initTheme();
 
+    // Sync unit preference from server before first render
+    try {
+      const cfg = await Api.getSettings();
+      if (cfg.settings && cfg.settings.display_units) {
+        Utils.syncUnitsFromSettings(cfg.settings.display_units);
+      }
+    } catch (_) { /* use cached value on failure */ }
+
     // Unit toggle
     _initUnitToggle();
 

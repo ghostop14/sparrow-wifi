@@ -1234,6 +1234,7 @@ _SETTINGS_WRITABLE = frozenset({
     'monitor_interface',
     'operator_name',
     'airport_geozone_radius_mi',
+    'display_units',
 })
 
 

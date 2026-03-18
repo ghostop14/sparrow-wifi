@@ -171,6 +171,15 @@ const SettingsManager = (() => {
               </div>
 
               <div class="mb-3">
+                <label class="form-label" for="s_display_units">Display Units</label>
+                <select class="form-select form-select-sm" id="s_display_units" style="max-width:150px;">
+                  <option value="metric"   ${_sel(s.display_units || 'metric', 'metric')}>Metric (m, m/s, km)</option>
+                  <option value="imperial" ${_sel(s.display_units || 'metric', 'imperial')}>Imperial (ft, mph, mi)</option>
+                </select>
+                <small class="text-muted">Units for display and Slack notifications</small>
+              </div>
+
+              <div class="mb-3">
                 <label class="form-label">Tile Cache</label>
                 <div class="form-check form-switch">
                   <input class="form-check-input" type="checkbox" id="s_tile_cache" ${_checked(s.tile_cache_enabled)}>
@@ -805,6 +814,7 @@ const SettingsManager = (() => {
     floatField('s_lon',              'gps_static_lon');
     floatField('s_alt',              'gps_static_alt');
     strField  ('s_iface',            'monitor_interface');
+    strField  ('s_display_units',    'display_units');
     boolField ('s_tile_cache',       'tile_cache_enabled');
     floatField('s_airport_radius',   'airport_geozone_radius_mi');
     boolField ('s_cot_enabled',      'cot_enabled');
@@ -840,6 +850,14 @@ const SettingsManager = (() => {
     try {
       const result = await Api.putSettings(changes);
       _settings = result.settings;
+
+      // Sync unit toggle with the saved server value
+      if (_settings.display_units) {
+        Utils.syncUnitsFromSettings(_settings.display_units);
+        const unitBtn = document.getElementById('btnUnitToggle');
+        if (unitBtn) unitBtn.textContent = _settings.display_units === 'imperial' ? 'ft' : 'm';
+        TableManager.refreshUnits();
+      }
 
       // operator_name is managed in localStorage only (per-device), not from DB
 

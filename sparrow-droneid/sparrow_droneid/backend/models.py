@@ -57,7 +57,7 @@ class UAType(IntEnum):
         _names = {
             0: "None / Not Declared",
             1: "Aeroplane",
-            2: "Helicopter (or Multirotor)",
+            2: "Helicopter / Multirotor",
             3: "Gyroplane",
             4: "Hybrid Lift (VTOL)",
             5: "Ornithopter",

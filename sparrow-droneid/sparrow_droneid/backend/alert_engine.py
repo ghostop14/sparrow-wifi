@@ -14,10 +14,33 @@ from typing import Dict, List, Optional
 
 import requests as _requests
 
-from .models import AlertEvent, AlertRule, AlertType, DEFAULT_ALERT_RULES, DroneIDDevice
+from .models import (AlertEvent, AlertRule, AlertType, DEFAULT_ALERT_RULES,
+                     DroneIDDevice, Protocol, UAType,
+                     haversine, bearing, bearing_cardinal)
 from .database import Database
 
 log = logging.getLogger(__name__)
+
+# Friendly protocol names for operator-facing messages
+_PROTOCOL_DISPLAY = {
+    Protocol.ASTM_BLE.value: "Bluetooth",
+    Protocol.ASTM_NAN.value: "WiFi NAN",
+    Protocol.ASTM_BEACON.value: "WiFi Beacon",
+    Protocol.DJI_PROPRIETARY.value: "WiFi (DJI)",
+}
+
+# Known serial-number prefixes → manufacturer
+_SERIAL_PREFIX_VENDOR = (
+    ("1581F", "DJI"),
+    ("13231", "DJI"),
+    ("10022", "DJI"),
+    ("3CZLK", "Autel"),
+    ("3CZLJ", "Autel"),
+    ("5YCZL", "Autel"),
+    ("4J3GE", "Skydio"),
+    ("4J3GD", "Skydio"),
+    ("3E4C",  "Parrot"),
+)
 
 
 class AlertEngine:
@@ -29,8 +52,9 @@ class AlertEngine:
     provided that caller is single-threaded (e.g. one background timer).
     """
 
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, gps_engine=None) -> None:
         self._db = db
+        self._gps = gps_engine
         self._lock = threading.Lock()
 
         # Set of drone keys (serial / registration / MAC) seen at least once.
@@ -302,11 +326,45 @@ class AlertEngine:
         # Enrich with device identity for Slack/script consumers
         alert_dict['operator_id'] = device.operator_id or ''
         alert_dict['registration_id'] = device.registration_id or ''
-        alert_dict['ua_type_name'] = getattr(device, 'ua_type_name', '') or ''
-        alert_dict['protocol'] = device.protocol or ''
         alert_dict['mac_address'] = device.mac_address or ''
         alert_dict['speed'] = device.speed
         alert_dict['direction'] = device.direction
+        alert_dict['rssi'] = device.rssi
+
+        # UA type display name
+        try:
+            alert_dict['ua_type_name'] = UAType(device.ua_type).display_name
+        except (ValueError, KeyError):
+            alert_dict['ua_type_name'] = ''
+
+        # Protocol — raw value for scripts, friendly name for display
+        proto_raw = device.protocol or ''
+        alert_dict['protocol'] = proto_raw
+        alert_dict['protocol_display'] = _PROTOCOL_DISPLAY.get(proto_raw, proto_raw)
+
+        # Manufacturer from protocol or serial-number prefix
+        vendor = ''
+        if proto_raw == Protocol.DJI_PROPRIETARY.value:
+            vendor = 'DJI'
+        else:
+            sn = device.serial_number or ''
+            for prefix, mfr in _SERIAL_PREFIX_VENDOR:
+                if sn.startswith(prefix):
+                    vendor = mfr
+                    break
+        alert_dict['vendor'] = vendor
+
+        # Range & bearing from receiver to drone
+        if self._gps:
+            rx_lat, rx_lon, _rx_alt = self._gps.get_receiver_position()
+            has_rx = rx_lat != 0.0 or rx_lon != 0.0
+            has_drone = device.drone_lat != 0.0 or device.drone_lon != 0.0
+            if has_rx and has_drone:
+                range_m = haversine(rx_lat, rx_lon, device.drone_lat, device.drone_lon)
+                brg = bearing(rx_lat, rx_lon, device.drone_lat, device.drone_lon)
+                alert_dict['range_m'] = round(range_m, 1)
+                alert_dict['bearing_deg'] = round(brg, 1)
+                alert_dict['bearing_cardinal'] = bearing_cardinal(brg)
 
         with self._lock:
             self._pending_alerts.append(alert_dict)
@@ -340,8 +398,43 @@ class AlertEngine:
         t = threading.Thread(target=_invoke, daemon=True, name="alert-script")
         t.start()
 
+    def _get_display_units(self) -> str:
+        """Read display_units from DB (defaults to 'metric')."""
+        return self._db.get_setting('display_units', 'metric') or 'metric'
+
+    @staticmethod
+    def _fmt_range(range_m: float, imperial: bool) -> str:
+        """Format range with appropriate units."""
+        if imperial:
+            yards = range_m * 1.09361
+            miles = range_m / 1609.34
+            if miles < 0.2:
+                return f"{yards:.0f} yd"
+            return f"{miles:.1f} mi"
+        if range_m < 1000:
+            return f"{range_m:.0f} m"
+        return f"{range_m / 1000:.1f} km"
+
+    @staticmethod
+    def _fmt_alt(meters: float, imperial: bool) -> str:
+        if imperial:
+            return f"{meters * 3.28084:.0f} ft"
+        return f"{meters:.1f} m"
+
+    @staticmethod
+    def _fmt_speed(mps: float, imperial: bool) -> str:
+        if imperial:
+            return f"{mps * 2.23694:.1f} mph"
+        return f"{mps:.1f} m/s"
+
     def _format_slack_message(self, alert_dict: dict) -> str:
-        """Build a Slack-formatted alert message."""
+        """Build a Slack-formatted alert message for operators.
+
+        Prioritises actionable info: what kind of drone, where to look
+        (range/bearing), altitude, speed — in that order.
+        """
+        imperial = self._get_display_units() == 'imperial'
+
         alert_type = alert_dict.get('alert_type', 'unknown')
         serial = alert_dict.get('serial_number', 'Unknown')
         detail = alert_dict.get('detail', '')
@@ -351,9 +444,14 @@ class AlertEngine:
         op_id = alert_dict.get('operator_id', '')
         reg_id = alert_dict.get('registration_id', '')
         ua_type = alert_dict.get('ua_type_name', '')
-        protocol = alert_dict.get('protocol', '')
+        protocol_display = alert_dict.get('protocol_display', '')
         speed = alert_dict.get('speed', 0)
         direction = alert_dict.get('direction', 0)
+        vendor = alert_dict.get('vendor', '')
+        range_m = alert_dict.get('range_m')
+        bearing_deg = alert_dict.get('bearing_deg')
+        bearing_card = alert_dict.get('bearing_cardinal', '')
+        rssi = alert_dict.get('rssi', 0)
 
         type_labels = {
             'new_drone': 'New Drone Detected',
@@ -363,24 +461,49 @@ class AlertEngine:
         }
         header = type_labels.get(alert_type, alert_type.replace('_', ' ').title())
 
-        parts = [f"*{header}*"]
+        # --- Build message ---
+        parts = [f":rotating_light: *{header}*"]
+
+        # Identity block — what is it?
+        id_parts = []
+        if vendor:
+            id_parts.append(vendor)
+        if ua_type and ua_type != "None / Not Declared":
+            id_parts.append(ua_type)
+        if id_parts:
+            parts.append(' '.join(id_parts))
+
         parts.append(f"Serial: `{serial}`")
         if op_id:
-            parts.append(f"Operator ID: `{op_id}`")
+            parts.append(f"Operator: `{op_id}`")
         if reg_id:
-            parts.append(f"Registration: `{reg_id}`")
-        if ua_type:
-            parts.append(f"Type: {ua_type}")
-        if detail:
-            parts.append(f"Detail: {detail}")
+            parts.append(f"Reg: `{reg_id}`")
+        if protocol_display:
+            parts.append(f"Protocol: {protocol_display}")
+
+        # Where to look — range/bearing from sensor
+        if range_m is not None and bearing_deg is not None:
+            range_str = self._fmt_range(range_m, imperial)
+            parts.append(f"Range: {range_str}  Bearing: {bearing_deg:.0f}° ({bearing_card})")
+
+        # Position & altitude
         if lat != 0 or lon != 0:
-            parts.append(f"Position: {lat:.6f}, {lon:.6f}")
+            parts.append(f"Pos: {lat:.6f}, {lon:.6f}")
         if agl and agl != 0:
-            parts.append(f"Alt AGL: {agl:.1f} m")
+            parts.append(f"Alt: {self._fmt_alt(agl, imperial)} AGL")
+
+        # Movement
         if speed and speed > 0:
-            parts.append(f"Speed: {speed:.1f} m/s  HDG {direction:.0f}°")
-        if protocol:
-            parts.append(f"Protocol: {protocol}")
+            parts.append(f"Speed: {self._fmt_speed(speed, imperial)}  HDG: {direction:.0f}°")
+
+        # RSSI
+        if rssi and rssi != 0:
+            parts.append(f"RSSI: {rssi} dBm")
+
+        # Detail (e.g. violation specifics) — only if it adds value
+        if detail and alert_type != AlertType.NEW_DRONE.value:
+            parts.append(f"_{detail}_")
+
         return '\n'.join(parts)
 
     def _post_slack(self, alert_dict: dict) -> None:

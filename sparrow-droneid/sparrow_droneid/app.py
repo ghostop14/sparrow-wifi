@@ -104,7 +104,7 @@ class SparrowDroneID:
         self.droneid_engine = DroneIDEngine(db, self.gps_engine)
 
         # Alert engine
-        self.alert_engine = AlertEngine(db)
+        self.alert_engine = AlertEngine(db, gps_engine=self.gps_engine)
 
         # CoT engine
         self.cot_engine = CotEngine()

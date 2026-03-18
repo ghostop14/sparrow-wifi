@@ -42,16 +42,33 @@ const Utils = (() => {
     return new Date(value).toISOString();
   }
 
-  // ---- Unit system preference ----
+  // ---- Unit system preference (server-authoritative, locally cached) ----
 
   const UNITS_KEY = 'sparrow_units';
 
+  // Local cache — initialised from localStorage for fast first paint,
+  // then overwritten by the server value once settings are fetched.
+  let _unitsCached = localStorage.getItem(UNITS_KEY) || 'metric';
+
   function getUnits() {
-    return localStorage.getItem(UNITS_KEY) || 'metric';
+    return _unitsCached;
   }
 
   function setUnits(system) {
-    localStorage.setItem(UNITS_KEY, system === 'imperial' ? 'imperial' : 'metric');
+    _unitsCached = system === 'imperial' ? 'imperial' : 'metric';
+    localStorage.setItem(UNITS_KEY, _unitsCached);
+    // Persist to server (fire-and-forget)
+    if (typeof Api !== 'undefined' && Api.putSettings) {
+      Api.putSettings({ display_units: _unitsCached }).catch(() => {});
+    }
+  }
+
+  /** Called once during init after settings are fetched from the server. */
+  function syncUnitsFromSettings(serverValue) {
+    if (serverValue === 'imperial' || serverValue === 'metric') {
+      _unitsCached = serverValue;
+      localStorage.setItem(UNITS_KEY, _unitsCached);
+    }
   }
 
   function toggleUnits() {
@@ -271,6 +288,7 @@ const Utils = (() => {
     fromLocalDatetimeInput,
     getUnits,
     setUnits,
+    syncUnitsFromSettings,
     toggleUnits,
     formatAltUnit,
     formatSpeedUnit,
