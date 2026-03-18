@@ -148,6 +148,9 @@ const TableManager = (() => {
       tr.addEventListener('click', () => {
         const serial = tr.dataset.serial;
         selectDrone(serial);
+        // Notify app (outside selectDrone to avoid circular callbacks)
+        const drone = _drones.find(d => d.serial_number === serial);
+        if (drone && _onSelect) _onSelect(serial, drone);
       });
     });
 
@@ -190,6 +193,8 @@ const TableManager = (() => {
       .replace(/"/g, '&quot;');
   }
 
+  /** Visual-only: highlight the row. Does NOT fire the _onSelect callback
+   *  to avoid a circular loop between map.js ↔ app.js ↔ table.js. */
   function selectDrone(serial) {
     const prev = document.querySelector('#droneTableBody tr.selected');
     if (prev) prev.classList.remove('selected');
@@ -202,11 +207,6 @@ const TableManager = (() => {
         row.classList.add('selected');
         row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       }
-
-      const drone = _drones.find(d => d.serial_number === serial);
-      if (drone && _onSelect) _onSelect(serial, drone);
-    } else {
-      if (_onSelect) _onSelect(null, null);
     }
   }
 
@@ -313,6 +313,7 @@ const TableManager = (() => {
 
     title.textContent = Utils.shortSerial(drone.serial_number);
     body.innerHTML = buildDetailHtml(drone, track);
+    body.scrollTop = 0;
     sidebar.classList.add('open');
 
     // Attach track button handler

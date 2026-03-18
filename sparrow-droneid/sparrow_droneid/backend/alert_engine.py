@@ -9,8 +9,9 @@ import json
 import logging
 import subprocess
 import threading
+import time
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import requests as _requests
 
@@ -70,6 +71,13 @@ class AlertEngine:
 
         # Alerts waiting to be consumed by the frontend polling endpoint.
         self._pending_alerts: List[dict] = []
+
+        # Deferred new-drone alerts: wait a few seconds for more frames to
+        # arrive so the alert has position, altitude, vendor, etc.
+        # key -> (first_seen_monotonic, latest_device)
+        self._pending_new: Dict[str, Tuple[float, DroneIDDevice]] = {}
+        _NEW_DRONE_DELAY = 4.0  # seconds
+        self._new_drone_delay = _NEW_DRONE_DELAY
 
         self._load_config()
 
@@ -169,12 +177,16 @@ class AlertEngine:
             if rtype == AlertType.NEW_DRONE.value:
                 with self._lock:
                     is_new = key not in self._known_serials
-                    self._known_serials.add(key)
-                if is_new:
-                    self._fire_alert(
-                        AlertType.NEW_DRONE.value, device,
-                        f"First detection of {key}",
-                    )
+                    if is_new:
+                        self._known_serials.add(key)
+                        # Defer: wait for more frames to fill in fields
+                        self._pending_new[key] = (time.monotonic(), device)
+                    elif key in self._pending_new:
+                        # Update with latest (merged) device data
+                        self._pending_new[key] = (self._pending_new[key][0], device)
+
+                # Flush any pending new-drone alerts whose delay has elapsed
+                self._flush_pending_new()
 
             elif rtype == AlertType.ALTITUDE_MAX.value:
                 max_alt = rule.params.get('max_altitude_m', 122.0)
@@ -275,6 +287,22 @@ class AlertEngine:
                     f"No signal for {int(age)} s (timeout {int(timeout)} s)",
                 )
 
+    def _flush_pending_new(self) -> None:
+        """Fire new-drone alerts for drones that have been pending long enough."""
+        now = time.monotonic()
+        ready: List[Tuple[str, DroneIDDevice]] = []
+        with self._lock:
+            for key in list(self._pending_new):
+                ts, device = self._pending_new[key]
+                if now - ts >= self._new_drone_delay:
+                    ready.append((key, device))
+                    del self._pending_new[key]
+        for key, device in ready:
+            self._fire_alert(
+                AlertType.NEW_DRONE.value, device,
+                f"First detection of {key}",
+            )
+
     def get_pending_alerts(self) -> List[dict]:
         """Return and clear the list of pending alert dicts.
 
@@ -326,6 +354,7 @@ class AlertEngine:
         # Enrich with device identity for Slack/script consumers
         alert_dict['operator_id'] = device.operator_id or ''
         alert_dict['registration_id'] = device.registration_id or ''
+        alert_dict['self_id_text'] = device.self_id_text or ''
         alert_dict['mac_address'] = device.mac_address or ''
         alert_dict['speed'] = device.speed
         alert_dict['direction'] = device.direction
@@ -444,6 +473,7 @@ class AlertEngine:
         op_id = alert_dict.get('operator_id', '')
         reg_id = alert_dict.get('registration_id', '')
         ua_type = alert_dict.get('ua_type_name', '')
+        self_id = alert_dict.get('self_id_text', '')
         protocol_display = alert_dict.get('protocol_display', '')
         speed = alert_dict.get('speed', 0)
         direction = alert_dict.get('direction', 0)
@@ -468,7 +498,9 @@ class AlertEngine:
         id_parts = []
         if vendor:
             id_parts.append(vendor)
-        if ua_type and ua_type != "None / Not Declared":
+        if self_id:
+            id_parts.append(self_id)
+        elif ua_type and ua_type != "None / Not Declared":
             id_parts.append(ua_type)
         if id_parts:
             parts.append(' '.join(id_parts))

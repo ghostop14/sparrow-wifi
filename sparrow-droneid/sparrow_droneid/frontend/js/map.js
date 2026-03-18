@@ -371,6 +371,8 @@ const MapManager = (() => {
         marker.on('click', (e) => {
           L.DomEvent.stopPropagation(e);
           selectDrone(serial, drone);
+          // Notify app (outside selectDrone to avoid circular callbacks)
+          if (_onDroneClick) _onDroneClick(serial);
         });
 
         let operatorMarker = null;
@@ -408,9 +410,10 @@ const MapManager = (() => {
   }
 
   // ---- Selection & track ----
+  /** Visual-only: pan to drone, open popup. Does NOT fire _onDroneClick
+   *  to avoid a circular loop between map.js ↔ app.js ↔ table.js. */
   function selectDrone(serial, drone) {
     _selectedSerial = serial;
-    if (_onDroneClick) _onDroneClick(serial);
 
     // Center map on drone
     if (drone && drone.drone_lat && drone.drone_lon) {

@@ -86,9 +86,17 @@ class ODIDParser:
             device.serial_number = id_str
         elif device.id_type == 2:  # Registration
             device.registration_id = id_str
-        else:
+        elif device.id_type == 3:  # UTM UUID
             if not device.serial_number:
                 device.serial_number = id_str
+        elif device.id_type == 4:  # Specific Session
+            if not device.serial_number:
+                device.serial_number = id_str
+        else:
+            # id_type 0 (None) — often contains model name (e.g. "DJIMavicPro"),
+            # not a true serial. Store as self_id_text for display only.
+            if id_str and not device.self_id_text:
+                device.self_id_text = id_str
 
     @staticmethod
     def parse_location(data: bytes, device: DroneIDDevice):
