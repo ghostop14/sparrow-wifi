@@ -2,12 +2,15 @@
 
 Sparrow-WiFi is a next-generation 2.4 GHz and 5 GHz WiFi and Bluetooth spectral awareness tool for Linux. It integrates WiFi scanning, Bluetooth Low Energy and Classic discovery, software-defined radio spectrum analysis (HackRF, Ubertooth), GPS tracking, and drone/rover-mounted remote operations into a single platform. Written entirely in Python 3.
 
-The project includes two applications:
+The project includes two applications and a headless agent, all exposing JSON-based REST APIs for integration with external tools and automation:
 
 | Component | Interface | Purpose |
 |-----------|-----------|---------|
 | **Sparrow-WiFi** | PyQt5 desktop GUI | WiFi/BT scanning, spectrum analysis, source tracking, wardriving |
+| **Sparrow Agent** | Headless HTTP server | Remote scanning, drone/rover deployments, third-party integration |
 | **Sparrow DroneID** | Web-based (browser) | FAA RemoteID drone detection via WiFi and Bluetooth LE |
+
+Both the Sparrow Agent and Sparrow DroneID expose REST APIs that allow other applications to query scan results, trigger scans, retrieve drone detections, and integrate wireless/drone awareness into their own workflows.
 
 ---
 
@@ -220,9 +223,19 @@ Sparrow DroneID also supports static coordinates (configured in Settings) for fi
 
 ---
 
-## Remote Agent
+## Remote Agent and API Integration
 
-The headless agent provides all scanning capabilities via a REST API:
+The Sparrow agent (`sparrowwifiagent.py`) is a headless HTTP server that exposes all of Sparrow's WiFi and Bluetooth scanning capabilities as a JSON-based REST API. This is how the Sparrow-WiFi GUI communicates with remote sensors, but the API is open for any application to use.
+
+**Use cases:**
+- Deploy on a Raspberry Pi, drone, or rover for remote/mobile scanning
+- Integrate WiFi and Bluetooth situational awareness into your own applications
+- Feed scan data into SIEM, dashboards, or alerting pipelines
+- Automate scanning with scripts (trigger scans, pull results via curl/Python/etc.)
+
+Sparrow DroneID has its own REST API as well ([API reference](sparrow-droneid/sparrow_drone_id_api.md)), providing programmatic access to drone detections, alert management, geozones, and system configuration.
+
+### Running the Agent
 
 ```bash
 sudo ./sparrowwifiagent.py
