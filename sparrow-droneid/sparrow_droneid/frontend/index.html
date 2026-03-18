@@ -292,10 +292,10 @@
         <!-- card grid rendered here by settings.js -->
       </div>
       <div class="modal-footer">
-        <div id="settingsRestartWarn" class="text-warning me-auto" style="display:none;">
-          <i class="bi bi-exclamation-triangle me-1"></i> Restart required for some changes
-        </div>
-        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <span class="text-muted small me-auto">
+          <i class="bi bi-info-circle me-1"></i>Some changes (port, HTTPS) require a restart
+        </span>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
         <button type="button" class="btn btn-primary" id="btnSaveSettings">
           <i class="bi bi-check-lg me-1"></i> Save Settings
         </button>

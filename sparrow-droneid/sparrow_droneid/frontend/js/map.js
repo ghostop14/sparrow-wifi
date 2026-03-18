@@ -390,12 +390,13 @@ const MapManager = (() => {
       }
     });
 
-    // Refresh selected drone track if still active
-    if (_selectedSerial && activeSerialsSet.has(_selectedSerial)) {
-      const drone = drones.find(d => d.serial_number === _selectedSerial);
-      if (drone) {
-        _droneMarkers[_selectedSerial]?.marker.openPopup();
-      }
+    // Keep selected drone's popup content fresh (setContent updates in-place
+    // without reopening a closed popup — don't call openPopup here or it
+    // forces the popup open every poll cycle even after the user closes it).
+    if (_selectedSerial && !activeSerialsSet.has(_selectedSerial)) {
+      // Selected drone disappeared from list — deselect
+      _selectedSerial = null;
+      if (_onDroneClick) _onDroneClick(null);
     }
   }
 

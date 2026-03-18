@@ -31,9 +31,6 @@ const SettingsManager = (() => {
         <i class="bi bi-arrow-repeat spin fs-3"></i><br>Loading settings…
       </div>`;
 
-    const restartWarn = document.getElementById('settingsRestartWarn');
-    if (restartWarn) restartWarn.style.display = 'none';
-
     try {
       [_settings, _dataStats, _interfaces, _certs] = await Promise.all([
         Api.getSettings().then(r => r.settings),
@@ -861,22 +858,20 @@ const SettingsManager = (() => {
 
       // operator_name is managed in localStorage only (per-device), not from DB
 
-      const restartWarn = document.getElementById('settingsRestartWarn');
       if (result.restart_required) {
-        if (restartWarn) restartWarn.style.display = '';
         Utils.toast('Settings saved. Restart required for some changes.', 'warning');
       } else {
-        if (restartWarn) restartWarn.style.display = 'none';
         Utils.toast('Settings saved.', 'success');
-        // Close the modal after a brief pause to let the toast appear
-        setTimeout(() => {
-          const modalEl = document.getElementById('settingsModal');
-          if (modalEl) {
-            const modal = bootstrap.Modal.getInstance(modalEl);
-            if (modal) modal.hide();
-          }
-        }, 500);
       }
+
+      // Always close the modal — the toast communicates any restart message
+      setTimeout(() => {
+        const modalEl = document.getElementById('settingsModal');
+        if (modalEl) {
+          const modal = bootstrap.Modal.getInstance(modalEl);
+          if (modal) modal.hide();
+        }
+      }, 500);
     } catch (e) {
       Utils.toast('Failed to save settings: ' + e.message, 'danger');
     } finally {

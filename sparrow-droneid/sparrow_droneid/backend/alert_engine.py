@@ -498,9 +498,7 @@ class AlertEngine:
         id_parts = []
         if vendor:
             id_parts.append(vendor)
-        if self_id:
-            id_parts.append(self_id)
-        elif ua_type and ua_type != "None / Not Declared":
+        if ua_type and ua_type != "None / Not Declared":
             id_parts.append(ua_type)
         if id_parts:
             parts.append(' '.join(id_parts))
@@ -512,6 +510,8 @@ class AlertEngine:
             parts.append(f"Reg: `{reg_id}`")
         if protocol_display:
             parts.append(f"Protocol: {protocol_display}")
+        if self_id:
+            parts.append(f"Description: _{self_id}_")
 
         # Where to look — range/bearing from sensor
         if range_m is not None and bearing_deg is not None:
