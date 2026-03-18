@@ -199,22 +199,27 @@ class ODIDParser:
 
     @classmethod
     def parse_message_pack(cls, data: bytes) -> DroneIDDevice:
-        """Parse an ODID message pack (multiple 25-byte messages)."""
+        """Parse a raw ODID message pack (no transport prefix).
+
+        Standard Message Pack layout (ODID_MessagePack_encoded):
+          Byte 0: header  (MessageType=0xF << 4 | ProtoVersion)
+          Byte 1: SingleMessageSize (25)
+          Byte 2: MsgPackSize (message count)
+          Bytes 3+: concatenated 25-byte ODID messages
+
+        If byte 0 is not a Message Pack header, treats the data as a
+        single 25-byte ODID message.
+        """
         device = DroneIDDevice()
-        if len(data) < 2:
+        if len(data) < 3:
             return device
 
-        # Message pack header: byte 0 = proto/type, byte 1 = count info
-        offset = 0
         header = data[0]
         msg_type = (header >> 4) & 0x0F
 
         if msg_type == ODID_MSG_PACK:
-            # Message pack container
-            if len(data) < 2:
-                return device
-            msg_count = data[1] & 0x0F
-            offset = 2
+            msg_count = data[2]
+            offset = 3
             for _ in range(msg_count):
                 if offset + ODID_MSG_SIZE > len(data):
                     break
@@ -222,9 +227,26 @@ class ODIDParser:
                 offset += ODID_MSG_SIZE
         else:
             # Single message
-            cls.parse_message(data[:ODID_MSG_SIZE], device)
+            if len(data) >= ODID_MSG_SIZE:
+                cls.parse_message(data[:ODID_MSG_SIZE], device)
 
         return device
+
+    @classmethod
+    def parse_wifi_beacon_payload(cls, data: bytes) -> DroneIDDevice:
+        """Parse an ASTM F3411 WiFi beacon vendor IE payload.
+
+        Per the ODID_service_info struct (ASTM F3411 / opendroneid spec):
+          Byte 0: message_counter (uint8)
+          Bytes 1+: ODID_MessagePack_encoded
+
+        The message_counter is a per-frame sequence number that MUST be
+        stripped before parsing the message pack.
+        """
+        if len(data) < 4:
+            return DroneIDDevice()
+        # Strip the 1-byte message_counter, then parse the message pack.
+        return cls.parse_message_pack(data[1:])
 
 
 # --------------- DJI Proprietary Parser -----------------------------------
@@ -414,7 +436,8 @@ class FrameExtractor:
                                 device = ODIDParser.parse_message_pack(
                                     attr_body[ssi_start:ssi_end]
                                 )
-                                if device.get_key():
+                                key = device.get_key()
+                                if key and len(key) >= 4:
                                     device.protocol = Protocol.ASTM_NAN.value
                                     return device
                             except Exception:
@@ -437,11 +460,13 @@ class FrameExtractor:
             return None
 
         for oui, oui_type, payload in FrameExtractor._scan_vendor_ies(frame, ie_offset):
-            # ASTM F3411 beacon method
+            # ASTM F3411 beacon method — payload is ODID_service_info:
+            # [message_counter(1)][ODID_MessagePack_encoded...]
             if oui == OUI_ASTM_BEACON and oui_type == ASTM_BEACON_OUI_TYPE:
                 try:
-                    device = ODIDParser.parse_message_pack(payload)
-                    if device.get_key():
+                    device = ODIDParser.parse_wifi_beacon_payload(payload)
+                    key = device.get_key()
+                    if key and len(key) >= 4:
                         device.protocol = Protocol.ASTM_BEACON.value
                         return device
                 except Exception:
@@ -451,7 +476,8 @@ class FrameExtractor:
             if oui == OUI_DJI:
                 try:
                     device = DJIParser.parse(bytes([oui_type]) + payload)
-                    if device.get_key():
+                    key = device.get_key()
+                    if key and len(key) >= 4:
                         return device
                 except Exception:
                     continue

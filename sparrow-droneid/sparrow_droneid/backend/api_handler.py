@@ -663,6 +663,15 @@ def api_drones(req: RequestHandler):
     max_age = req._qparam_int('max_age', 180)
     drones = _droneid_engine.get_active_drones(max_age=max_age)
 
+    # Enrich with vendor/manufacturer if available
+    if _alert_engine:
+        for d in drones:
+            d['vendor'] = _alert_engine.resolve_vendor(
+                serial=d.get('serial_number', ''),
+                mac=d.get('mac_address', ''),
+                protocol=d.get('protocol', ''),
+            )
+
     # Build receiver block from GPS engine
     gps = _gps_engine.to_dict() if _gps_engine else {}
     receiver = {
@@ -715,6 +724,14 @@ def api_drone_detail(req: RequestHandler, serial: str):
     if drone_dict is None:
         req._send_error_json(404, 2, f'Drone {serial!r} not found')
         return
+
+    # Enrich with vendor/manufacturer
+    if _alert_engine and drone_dict:
+        drone_dict['vendor'] = _alert_engine.resolve_vendor(
+            serial=drone_dict.get('serial_number', ''),
+            mac=drone_dict.get('mac_address', ''),
+            protocol=drone_dict.get('protocol', ''),
+        )
 
     req._send_json(req._ok({'drone': drone_dict, 'track': track}))
 
@@ -1211,6 +1228,125 @@ def api_geozones_nofly(req: RequestHandler):
 
 
 # ---------------------------------------------------------------------------
+# Vendor Codes
+# ---------------------------------------------------------------------------
+
+@router.route('GET', '/api/vendor-codes')
+def api_vendor_codes_get(req: RequestHandler):
+    """Return current vendor code tables from the database."""
+    if _db is None:
+        req._send_error_json(503, 5, 'Database not available')
+        return
+    if _alert_engine is None:
+        req._send_error_json(503, 5, 'Alert engine not available')
+        return
+    codes = _alert_engine.get_vendor_codes()
+    req._send_json(req._ok({
+        'serial_prefixes': codes['serial_prefixes'],
+        'mac_oui': codes['mac_oui'],
+        'serial_prefix_count': len(codes['serial_prefixes']),
+        'mac_oui_count': len(codes['mac_oui']),
+    }))
+
+
+@router.route('PUT', '/api/vendor-codes')
+def api_vendor_codes_put(req: RequestHandler):
+    """Replace vendor code tables in the database and reload the alert engine."""
+    if _db is None:
+        req._send_error_json(503, 5, 'Database not available')
+        return
+    if _alert_engine is None:
+        req._send_error_json(503, 5, 'Alert engine not available')
+        return
+    if req.json_data is None:
+        req._send_error_json(400, 1, 'JSON body required')
+        return
+
+    body = req.json_data
+    if 'serial_prefixes' in body:
+        sp = body['serial_prefixes']
+        if not isinstance(sp, dict):
+            req._send_error_json(400, 1, 'serial_prefixes must be an object')
+            return
+        _db.set_setting('vendor_serial_prefixes', json.dumps(sp))
+
+    if 'mac_oui' in body:
+        oui = body['mac_oui']
+        if not isinstance(oui, dict):
+            req._send_error_json(400, 1, 'mac_oui must be an object')
+            return
+        _db.set_setting('vendor_mac_oui', json.dumps(oui))
+
+    _alert_engine.reload_vendor_codes()
+    codes = _alert_engine.get_vendor_codes()
+    req._send_json(req._ok({
+        'serial_prefixes': codes['serial_prefixes'],
+        'mac_oui': codes['mac_oui'],
+        'serial_prefix_count': len(codes['serial_prefixes']),
+        'mac_oui_count': len(codes['mac_oui']),
+    }))
+
+
+@router.route('POST', '/api/vendor-codes/update')
+def api_vendor_codes_update(req: RequestHandler):
+    """Fetch vendor codes from a remote URL, merge with existing, persist, and reload.
+
+    The remote document must be JSON matching the vendor_codes.json schema:
+      { "serial_prefixes": {...}, "mac_oui": {...} }
+
+    Existing entries are preserved; remote entries take precedence on conflicts.
+    If no URL is configured (vendor_codes_url is empty) the request is rejected.
+    """
+    if _db is None:
+        req._send_error_json(503, 5, 'Database not available')
+        return
+    if _alert_engine is None:
+        req._send_error_json(503, 5, 'Alert engine not available')
+        return
+
+    url = _db.get_setting('vendor_codes_url', '').strip()
+    if not url:
+        req._send_error_json(400, 2, 'vendor_codes_url is not configured')
+        return
+
+    try:
+        resp = _requests.get(url, timeout=15)
+        resp.raise_for_status()
+        remote = resp.json()
+    except Exception as e:
+        req._send_error_json(502, 3, f'Failed to fetch vendor codes from remote: {e}')
+        return
+
+    if not isinstance(remote, dict):
+        req._send_error_json(502, 3, 'Remote vendor codes document is not a JSON object')
+        return
+
+    # Merge: load existing, overlay remote entries (remote wins on conflict).
+    current = _alert_engine.get_vendor_codes()
+
+    merged_serial = dict(current['serial_prefixes'])
+    remote_serial = remote.get('serial_prefixes', {})
+    if isinstance(remote_serial, dict):
+        merged_serial.update(remote_serial)
+
+    merged_oui = dict(current['mac_oui'])
+    remote_oui = remote.get('mac_oui', {})
+    if isinstance(remote_oui, dict):
+        merged_oui.update(remote_oui)
+
+    _db.set_setting('vendor_serial_prefixes', json.dumps(merged_serial))
+    _db.set_setting('vendor_mac_oui', json.dumps(merged_oui))
+    _alert_engine.reload_vendor_codes()
+
+    req._send_json(req._ok({
+        'serial_prefix_count': len(merged_serial),
+        'mac_oui_count': len(merged_oui),
+        'added_serial_prefixes': len(merged_serial) - len(current['serial_prefixes']),
+        'added_mac_ouis': len(merged_oui) - len(current['mac_oui']),
+    }))
+
+
+# ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
 
@@ -1235,6 +1371,7 @@ _SETTINGS_WRITABLE = frozenset({
     'operator_name',
     'airport_geozone_radius_mi',
     'display_units',
+    'vendor_codes_url',
 })
 
 

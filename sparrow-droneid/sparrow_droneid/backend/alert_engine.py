@@ -30,18 +30,6 @@ _PROTOCOL_DISPLAY = {
     Protocol.DJI_PROPRIETARY.value: "WiFi (DJI)",
 }
 
-# Known serial-number prefixes → manufacturer
-_SERIAL_PREFIX_VENDOR = (
-    ("1581F", "DJI"),
-    ("13231", "DJI"),
-    ("10022", "DJI"),
-    ("3CZLK", "Autel"),
-    ("3CZLJ", "Autel"),
-    ("5YCZL", "Autel"),
-    ("4J3GE", "Skydio"),
-    ("4J3GD", "Skydio"),
-    ("3E4C",  "Parrot"),
-)
 
 
 class AlertEngine:
@@ -80,6 +68,7 @@ class AlertEngine:
         self._new_drone_delay = _NEW_DRONE_DELAY
 
         self._load_config()
+        self._load_vendor_codes()
 
     # ------------------------------------------------------------------ #
     # Configuration                                                        #
@@ -116,6 +105,63 @@ class AlertEngine:
     def reload_config(self) -> None:
         """Re-read alert configuration from the database."""
         self._load_config()
+
+    # ------------------------------------------------------------------ #
+    # Vendor codes                                                         #
+    # ------------------------------------------------------------------ #
+
+    def _load_vendor_codes(self) -> None:
+        """Read vendor identification tables from DB settings.
+
+        _serial_prefixes: dict mapping 4-char CTA-2063-A prefix → manufacturer name.
+        _mac_oui:         dict mapping uppercase OUI string (e.g. '60:60:1F') → name.
+        """
+        raw_serial = self._db.get_setting('vendor_serial_prefixes', '')
+        if raw_serial:
+            try:
+                self._serial_prefixes: Dict[str, str] = json.loads(raw_serial)
+            except (json.JSONDecodeError, TypeError):
+                log.warning("alert_engine: corrupt vendor_serial_prefixes in DB; using empty table")
+                self._serial_prefixes = {}
+        else:
+            self._serial_prefixes = {}
+
+        raw_oui = self._db.get_setting('vendor_mac_oui', '')
+        if raw_oui:
+            try:
+                self._mac_oui: Dict[str, str] = json.loads(raw_oui)
+            except (json.JSONDecodeError, TypeError):
+                log.warning("alert_engine: corrupt vendor_mac_oui in DB; using empty table")
+                self._mac_oui = {}
+        else:
+            self._mac_oui = {}
+
+    def reload_vendor_codes(self) -> None:
+        """Re-read vendor codes from the database (called after updates via API)."""
+        self._load_vendor_codes()
+        log.info("alert_engine: vendor codes reloaded (%d serial prefixes, %d OUIs)",
+                 len(self._serial_prefixes), len(self._mac_oui))
+
+    def get_vendor_codes(self) -> dict:
+        """Return current vendor code tables as a plain dict."""
+        return {
+            'serial_prefixes': dict(self._serial_prefixes),
+            'mac_oui': dict(self._mac_oui),
+        }
+
+    def resolve_vendor(self, serial: str = '', mac: str = '',
+                       protocol: str = '') -> str:
+        """Look up manufacturer from protocol, serial prefix, or MAC OUI."""
+        if protocol == Protocol.DJI_PROPRIETARY.value:
+            return 'DJI'
+        for prefix, mfr in self._serial_prefixes.items():
+            if serial.startswith(prefix):
+                return mfr
+        mac_upper = mac.upper()
+        for oui, mfr in self._mac_oui.items():
+            if mac_upper.startswith(oui.upper()):
+                return mfr
+        return ''
 
     def get_config(self) -> dict:
         """Return current alert configuration as a plain dict."""
@@ -371,17 +417,12 @@ class AlertEngine:
         alert_dict['protocol'] = proto_raw
         alert_dict['protocol_display'] = _PROTOCOL_DISPLAY.get(proto_raw, proto_raw)
 
-        # Manufacturer from protocol or serial-number prefix
-        vendor = ''
-        if proto_raw == Protocol.DJI_PROPRIETARY.value:
-            vendor = 'DJI'
-        else:
-            sn = device.serial_number or ''
-            for prefix, mfr in _SERIAL_PREFIX_VENDOR:
-                if sn.startswith(prefix):
-                    vendor = mfr
-                    break
-        alert_dict['vendor'] = vendor
+        # Manufacturer from protocol, serial-number prefix, or MAC OUI.
+        alert_dict['vendor'] = self.resolve_vendor(
+            serial=device.serial_number or '',
+            mac=device.mac_address or '',
+            protocol=proto_raw,
+        )
 
         # Range & bearing from receiver to drone
         if self._gps:

@@ -240,13 +240,15 @@ const TableManager = (() => {
       html += `<div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;font-style:italic;">"${drone.self_id_text}"</div>`;
     }
 
-    html += section('Identity', [
-      ['ID Type', drone.id_type_name || '—'],
-      ['UA Type', drone.ua_type_name || '—'],
-      ['Protocol', drone.protocol || '—'],
-      ['MAC', drone.mac_address || '—'],
-      ['Operator ID', drone.operator_id || '—'],
-    ]);
+    const idRows = [];
+    if (drone.vendor) idRows.push(['Manufacturer', drone.vendor]);
+    idRows.push(['UA Type', drone.ua_type_name || '—']);
+    idRows.push(['ID Type', drone.id_type_name || '—']);
+    const protoNames = { astm_nan: 'WiFi NAN', astm_beacon: 'WiFi Beacon', astm_ble: 'Bluetooth', dji_proprietary: 'WiFi (DJI)' };
+    idRows.push(['Protocol', protoNames[drone.protocol] || drone.protocol || '—']);
+    idRows.push(['MAC', drone.mac_address || '—']);
+    if (drone.operator_id) idRows.push(['Operator ID', drone.operator_id]);
+    html += section('Identity', idRows);
 
     html += section('Position', [
       ['Lat', drone.drone_lat != null ? drone.drone_lat.toFixed(6) : '—'],

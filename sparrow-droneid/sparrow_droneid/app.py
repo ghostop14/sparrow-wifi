@@ -6,13 +6,18 @@ FAA Remote ID drone detection via Wi-Fi NAN/Beacon frame capture.
 Serves a browser-based UI and REST API.
 """
 import argparse
+import json
+import logging
 import os
 import signal
 import ssl
 import sys
 import threading
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from time import sleep
+
+log = logging.getLogger(__name__)
 
 # Add project root to path so relative imports work from any CWD
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -81,7 +86,44 @@ class SparrowDroneID:
             except (ValueError, TypeError):
                 pass
 
+        self._seed_vendor_codes()
+
         return self.db
+
+    def _seed_vendor_codes(self):
+        """Seed vendor codes from the bundled JSON file if not already in DB.
+
+        Only writes to DB when the settings keys are absent or empty — existing
+        user-customised data is never overwritten.
+        """
+        existing_serial = self.db.get_setting('vendor_serial_prefixes', '')
+        existing_oui    = self.db.get_setting('vendor_mac_oui', '')
+
+        if existing_serial and existing_oui:
+            return  # Already seeded — nothing to do.
+
+        seed_path = Path(__file__).parent.parent / 'data' / 'vendor_codes.json'
+        if not seed_path.is_file():
+            log.warning("app: vendor_codes.json not found at %s — skipping seed", seed_path)
+            return
+
+        try:
+            with open(seed_path, 'r', encoding='utf-8') as fh:
+                data = json.load(fh)
+        except Exception as e:
+            log.warning("app: failed to read vendor_codes.json: %s", e)
+            return
+
+        if not existing_serial:
+            serial_prefixes = data.get('serial_prefixes', {})
+            self.db.set_setting('vendor_serial_prefixes', json.dumps(serial_prefixes))
+            log.info("app: seeded %d vendor serial prefixes from vendor_codes.json",
+                     len(serial_prefixes))
+
+        if not existing_oui:
+            mac_oui = data.get('mac_oui', {})
+            self.db.set_setting('vendor_mac_oui', json.dumps(mac_oui))
+            log.info("app: seeded %d vendor MAC OUIs from vendor_codes.json", len(mac_oui))
 
     def _init_engines(self):
         """Create and configure all engines."""

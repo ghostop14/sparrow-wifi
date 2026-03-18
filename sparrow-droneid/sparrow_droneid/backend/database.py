@@ -163,6 +163,9 @@ class Database:
             'monitor_interface': '',
             'operator_name': '',
             'airport_geozone_radius_mi': '2.0',
+            'vendor_serial_prefixes': '',
+            'vendor_mac_oui': '',
+            'vendor_codes_url': '',
         }
         for key, value in defaults.items():
             cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))

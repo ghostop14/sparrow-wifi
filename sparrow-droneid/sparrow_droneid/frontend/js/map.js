@@ -262,11 +262,11 @@ const MapManager = (() => {
     const d = drone.derived || {};
 
     // Identity block
+    const typeStr = [drone.vendor, drone.ua_type_name].filter(Boolean).join(' ');
     const idRows = [
       _popupRow('Serial', drone.serial_number || '—'),
-      _popupRow('Reg ID', drone.registration_id),
+      _popupRow('Type', typeStr || '—'),
       _popupRow('Operator', drone.operator_id),
-      _popupRow('Type', drone.ua_type_name),
     ].filter(Boolean).join('');
 
     // Kinematics block

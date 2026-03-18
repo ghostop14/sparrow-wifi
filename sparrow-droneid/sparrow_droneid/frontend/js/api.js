@@ -209,6 +209,20 @@ const Api = (() => {
     return put('/settings', changes);
   }
 
+  // ---- Vendor Codes ----
+
+  function getVendorCodes() {
+    return get('/vendor-codes');
+  }
+
+  function putVendorCodes(data) {
+    return put('/vendor-codes', data);
+  }
+
+  function updateVendorCodes() {
+    return post('/vendor-codes/update');
+  }
+
   // ---- Certificates ----
 
   function getCerts() {
@@ -274,6 +288,9 @@ const Api = (() => {
     purgeTiles,
     getSettings,
     putSettings,
+    getVendorCodes,
+    putVendorCodes,
+    updateVendorCodes,
     getCerts,
     getCertDetail,
     generateSelfSigned,
