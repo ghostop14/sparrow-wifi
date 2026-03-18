@@ -63,8 +63,11 @@ A standalone web-based drone detection and tracking system that decodes FAA-mand
 ```bash
 cd sparrow-droneid
 pip3 install -r sparrow_droneid/requirements.txt
-sudo apt install tcpdump iw bluez
+sudo apt install tcpdump bluez
+
+# Either launch method works:
 sudo python3 sparrow_droneid/app.py
+sudo python3 -m sparrow_droneid
 ```
 
 The web UI is available at `http://localhost:8097`. Configure the monitor interface and GPS in Settings, then click Start.
@@ -130,13 +133,14 @@ cd sparrow-droneid
 pip3 install -r sparrow_droneid/requirements.txt
 
 # System tools for WiFi monitor mode capture
-sudo apt install tcpdump iw iproute2
+sudo apt install tcpdump
 
 # System tools for BLE RemoteID capture (optional but recommended)
 sudo apt install bluez
 
-# Run
+# Run (either method)
 sudo python3 sparrow_droneid/app.py
+# or: sudo python3 -m sparrow_droneid
 ```
 
 Open `http://localhost:8097` in a browser.
@@ -145,11 +149,13 @@ Open `http://localhost:8097` in a browser.
 
 ## WiFi Adapter Notes
 
-For basic scanning (`iw scan`), most WiFi adapters work. For monitor mode (required by Sparrow DroneID and the Falcon plugin), adapter and driver support varies:
+Most WiFi adapters work for basic scanning. Sparrow-WiFi supports multiple interface enumeration backends (`iw`, `iwconfig`, `nmcli`) so it works on systems that may not have `iw` installed (e.g., RHEL/Fedora with NetworkManager only).
+
+For monitor mode (required by Sparrow DroneID and the Falcon plugin), adapter and driver support varies:
 
 - **Recommended:** Alfa AWUS036ACH (rtl8812au), Alfa AWUS036AXML (mt7921au)
 - **Works well:** Intel AX200/AX210 (iwlwifi) for scanning; monitor mode frame delivery varies by firmware version
-- **Test first:** Run `iw phy <phy> info | grep monitor` to verify monitor mode support
+- **Test first:** `iw phy <phy> info | grep monitor` or `iwconfig <iface>` to verify capabilities
 
 For Sparrow DroneID specifically, the adapter must deliver raw 802.11 frames in monitor mode. Some Intel adapters report monitor mode as supported but silently drop frames at the firmware level. The application detects this and warns you.
 
@@ -320,6 +326,7 @@ sparrow-wifi/
   sparrow-droneid/           # DroneID web application
     sparrow_droneid/
       app.py                 # Entry point (sudo python3 app.py)
+      __main__.py            # Allows: sudo python3 -m sparrow_droneid
       requirements.txt       # Python dependencies (DroneID)
       backend/               # API server, capture engine, database
       frontend/              # HTML, JS, CSS (served by backend)
