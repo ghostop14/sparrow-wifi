@@ -8,6 +8,7 @@ Manages monitor-mode WiFi capture via tcpdump and decodes:
 """
 import asyncio
 import logging
+import math
 import struct
 import subprocess
 import shutil
@@ -252,93 +253,127 @@ class ODIDParser:
 # --------------- DJI Proprietary Parser -----------------------------------
 
 class DJIParser:
-    """Parser for DJI proprietary DroneID in vendor-specific beacon IEs."""
+    """Parser for DJI proprietary DroneID in vendor-specific beacon IEs.
+
+    Based on the Kismet Kaitai struct definition (dot11_ie_221_dji_droneid.ksy)
+    reverse-engineered by Freek van Tienen and Jan Dumon.
+
+    Vendor IE layout (after OUI 26:37:12):
+      Header (4 bytes):
+        Byte 0: vendor_type
+        Byte 1: unk1
+        Byte 2: unk2
+        Byte 3: subcommand (0x10 = flight telemetry, 0x11 = flight purpose)
+
+      flight_reg_info record (subcommand 0x10, starts at byte 4):
+        +0    : version (u1)
+        +1-2  : seq (u16le)
+        +3-4  : state_info (u16le) — validity flags
+        +5-20 : serialnumber (16 bytes, ASCII null-terminated)
+        +21-24: raw_lon (s32le, radians × 1e5 → degrees: raw / 174533.0)
+        +25-28: raw_lat (s32le, radians × 1e5 → degrees: raw / 174533.0)
+        +29-30: altitude (s16le, metres MSL)
+        +31-32: height (s16le, metres AGL)
+        +33-34: v_north (s16le, cm/s)
+        +35-36: v_east (s16le, cm/s)
+        +37-38: v_up (s16le, cm/s)
+        +39-40: raw_pitch (s16le)
+        +41-42: raw_roll (s16le)
+        +43-44: raw_yaw (s16le, centidegrees)
+        +45-48: raw_home_lon (s32le)
+        +49-52: raw_home_lat (s32le)
+        +53   : product_type (u1)
+        +54   : uuid_len (u1)
+        +55-74: uuid (20 bytes)
+    """
+
+    # DJI coordinate scaling: raw value in radians × 1e5 → degrees
+    _COORD_SCALE = 174533.0
 
     @staticmethod
     def parse(data: bytes) -> DroneIDDevice:
-        """Parse DJI proprietary DroneID payload (after OUI bytes).
-
-        Expected layout (after OUI — data[0] is the first post-OUI byte):
-          Byte  0    : vendor subtype (0x10 = flight info; others ignored)
-          Byte  1    : version
-          Bytes 2-3  : sequence number (uint16 LE)
-          Bytes 4-11 : serial number (8 bytes ASCII, null-terminated)
-          Bytes 12-15: drone latitude  (int32 LE, degrees × 1e-7)
-          Bytes 16-19: drone longitude (int32 LE, degrees × 1e-7)
-          Bytes 20-21: geodetic altitude (int16 LE, metres)
-          Bytes 22-23: height AGL       (int16 LE, metres)
-          Bytes 24-25: speed_x (int16 LE, cm/s → × 0.01 m/s)
-          Bytes 26-27: speed_y (int16 LE, cm/s → × 0.01 m/s)
-          Bytes 28-31: home / operator latitude  (int32 LE, degrees × 1e-7)
-          Bytes 32-35: home / operator longitude (int32 LE, degrees × 1e-7)
-
-        DJI firmware versions differ; fields beyond byte 20 are best-effort.
-        """
+        """Parse DJI proprietary DroneID payload."""
         device = DroneIDDevice(protocol=Protocol.DJI_PROPRIETARY.value)
         device.ua_type = UAType.HELICOPTER.value  # DJI drones are multirotor
 
         if len(data) < 4:
             return device
 
-        vendor_subtype = data[0]
-        if vendor_subtype != 0x10:
-            return device  # Not flight info; other subtypes not yet decoded
+        subcommand = data[3]
+        if subcommand != 0x10:
+            return device  # Only flight telemetry decoded; 0x11 = purpose (TODO)
 
-        # Serial number: bytes 4-11 (8 bytes ASCII)
+        # Record starts at byte 4
+        rec = data[4:]
+        if len(rec) < 29:
+            return device
+
+        # State validity flags
+        state_info = struct.unpack_from('<H', rec, 3)[0] if len(rec) >= 5 else 0
+
+        # Serial number: 16 bytes ASCII at offset 5
         try:
-            if len(data) >= 12:
-                sn_bytes = data[4:12]
-                sn = sn_bytes.split(b'\x00', 1)[0].decode('ascii', errors='replace').strip()
-                if sn:
-                    device.serial_number = 'DJI-' + sn
+            sn_bytes = rec[5:21]
+            sn = sn_bytes.split(b'\x00', 1)[0].decode('ascii', errors='replace').strip()
+            if sn and (state_info & 0x01):  # state_serial_valid
+                device.serial_number = sn
+            elif sn:
+                device.serial_number = sn
         except (IndexError, UnicodeDecodeError):
             pass
 
-        # Position
+        # Position: lon at +21, lat at +25 (radians × 1e5)
         try:
-            if len(data) >= 20:
-                lat_raw, lon_raw = struct.unpack_from('<ii', data, 12)
-                if lat_raw != 0 or lon_raw != 0:
-                    device.drone_lat = round(lat_raw / 1e7, 7)
-                    device.drone_lon = round(lon_raw / 1e7, 7)
+            if len(rec) >= 29:
+                raw_lon = struct.unpack_from('<i', rec, 21)[0]
+                raw_lat = struct.unpack_from('<i', rec, 25)[0]
+                gps_valid = state_info & 0x40
+                if (raw_lat != 0 or raw_lon != 0) or gps_valid:
+                    device.drone_lon = round(raw_lon / DJIParser._COORD_SCALE, 7)
+                    device.drone_lat = round(raw_lat / DJIParser._COORD_SCALE, 7)
         except struct.error:
             pass
 
-        # Altitudes
+        # Altitude MSL at +29, height AGL at +31
         try:
-            if len(data) >= 22:
-                alt = struct.unpack_from('<h', data, 20)[0]
-                device.drone_alt_geo = float(alt)
+            if len(rec) >= 31 and (state_info & 0x80):
+                device.drone_alt_geo = float(struct.unpack_from('<h', rec, 29)[0])
+            if len(rec) >= 33 and (state_info & 0x100):
+                device.drone_height_agl = float(struct.unpack_from('<h', rec, 31)[0])
         except struct.error:
             pass
 
+        # Velocity: v_north at +33, v_east at +35, v_up at +37 (cm/s)
         try:
-            if len(data) >= 24:
-                hagl = struct.unpack_from('<h', data, 22)[0]
-                device.drone_height_agl = float(hagl)
+            if len(rec) >= 39 and (state_info & 0x200):
+                v_north = struct.unpack_from('<h', rec, 33)[0] * 0.01
+                v_east = struct.unpack_from('<h', rec, 35)[0] * 0.01
+                device.speed = round((v_north ** 2 + v_east ** 2) ** 0.5, 2)
+                if v_north != 0 or v_east != 0:
+                    device.direction = round(
+                        (math.degrees(math.atan2(v_east, v_north)) + 360) % 360, 1
+                    )
+            if len(rec) >= 39 and (state_info & 0x400):
+                device.vertical_speed = struct.unpack_from('<h', rec, 37)[0] * 0.01
         except struct.error:
             pass
 
-        # Speed (cm/s components → m/s magnitude)
+        # Yaw → heading (centidegrees at +43)
         try:
-            if len(data) >= 28:
-                import math
-                vx, vy = struct.unpack_from('<hh', data, 24)
-                speed_x = vx * 0.01
-                speed_y = vy * 0.01
-                device.speed = round((speed_x ** 2 + speed_y ** 2) ** 0.5, 2)
-                if vx != 0 or vy != 0:
-                    device.direction = round((math.degrees(math.atan2(vx, vy)) + 360) % 360, 1)
+            if len(rec) >= 45 and (state_info & 0x800):
+                raw_yaw = struct.unpack_from('<h', rec, 43)[0]
+                device.direction = round((raw_yaw / 100.0 + 360) % 360, 1)
         except struct.error:
             pass
 
-        # Home / operator position
+        # Home / operator position: lon at +45, lat at +49
         try:
-            if len(data) >= 36:
-                home_lat, home_lon = struct.unpack_from('<ii', data, 28)
-                if home_lat != 0 or home_lon != 0:
-                    device.operator_lat = round(home_lat / 1e7, 7)
-                    device.operator_lon = round(home_lon / 1e7, 7)
+            if len(rec) >= 53:
+                raw_home_lon = struct.unpack_from('<i', rec, 45)[0]
+                raw_home_lat = struct.unpack_from('<i', rec, 49)[0]
+                if raw_home_lat != 0 or raw_home_lon != 0:
+                    device.operator_lon = round(raw_home_lon / DJIParser._COORD_SCALE, 7)
+                    device.operator_lat = round(raw_home_lat / DJIParser._COORD_SCALE, 7)
         except struct.error:
             pass
 
