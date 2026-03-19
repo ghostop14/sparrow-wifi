@@ -212,6 +212,46 @@ const MapManager = (() => {
     });
   }
 
+  function makeWifiDroneIcon(drone) {
+    const state = drone.derived?.state || 'active';
+    const opacity = state === 'active' ? 1.0 : state === 'aging' ? 0.6 : 0.35;
+    const label = Utils.shortSerial(drone.mac_address) || '';
+    const ssidText = drone.self_id_text ? drone.self_id_text.replace(/\[.*\]$/, '').trim() : '';
+    const labelHtml = (label || ssidText) ? `<div style="
+      position:absolute;top:100%;left:50%;transform:translateX(-50%);
+      white-space:nowrap;font-size:10px;font-weight:600;line-height:1.2;
+      color:#fff;text-shadow:0 0 3px #000,0 0 3px #000;text-align:center;
+      pointer-events:none;padding-top:1px;
+    ">${ssidText || label}</div>` : '';
+
+    const html = `
+      <div style="position:relative;width:36px;height:36px;opacity:${opacity};">
+        <div style="
+          width:36px;height:36px;
+          background:#16a34a;
+          border-radius:50%;
+          border:2px solid rgba(255,255,255,0.8);
+          box-shadow:0 0 6px rgba(22,163,74,0.6);
+          display:flex;align-items:center;justify-content:center;
+        ">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="white" viewBox="0 0 16 16">
+            <path d="M15.384 6.115a.485.485 0 0 0-.047-.736A12.44 12.44 0 0 0 8 3C5.259 3 2.723 3.882.663 5.379a.485.485 0 0 0-.048.736.518.518 0 0 0 .668.05A11.45 11.45 0 0 1 8 4c2.507 0 4.827.802 6.716 2.166.205.148.49.13.668-.051z"/>
+            <path d="M13.229 8.271a.482.482 0 0 0-.063-.745A9.455 9.455 0 0 0 8 6c-1.905 0-3.68.56-5.166 1.526a.48.48 0 0 0-.063.745.525.525 0 0 0 .652.065A8.46 8.46 0 0 1 8 7a8.46 8.46 0 0 1 4.576 1.336c.206.132.48.108.653-.065z"/>
+            <path d="M10.793 11.0a.438.438 0 0 0-.093-.652A6.466 6.466 0 0 0 8 9.5a6.466 6.466 0 0 0-2.7.848.438.438 0 0 0-.092.652.52.52 0 0 0 .65.123A5.47 5.47 0 0 1 8 10.5c.955 0 1.851.25 2.142.473a.52.52 0 0 0 .651-.123z"/>
+            <circle cx="8" cy="13.5" r="1"/>
+          </svg>
+        </div>
+        ${labelHtml}
+      </div>`;
+
+    return L.divIcon({
+      className: '',
+      html,
+      iconSize: [36, 36],
+      iconAnchor: [18, 18],
+    });
+  }
+
   function makeOperatorIcon() {
     const html = `<div style="
       width:14px;height:14px;
@@ -340,7 +380,8 @@ const MapManager = (() => {
         // Update existing
         const entry = _droneMarkers[serial];
         entry.marker.setLatLng(latLng);
-        entry.marker.setIcon(makeDroneIcon(drone));
+        const icon = drone.protocol === 'wifi_ssid' ? makeWifiDroneIcon(drone) : makeDroneIcon(drone);
+        entry.marker.setIcon(icon);
         entry.marker.getPopup()?.setContent(buildPopupContent(drone));
 
         // Operator
@@ -361,8 +402,9 @@ const MapManager = (() => {
         }
       } else {
         // Create new
+        const newIcon = drone.protocol === 'wifi_ssid' ? makeWifiDroneIcon(drone) : makeDroneIcon(drone);
         const marker = L.marker(latLng, {
-          icon: makeDroneIcon(drone),
+          icon: newIcon,
           zIndexOffset: 200,
           title: serial,
         }).addTo(_map);

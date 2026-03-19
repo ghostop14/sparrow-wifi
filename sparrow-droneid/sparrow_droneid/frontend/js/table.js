@@ -244,7 +244,7 @@ const TableManager = (() => {
     if (drone.vendor) idRows.push(['Manufacturer', drone.vendor]);
     idRows.push(['UA Type', drone.ua_type_name || '—']);
     idRows.push(['ID Type', drone.id_type_name || '—']);
-    const protoNames = { astm_nan: 'WiFi NAN', astm_beacon: 'WiFi Beacon', astm_ble: 'Bluetooth', dji_proprietary: 'WiFi (DJI)' };
+    const protoNames = { astm_nan: 'WiFi NAN', astm_beacon: 'WiFi Beacon', astm_ble: 'Bluetooth', dji_proprietary: 'WiFi (DJI)', wifi_ssid: 'WiFi SSID' };
     idRows.push(['Protocol', protoNames[drone.protocol] || drone.protocol || '—']);
     idRows.push(['MAC', drone.mac_address || '—']);
     if (drone.operator_id) idRows.push(['Operator ID', drone.operator_id]);

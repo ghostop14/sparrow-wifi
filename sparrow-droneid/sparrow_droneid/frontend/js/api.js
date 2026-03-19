@@ -223,6 +223,20 @@ const Api = (() => {
     return post('/vendor-codes/update');
   }
 
+  // ---- WiFi SSID Detection ----
+
+  function getWifiSsidPatterns() {
+    return get('/wifi-ssid/patterns');
+  }
+
+  function putWifiSsidPatterns(patterns) {
+    return put('/wifi-ssid/patterns', { patterns });
+  }
+
+  function getWifiSsidStatus() {
+    return get('/wifi-ssid/status');
+  }
+
   // ---- Certificates ----
 
   function getCerts() {
@@ -291,6 +305,9 @@ const Api = (() => {
     getVendorCodes,
     putVendorCodes,
     updateVendorCodes,
+    getWifiSsidPatterns,
+    putWifiSsidPatterns,
+    getWifiSsidStatus,
     getCerts,
     getCertDetail,
     generateSelfSigned,

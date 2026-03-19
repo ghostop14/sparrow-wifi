@@ -9,6 +9,7 @@ const SettingsManager = (() => {
   let _interfaces = [];
   let _certs = [];
   let _vendorCodes = null;
+  let _wifiSsidPatterns = [];
 
   // ---- Public: called from app.js init ----
   function init() {
@@ -33,12 +34,13 @@ const SettingsManager = (() => {
       </div>`;
 
     try {
-      [_settings, _dataStats, _interfaces, _certs, _vendorCodes] = await Promise.all([
+      [_settings, _dataStats, _interfaces, _certs, _vendorCodes, _wifiSsidPatterns] = await Promise.all([
         Api.getSettings().then(r => r.settings),
         Api.getDataStats().catch(() => null),
         Api.getInterfaces().then(r => r.interfaces || []).catch(() => []),
         Api.getCerts().then(r => r.certs || []).catch(() => []),
         Api.getVendorCodes().catch(() => null),
+        Api.getWifiSsidPatterns().then(r => r.patterns || []).catch(() => []),
       ]);
 
       // GPS error check
@@ -47,7 +49,7 @@ const SettingsManager = (() => {
         gpsError = await Api.getGps().then(r => r.gps_error || null).catch(() => null);
       }
 
-      container.innerHTML = _buildHtml(_settings, _dataStats, _interfaces, _certs, gpsError, _vendorCodes);
+      container.innerHTML = _buildHtml(_settings, _dataStats, _interfaces, _certs, gpsError, _vendorCodes, _wifiSsidPatterns);
       _attachListeners();
 
     } catch (e) {
@@ -68,7 +70,7 @@ const SettingsManager = (() => {
   function _checked(val) { return val ? 'checked' : ''; }
   function _sel(a, b)    { return a === b ? 'selected' : ''; }
 
-  function _buildHtml(s, stats, ifaces, certs, gpsError, vendorCodes) {
+  function _buildHtml(s, stats, ifaces, certs, gpsError, vendorCodes, wifiSsidPatterns) {
     return `
       <div class="row g-3">
 
@@ -425,6 +427,71 @@ const SettingsManager = (() => {
             </div>
           </div>
 
+          <!-- WiFi SSID Detection -->
+          <div class="card settings-card mb-3">
+            <div class="card-header">
+              <i class="bi bi-wifi me-2"></i>WiFi SSID Detection
+            </div>
+            <div class="card-body">
+
+              <div class="mb-3">
+                <label class="form-label">Enable</label>
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="s_wifi_ssid_enabled" ${_checked(s.wifi_ssid_enabled)}>
+                  <label class="form-check-label" for="s_wifi_ssid_enabled">Poll sparrow-wifi agent for drone SSIDs</label>
+                </div>
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label" for="s_wifi_ssid_agent_url">Agent URL</label>
+                <input type="text" class="form-control form-control-sm" id="s_wifi_ssid_agent_url"
+                  value="${_esc(s.wifi_ssid_agent_url || 'http://127.0.0.1:8020')}" placeholder="http://127.0.0.1:8020">
+                <small class="text-muted">sparrow-wifi agent base URL (no trailing slash)</small>
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label" for="s_wifi_ssid_poll_interval">Poll Interval</label>
+                <div class="d-flex align-items-center gap-2">
+                  <input type="number" class="form-control form-control-sm" id="s_wifi_ssid_poll_interval"
+                    value="${s.wifi_ssid_poll_interval || 20}" min="5" max="300" style="max-width:80px;">
+                  <span class="text-secondary small">seconds</span>
+                </div>
+              </div>
+
+              <hr class="my-2">
+
+              <div class="mb-2 d-flex align-items-center justify-content-between">
+                <label class="form-label mb-0">SSID Patterns</label>
+                <button class="btn btn-sm btn-outline-secondary" id="btn_ssid_add_pattern">
+                  <i class="bi bi-plus-lg me-1"></i>Add
+                </button>
+              </div>
+
+              <!-- Inline add form (hidden by default) -->
+              <div id="ssid_add_form" class="mb-2 p-2 border rounded" style="display:none;background:var(--bg-surface,#1e2130);">
+                <div class="mb-2">
+                  <label class="form-label form-label-sm mb-1">Pattern (regex)</label>
+                  <input type="text" class="form-control form-control-sm" id="ssid_new_pattern" placeholder="^PHANTOM">
+                  <div id="ssid_pattern_error" class="text-danger small mt-1" style="display:none;"></div>
+                </div>
+                <div class="mb-2">
+                  <label class="form-label form-label-sm mb-1">Label</label>
+                  <input type="text" class="form-control form-control-sm" id="ssid_new_label" placeholder="DJI Phantom">
+                </div>
+                <div class="d-flex gap-2">
+                  <button class="btn btn-sm btn-primary" id="btn_ssid_save_pattern">Save</button>
+                  <button class="btn btn-sm btn-outline-secondary" id="btn_ssid_cancel_pattern">Cancel</button>
+                </div>
+              </div>
+
+              <!-- Pattern list -->
+              <div id="ssid_pattern_list" style="max-height:220px;overflow-y:auto;">
+                ${_buildSsidPatternList(wifiSsidPatterns || [])}
+              </div>
+
+            </div>
+          </div>
+
           <!-- Vendor Codes -->
           <div class="card settings-card mb-3">
             <div class="card-header">
@@ -462,6 +529,21 @@ const SettingsManager = (() => {
         </div><!-- /col-2 -->
       </div><!-- /row -->
     `;
+  }
+
+  function _buildSsidPatternList(patterns) {
+    if (!patterns || patterns.length === 0) {
+      return '<p class="text-secondary small mb-0">No patterns configured.</p>';
+    }
+    const rows = patterns.map((p, i) => `
+      <div class="d-flex align-items-center gap-2 py-1 border-bottom ssid-pattern-row" data-index="${i}">
+        <code class="flex-grow-1 small text-truncate" style="max-width:160px;" title="${_esc(p.pattern)}">${_esc(p.pattern)}</code>
+        <span class="text-secondary small text-truncate" style="max-width:120px;">${_esc(p.label || '')}</span>
+        <button class="btn btn-xs btn-outline-danger btn-ssid-del-pattern ms-auto flex-shrink-0" data-index="${i}" type="button">
+          <i class="bi bi-x-lg"></i>
+        </button>
+      </div>`).join('');
+    return rows;
   }
 
   function _buildCertTable(certs, activeName) {
@@ -611,6 +693,62 @@ const SettingsManager = (() => {
     document.getElementById('btnGenCSR')?.addEventListener('click', () => _showCertForm('csr'));
     document.getElementById('btnImportCert')?.addEventListener('click', () => _showCertForm('import'));
 
+    // WiFi SSID pattern management
+    document.getElementById('btn_ssid_add_pattern')?.addEventListener('click', () => {
+      const form = document.getElementById('ssid_add_form');
+      if (form) {
+        form.style.display = form.style.display === 'none' ? '' : 'none';
+        if (form.style.display !== 'none') {
+          document.getElementById('ssid_new_pattern')?.focus();
+        }
+      }
+    });
+
+    document.getElementById('btn_ssid_cancel_pattern')?.addEventListener('click', () => {
+      const form = document.getElementById('ssid_add_form');
+      if (form) form.style.display = 'none';
+      const errEl = document.getElementById('ssid_pattern_error');
+      if (errEl) errEl.style.display = 'none';
+    });
+
+    document.getElementById('btn_ssid_save_pattern')?.addEventListener('click', async () => {
+      const patternInput = document.getElementById('ssid_new_pattern');
+      const labelInput   = document.getElementById('ssid_new_label');
+      const errEl        = document.getElementById('ssid_pattern_error');
+      const pattern = patternInput?.value.trim() || '';
+      const label   = labelInput?.value.trim() || '';
+
+      if (!pattern) {
+        if (errEl) { errEl.textContent = 'Pattern is required'; errEl.style.display = ''; }
+        return;
+      }
+
+      // Validate regex client-side before sending
+      try { new RegExp(pattern); } catch (e) {
+        if (errEl) { errEl.textContent = `Invalid regex: ${e.message}`; errEl.style.display = ''; }
+        return;
+      }
+      if (errEl) errEl.style.display = 'none';
+
+      const newPatterns = [..._wifiSsidPatterns, { pattern, label }];
+      try {
+        const result = await Api.putWifiSsidPatterns(newPatterns);
+        _wifiSsidPatterns = result.patterns || newPatterns;
+        const listEl = document.getElementById('ssid_pattern_list');
+        if (listEl) listEl.innerHTML = _buildSsidPatternList(_wifiSsidPatterns);
+        _reattachSsidDeleteListeners();
+        const form = document.getElementById('ssid_add_form');
+        if (form) form.style.display = 'none';
+        if (patternInput) patternInput.value = '';
+        if (labelInput)   labelInput.value   = '';
+        Utils.toast('Pattern added', 'success');
+      } catch (e) {
+        Utils.toast('Failed to save pattern: ' + e.message, 'danger');
+      }
+    });
+
+    _reattachSsidDeleteListeners();
+
     // Vendor codes update
     document.getElementById('btn_vendor_update')?.addEventListener('click', async () => {
       const btn    = document.getElementById('btn_vendor_update');
@@ -639,6 +777,27 @@ const SettingsManager = (() => {
         btn.disabled = false;
         btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Update Vendor Codes';
       }
+    });
+  }
+
+  // ---- WiFi SSID pattern delete ----
+  function _reattachSsidDeleteListeners() {
+    document.querySelectorAll('.btn-ssid-del-pattern').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const idx = parseInt(btn.dataset.index, 10);
+        if (isNaN(idx) || idx < 0 || idx >= _wifiSsidPatterns.length) return;
+        const newPatterns = _wifiSsidPatterns.filter((_, i) => i !== idx);
+        try {
+          const result = await Api.putWifiSsidPatterns(newPatterns);
+          _wifiSsidPatterns = result.patterns || newPatterns;
+          const listEl = document.getElementById('ssid_pattern_list');
+          if (listEl) listEl.innerHTML = _buildSsidPatternList(_wifiSsidPatterns);
+          _reattachSsidDeleteListeners();
+          Utils.toast('Pattern removed', 'success');
+        } catch (e) {
+          Utils.toast('Failed to remove pattern: ' + e.message, 'danger');
+        }
+      });
     });
   }
 
@@ -890,6 +1049,9 @@ const SettingsManager = (() => {
     boolField ('s_alert_slack',      'alert_slack_enabled');
     strField  ('s_slack_webhook',    'alert_slack_webhook_url');
     strField  ('s_slack_name',       'alert_slack_display_name');
+    boolField ('s_wifi_ssid_enabled',       'wifi_ssid_enabled');
+    strField  ('s_wifi_ssid_agent_url',     'wifi_ssid_agent_url');
+    intField  ('s_wifi_ssid_poll_interval', 'wifi_ssid_poll_interval');
 
     // Slack guard: can't enable notifications without a webhook URL
     if (changes.alert_slack_enabled && !changes.alert_slack_webhook_url) {

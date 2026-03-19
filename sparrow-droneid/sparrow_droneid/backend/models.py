@@ -80,6 +80,7 @@ class Protocol(str, Enum):
     ASTM_BEACON = "astm_beacon"
     ASTM_BLE = "astm_ble"
     DJI_PROPRIETARY = "dji_proprietary"
+    WIFI_SSID = "wifi_ssid"
 
 
 class AltitudeClass(str, Enum):

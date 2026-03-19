@@ -28,6 +28,7 @@ _PROTOCOL_DISPLAY = {
     Protocol.ASTM_NAN.value: "WiFi NAN",
     Protocol.ASTM_BEACON.value: "WiFi Beacon",
     Protocol.DJI_PROPRIETARY.value: "WiFi (DJI)",
+    Protocol.WIFI_SSID.value: "WiFi SSID",
 }
 
 

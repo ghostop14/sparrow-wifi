@@ -28,6 +28,7 @@ from backend.gps_engine import GPSEngine
 from backend.alert_engine import AlertEngine
 from backend.cot_engine import CotEngine
 from backend.cert_manager import CertManager
+from backend.wifi_ssid_scanner import WifiSsidScanner
 from backend.api_handler import (
     MultithreadHTTPServer, RequestHandler, set_engines,
 )
@@ -57,6 +58,7 @@ class SparrowDroneID:
         self.alert_engine = None
         self.cot_engine = None
         self.cert_manager = None
+        self.wifi_ssid_scanner = None
 
     def _check_prerequisites(self):
         """Check root, tcpdump, iw. Exit on failure."""
@@ -87,6 +89,7 @@ class SparrowDroneID:
                 pass
 
         self._seed_vendor_codes()
+        self._seed_ssid_patterns()
 
         return self.db
 
@@ -124,6 +127,33 @@ class SparrowDroneID:
             mac_oui = data.get('mac_oui', {})
             self.db.set_setting('vendor_mac_oui', json.dumps(mac_oui))
             log.info("app: seeded %d vendor MAC OUIs from vendor_codes.json", len(mac_oui))
+
+    def _seed_ssid_patterns(self):
+        """Seed SSID drone patterns from the bundled JSON file if not already in DB.
+
+        Only writes to DB when the setting key is absent or empty — existing
+        user-customised data is never overwritten.
+        """
+        existing = self.db.get_setting('wifi_ssid_patterns', '')
+        if existing:
+            return  # Already seeded
+
+        seed_path = Path(__file__).parent.parent / 'data' / 'drone_ssid_patterns.json'
+        if not seed_path.is_file():
+            log.warning("app: drone_ssid_patterns.json not found at %s — skipping seed", seed_path)
+            return
+
+        try:
+            with open(seed_path, 'r', encoding='utf-8') as fh:
+                data = json.load(fh)
+        except Exception as e:
+            log.warning("app: failed to read drone_ssid_patterns.json: %s", e)
+            return
+
+        patterns = data.get('patterns', [])
+        self.db.set_setting('wifi_ssid_patterns', json.dumps(patterns))
+        log.info("app: seeded %d SSID drone patterns from drone_ssid_patterns.json",
+                 len(patterns))
 
     def _init_engines(self):
         """Create and configure all engines."""
@@ -165,6 +195,20 @@ class SparrowDroneID:
                 self.cot_engine.send_event(device)
 
         self.droneid_engine.on_detection = on_detection
+
+        # WiFi SSID scanner — shares the same on_detection callback
+        self.wifi_ssid_scanner = WifiSsidScanner(
+            db=db,
+            gps_engine=self.gps_engine,
+            on_detection=on_detection,
+        )
+        wifi_enabled = db.get_setting('wifi_ssid_enabled', 'false').lower() == 'true'
+        if wifi_enabled:
+            self.wifi_ssid_scanner.configure(
+                enabled=True,
+                agent_url=db.get_setting('wifi_ssid_agent_url', 'http://127.0.0.1:8020'),
+                poll_interval=int(db.get_setting('wifi_ssid_poll_interval', '20')),
+            )
 
     def _setup_signal_handlers(self):
         """Graceful shutdown on Ctrl+C / SIGTERM."""
@@ -250,6 +294,7 @@ class SparrowDroneID:
             data_dir=self.data_dir,
             html_dir=self.html_dir,
             cert_manager=self.cert_manager,
+            wifi_ssid_scanner=self.wifi_ssid_scanner,
         )
 
         # Bind address
@@ -311,6 +356,8 @@ class SparrowDroneID:
 
         self.gps_engine.stop()
         self.cot_engine.stop()
+        if self.wifi_ssid_scanner:
+            self.wifi_ssid_scanner.stop()
         self._httpd.server_close()
 
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

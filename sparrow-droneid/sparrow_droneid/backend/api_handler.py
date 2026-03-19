@@ -29,6 +29,7 @@ from .cot_engine import CotEngine
 from .database import Database
 from .export import generate_kml
 from .cert_manager import CertManager
+from .wifi_ssid_scanner import WifiSsidScanner
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +44,7 @@ _db: Optional[Database] = None
 _data_dir: Optional[str] = None
 _html_dir: Optional[str] = None
 _cert_manager: Optional[CertManager] = None
+_wifi_ssid_scanner: Optional[WifiSsidScanner] = None
 
 # Startup timestamp for uptime calculation
 _start_time: datetime = datetime.now(timezone.utc)
@@ -54,10 +56,11 @@ _tile_session.headers.update({'User-Agent': 'SparrowDroneID/1.0'})
 
 def set_engines(droneid: DroneIDEngine, gps: GPSEngine, alert: AlertEngine,
                 cot: CotEngine, db: Database, data_dir: str, html_dir: str,
-                cert_manager: CertManager = None) -> None:
+                cert_manager: CertManager = None,
+                wifi_ssid_scanner: WifiSsidScanner = None) -> None:
     """Called by app.py at startup to wire engine references into this module."""
     global _droneid_engine, _gps_engine, _alert_engine, _cot_engine
-    global _db, _data_dir, _html_dir, _cert_manager
+    global _db, _data_dir, _html_dir, _cert_manager, _wifi_ssid_scanner
     _droneid_engine = droneid
     _gps_engine = gps
     _alert_engine = alert
@@ -66,6 +69,7 @@ def set_engines(droneid: DroneIDEngine, gps: GPSEngine, alert: AlertEngine,
     _data_dir = data_dir
     _html_dir = html_dir
     _cert_manager = cert_manager
+    _wifi_ssid_scanner = wifi_ssid_scanner
 
 
 # ---------------------------------------------------------------------------
@@ -1347,6 +1351,79 @@ def api_vendor_codes_update(req: RequestHandler):
 
 
 # ---------------------------------------------------------------------------
+# WiFi SSID Detection
+# ---------------------------------------------------------------------------
+
+@router.route('GET', '/api/wifi-ssid/patterns')
+def api_wifi_ssid_patterns_get(req: RequestHandler):
+    """Return current SSID drone detection patterns."""
+    if _db is None:
+        req._send_error_json(503, 5, 'Database not available')
+        return
+    if _wifi_ssid_scanner is None:
+        req._send_error_json(503, 5, 'WiFi SSID scanner not available')
+        return
+    patterns = _wifi_ssid_scanner.get_patterns()
+    req._send_json(req._ok({'patterns': patterns, 'count': len(patterns)}))
+
+
+@router.route('PUT', '/api/wifi-ssid/patterns')
+def api_wifi_ssid_patterns_put(req: RequestHandler):
+    """Replace the SSID drone detection patterns list.
+
+    Body: { "patterns": [ { "pattern": "<regex>", "label": "<label>" }, ... ] }
+
+    Each regex is validated with re.compile — invalid patterns are rejected.
+    """
+    if _db is None:
+        req._send_error_json(503, 5, 'Database not available')
+        return
+    if _wifi_ssid_scanner is None:
+        req._send_error_json(503, 5, 'WiFi SSID scanner not available')
+        return
+    if req.json_data is None:
+        req._send_error_json(400, 1, 'JSON body required')
+        return
+
+    patterns = req.json_data.get('patterns')
+    if not isinstance(patterns, list):
+        req._send_error_json(400, 1, 'patterns must be an array')
+        return
+
+    validated = []
+    for i, item in enumerate(patterns):
+        if not isinstance(item, dict):
+            req._send_error_json(400, 1, f'patterns[{i}] must be an object')
+            return
+        pattern_str = item.get('pattern', '')
+        label = item.get('label', '')
+        if not pattern_str:
+            req._send_error_json(400, 1, f'patterns[{i}].pattern is required')
+            return
+        try:
+            import re as _re
+            _re.compile(pattern_str)
+        except _re.error as exc:
+            req._send_error_json(400, 1, f'patterns[{i}].pattern is invalid regex: {exc}')
+            return
+        validated.append({'pattern': pattern_str, 'label': label})
+
+    _db.set_setting('wifi_ssid_patterns', json.dumps(validated))
+    _wifi_ssid_scanner.reload_patterns()
+
+    req._send_json(req._ok({'patterns': validated, 'count': len(validated)}))
+
+
+@router.route('GET', '/api/wifi-ssid/status')
+def api_wifi_ssid_status_get(req: RequestHandler):
+    """Return WiFi SSID scanner status."""
+    if _wifi_ssid_scanner is None:
+        req._send_error_json(503, 5, 'WiFi SSID scanner not available')
+        return
+    req._send_json(req._ok(_wifi_ssid_scanner.get_status()))
+
+
+# ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
 
@@ -1372,6 +1449,7 @@ _SETTINGS_WRITABLE = frozenset({
     'airport_geozone_radius_mi',
     'display_units',
     'vendor_codes_url',
+    'wifi_ssid_enabled', 'wifi_ssid_agent_url', 'wifi_ssid_poll_interval',
 })
 
 
@@ -1429,6 +1507,15 @@ def api_settings_put(req: RequestHandler):
                 enabled=_db.get_setting('cot_enabled', 'false').lower() == 'true',
                 address=_db.get_setting('cot_address', '239.2.3.1'),
                 port=int(_db.get_setting('cot_port', '6969')),
+            )
+
+    # Apply WiFi SSID scanner settings live if any related key changed.
+    if any(k in data for k in ('wifi_ssid_enabled', 'wifi_ssid_agent_url', 'wifi_ssid_poll_interval')):
+        if _wifi_ssid_scanner:
+            _wifi_ssid_scanner.configure(
+                enabled=_db.get_setting('wifi_ssid_enabled', 'false').lower() == 'true',
+                agent_url=_db.get_setting('wifi_ssid_agent_url', 'http://127.0.0.1:8020'),
+                poll_interval=int(_db.get_setting('wifi_ssid_poll_interval', '20')),
             )
 
     # Re-read and return the updated settings

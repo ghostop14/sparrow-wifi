@@ -166,6 +166,10 @@ class Database:
             'vendor_serial_prefixes': '',
             'vendor_mac_oui': '',
             'vendor_codes_url': '',
+            'wifi_ssid_enabled': 'false',
+            'wifi_ssid_agent_url': 'http://127.0.0.1:8020',
+            'wifi_ssid_poll_interval': '20',
+            'wifi_ssid_patterns': '',   # seeded from drone_ssid_patterns.json on first startup
         }
         for key, value in defaults.items():
             cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))

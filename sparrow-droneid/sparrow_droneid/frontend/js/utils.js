@@ -214,6 +214,7 @@ const Utils = (() => {
       case 'astm_nan':       return '<span class="badge bg-info text-dark">NAN</span>';
       case 'astm_beacon':    return '<span class="badge bg-primary">Beacon</span>';
       case 'dji_proprietary':return '<span class="badge bg-warning text-dark">DJI</span>';
+      case 'wifi_ssid':      return '<span class="badge bg-success">WiFi SSID</span>';
       default: return `<span class="badge bg-secondary">${protocol || '?'}</span>`;
     }
   }
