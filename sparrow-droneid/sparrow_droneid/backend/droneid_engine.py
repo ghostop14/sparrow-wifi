@@ -93,9 +93,15 @@ class ODIDParser:
         elif device.id_type == 4:  # Specific Session
             if not device.serial_number:
                 device.serial_number = id_str
-        # id_type 0 (None) — often contains model name or arbitrary text;
-        # not reliable as an identifier. Ignore it — vendor is identified
-        # from protocol and serial-number prefix instead.
+        else:
+            # id_type 0 (None) — can be a legitimate serial (reference
+            # implementations use it) or a model name like "DJIMavicPro".
+            # Accept as serial only if it looks like a CTA-2063-A format
+            # (>= 4 chars) and we don't already have one. Short strings
+            # and model names are filtered by the 4-char key length guard
+            # in the extraction layer.
+            if id_str and len(id_str) >= 4 and not device.serial_number:
+                device.serial_number = id_str
 
     @staticmethod
     def parse_location(data: bytes, device: DroneIDDevice):
@@ -452,23 +458,29 @@ class FrameExtractor:
             # Service Descriptor Extension (0x0E) may contain ODID data
             if attr_id in (0x03, 0x0E):
                 attr_body = frame[attr_body_start:attr_body_start + attr_len]
-                # SDF header layout (NAN Spec §Table 82):
+                # SDA header layout (NAN Spec §Table 82):
                 #   Bytes 0-5  : Service ID hash (6 bytes)
                 #   Byte  6    : Instance ID
                 #   Byte  7    : Requester Instance ID
                 #   Byte  8    : Service Control bitmap
-                #     bit 1 = Service-specific info present
-                #   Byte  9    : Service-specific info length (present when bit 1 set)
-                #   Bytes 10.. : Service-specific info = ODID message pack
-                if len(attr_body) >= 10:
-                    svc_ctrl = attr_body[8]
-                    if svc_ctrl & 0x02:  # Service-specific info present
-                        ssi_len = attr_body[9]
-                        ssi_start = 10
-                        ssi_end = ssi_start + ssi_len
-                        if ssi_end <= len(attr_body) and ssi_len >= 2:
+                #   Byte  9    : Service Info length
+                #   Bytes 10.. : Service Info = ODID_service_info
+                #                (message_counter(1) + MessagePack)
+                #
+                # Note: the OpenDroneID reference implementation sets
+                # svc_ctrl to 0x10 (Publish) without setting bit 1
+                # (SSI present), but includes the service info anyway.
+                # We skip the bit check and always try to parse if
+                # there's data after the fixed SDA header.
+                if len(attr_body) > 10:
+                    ssi_len = attr_body[9]
+                    ssi_start = 10
+                    ssi_end = ssi_start + ssi_len
+                    if ssi_end <= len(attr_body) and ssi_len >= 2:
                             try:
-                                device = ODIDParser.parse_message_pack(
+                                # Service info uses ODID_service_info format:
+                                # [message_counter(1)][ODID_MessagePack...]
+                                device = ODIDParser.parse_wifi_beacon_payload(
                                     attr_body[ssi_start:ssi_end]
                                 )
                                 key = device.get_key()
