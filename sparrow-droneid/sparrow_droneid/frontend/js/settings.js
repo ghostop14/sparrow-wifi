@@ -450,6 +450,13 @@ const SettingsManager = (() => {
               </div>
 
               <div class="mb-3">
+                <label class="form-label" for="s_wifi_ssid_agent_iface">Agent Interface</label>
+                <input type="text" class="form-control form-control-sm" id="s_wifi_ssid_agent_iface"
+                  value="${_esc(s.wifi_ssid_agent_interface || '')}" placeholder="(auto-detect)" style="max-width:150px;">
+                <small class="text-muted">WiFi interface on the agent (e.g. wlan0); blank = auto</small>
+              </div>
+
+              <div class="mb-3">
                 <label class="form-label" for="s_wifi_ssid_poll_interval">Poll Interval</label>
                 <div class="d-flex align-items-center gap-2">
                   <input type="number" class="form-control form-control-sm" id="s_wifi_ssid_poll_interval"
@@ -1051,6 +1058,7 @@ const SettingsManager = (() => {
     strField  ('s_slack_name',       'alert_slack_display_name');
     boolField ('s_wifi_ssid_enabled',       'wifi_ssid_enabled');
     strField  ('s_wifi_ssid_agent_url',     'wifi_ssid_agent_url');
+    strField  ('s_wifi_ssid_agent_iface',   'wifi_ssid_agent_interface');
     intField  ('s_wifi_ssid_poll_interval', 'wifi_ssid_poll_interval');
 
     // Slack guard: can't enable notifications without a webhook URL

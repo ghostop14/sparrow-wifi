@@ -24,8 +24,11 @@ log = logging.getLogger(__name__)
 _session: _requests.Session = _requests.Session()
 _session.headers.update({'User-Agent': 'SparrowDroneID-WifiScanner/1.0'})
 
-# How long to wait for interface discovery and scan requests
-_HTTP_TIMEOUT = 8
+# How long to wait for HTTP requests.
+# Interface discovery is quick; network scans can take 10-15 seconds
+# as the agent may trigger a live channel sweep.
+_HTTP_TIMEOUT_DISCOVERY = 8
+_HTTP_TIMEOUT_SCAN = 20
 
 
 class WifiSsidScanner:
@@ -48,6 +51,7 @@ class WifiSsidScanner:
         self._config_lock = threading.Lock()
         self._enabled = False
         self._agent_url = 'http://127.0.0.1:8020'
+        self._agent_interface = ''  # empty = auto-discover
         self._poll_interval = 20
 
         # Compiled patterns: list of (compiled_re, label)
@@ -63,6 +67,7 @@ class WifiSsidScanner:
         # Diagnostics (written by poll loop, read by status endpoint)
         self._last_poll_time: Optional[float] = None
         self._last_poll_ok: bool = False
+        self._last_data_time: Optional[float] = None  # last time we got actual network data
         self._match_count: int = 0
 
         # Cached interface name discovered from the agent
@@ -73,12 +78,15 @@ class WifiSsidScanner:
     # ------------------------------------------------------------------ #
 
     def configure(self, enabled: bool, agent_url: str,
-                  poll_interval: int) -> None:
+                  poll_interval: int, agent_interface: str = '') -> None:
         """Configure and start/stop the scanner.
 
         When called with enabled=True the poll thread starts (or restarts if
         already running with different settings).  When called with
         enabled=False the thread is stopped.
+
+        agent_interface: specific WiFi interface on the agent to scan.
+            Empty string = auto-discover the first interface.
         """
         was_running = self._enabled and self._thread is not None and self._thread.is_alive()
 
@@ -86,10 +94,12 @@ class WifiSsidScanner:
             changed = (
                 self._enabled != enabled
                 or self._agent_url != agent_url
+                or self._agent_interface != agent_interface
                 or self._poll_interval != poll_interval
             )
             self._enabled = enabled
             self._agent_url = agent_url.rstrip('/')
+            self._agent_interface = agent_interface.strip()
             self._poll_interval = max(5, int(poll_interval))
 
         if not changed and was_running and enabled:
@@ -178,11 +188,20 @@ class WifiSsidScanner:
         with self._config_lock:
             enabled = self._enabled
             agent_url = self._agent_url
+            agent_interface = self._agent_interface
             poll_interval = self._poll_interval
             pattern_count = len(self._patterns)
+        # Stale = connected but no actual data in 4× poll intervals
+        stale_threshold = poll_interval * 4
+        now = time.time()
+        data_age = (now - self._last_data_time) if self._last_data_time else None
+        stale = data_age is not None and data_age > stale_threshold
+
         return {
             'enabled': enabled,
             'agent_url': agent_url,
+            'agent_interface': agent_interface or '(auto)',
+            'active_interface': self._cached_interface or '',
             'poll_interval': poll_interval,
             'pattern_count': pattern_count,
             'last_poll_time': (
@@ -190,6 +209,8 @@ class WifiSsidScanner:
                 if self._last_poll_time is not None else None
             ),
             'last_poll_ok': self._last_poll_ok,
+            'last_data_age_s': round(data_age, 1) if data_age is not None else None,
+            'stale': stale,
             'session_match_count': self._match_count,
             'running': self._thread is not None and self._thread.is_alive(),
         }
@@ -228,6 +249,8 @@ class WifiSsidScanner:
             return
 
         self._last_poll_ok = True
+        if len(networks) > 0:
+            self._last_data_time = time.time()
 
         for net in networks:
             ssid = net.get('ssid', '') or ''
@@ -263,8 +286,13 @@ class WifiSsidScanner:
 
     def _poll_agent(self, agent_url: str) -> Optional[List[dict]]:
         """HTTP GET to sparrow-wifi agent.  Returns a list of network dicts or None on error."""
-        # Discover interface name (cached across polls)
-        if self._cached_interface is None:
+        # Use configured interface if set, otherwise auto-discover
+        with self._config_lock:
+            configured_iface = self._agent_interface
+
+        if configured_iface:
+            self._cached_interface = configured_iface
+        elif self._cached_interface is None:
             self._cached_interface = self._discover_interface(agent_url)
             if self._cached_interface is None:
                 log.warning("wifi_ssid_scanner: could not discover interface from %s", agent_url)
@@ -273,7 +301,7 @@ class WifiSsidScanner:
         iface = self._cached_interface
         url = f"{agent_url}/wireless/networks/{iface}"
         try:
-            resp = _session.get(url, timeout=_HTTP_TIMEOUT)
+            resp = _session.get(url, timeout=_HTTP_TIMEOUT_SCAN)
             resp.raise_for_status()
             data = resp.json()
         except _requests.exceptions.ConnectionError:
@@ -282,16 +310,24 @@ class WifiSsidScanner:
             self._cached_interface = None
             return None
         except _requests.exceptions.Timeout:
-            log.warning("wifi_ssid_scanner: timeout polling %s", url)
-            return None
+            # Scan timeout is transient (agent busy, interface slow) — don't
+            # flag as a connectivity error. Just skip this cycle.
+            log.debug("wifi_ssid_scanner: scan timeout on %s, will retry next cycle", url)
+            return []  # empty, not None — keeps last_poll_ok = True
         except Exception as exc:
             log.warning("wifi_ssid_scanner: error polling %s: %s", url, exc)
             self._cached_interface = None
             return None
 
-        if data.get('errCode', -1) != 0:
+        err_code = data.get('errCode', -1)
+        if err_code == 240:
+            # Interface busy (another client is scanning) — not an error,
+            # just a request collision.  Skip this cycle silently.
+            log.debug("wifi_ssid_scanner: agent interface busy (errCode 240), will retry next cycle")
+            return []  # empty list, not None — keeps last_poll_ok = True
+        if err_code != 0:
             log.warning("wifi_ssid_scanner: agent returned errCode %s: %s",
-                        data.get('errCode'), data.get('errString', ''))
+                        err_code, data.get('errString', ''))
             return None
 
         return data.get('networks', []) or []
@@ -300,7 +336,7 @@ class WifiSsidScanner:
         """GET /wireless/interfaces and return the first interface name."""
         url = f"{agent_url}/wireless/interfaces"
         try:
-            resp = _session.get(url, timeout=_HTTP_TIMEOUT)
+            resp = _session.get(url, timeout=_HTTP_TIMEOUT_DISCOVERY)
             resp.raise_for_status()
             data = resp.json()
         except Exception as exc:
@@ -364,7 +400,7 @@ class WifiSsidScanner:
             freq = 5000 + channel * 5
 
         device = DroneIDDevice(
-            serial_number='',           # No serial — key comes from MAC
+            serial_number=ssid,         # Use SSID as the display key
             registration_id='',
             id_type=0,
             ua_type=UAType.NONE.value,

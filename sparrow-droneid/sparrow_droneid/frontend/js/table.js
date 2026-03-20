@@ -170,9 +170,13 @@ const TableManager = (() => {
     const selected = drone.serial_number === _selectedSerial ? 'selected' : '';
     const stateClass = `state-${state}`;
 
+    const typeCell = drone.protocol === 'wifi_ssid'
+      ? '<i class="bi bi-wifi ua-icon me-1" title="WiFi SSID"></i>SSID'
+      : Utils.uaTypeHtml(drone.ua_type);
+
     return `<tr data-serial="${_esc(drone.serial_number)}" class="${stateClass} ${selected}">
       <td title="${_esc(drone.serial_number)}">${_esc(Utils.shortSerial(drone.serial_number))}</td>
-      <td>${Utils.uaTypeHtml(drone.ua_type)}</td>
+      <td>${typeCell}</td>
       <td>${Utils.formatAlt(drone.drone_height_agl)}</td>
       <td>${Utils.formatSpeed(drone.speed)}</td>
       <td>${Utils.formatRange(d.range_m)}</td>
@@ -242,9 +246,12 @@ const TableManager = (() => {
 
     const idRows = [];
     if (drone.vendor) idRows.push(['Manufacturer', drone.vendor]);
-    idRows.push(['UA Type', drone.ua_type_name || '—']);
-    idRows.push(['ID Type', drone.id_type_name || '—']);
-    const protoNames = { astm_nan: 'WiFi NAN', astm_beacon: 'WiFi Beacon', astm_ble: 'Bluetooth', dji_proprietary: 'WiFi (DJI)', wifi_ssid: 'WiFi SSID' };
+    const uaType = (drone.ua_type_name && drone.ua_type_name !== 'None / Not Declared') ? drone.ua_type_name : '';
+    if (uaType) idRows.push(['UA Type', uaType]);
+    if (drone.id_type_name && drone.id_type_name !== 'None / Not Declared') {
+      idRows.push(['ID Type', drone.id_type_name]);
+    }
+    const protoNames = { astm_nan: 'WiFi NAN', astm_beacon: 'WiFi Beacon', astm_ble: 'Bluetooth', dji_proprietary: 'WiFi (DJI)', wifi_ssid: 'WiFi SSID Detection' };
     idRows.push(['Protocol', protoNames[drone.protocol] || drone.protocol || '—']);
     idRows.push(['MAC', drone.mac_address || '—']);
     if (drone.operator_id) idRows.push(['Operator ID', drone.operator_id]);

@@ -168,6 +168,7 @@ class Database:
             'vendor_codes_url': '',
             'wifi_ssid_enabled': 'false',
             'wifi_ssid_agent_url': 'http://127.0.0.1:8020',
+            'wifi_ssid_agent_interface': '',  # empty = auto-discover first interface
             'wifi_ssid_poll_interval': '20',
             'wifi_ssid_patterns': '',   # seeded from drone_ssid_patterns.json on first startup
         }

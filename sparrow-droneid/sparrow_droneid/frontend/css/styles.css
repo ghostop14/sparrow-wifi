@@ -124,6 +124,10 @@ html, body {
   50%       { box-shadow: 0 0 0 5px rgba(34,197,94,0.10); }
 }
 
+.status-badge.status-ok { color: var(--success-color); }
+.status-badge.status-warn { color: var(--drone-active); }
+.status-badge.status-error { color: var(--alert-color); }
+
 .drone-count-badge {
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);

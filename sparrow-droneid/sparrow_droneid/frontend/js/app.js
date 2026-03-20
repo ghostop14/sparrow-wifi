@@ -241,6 +241,42 @@ const App = (() => {
         _clearMonitorWarning();
       }
     } catch (e) { /* ignore */ }
+
+    // WiFi SSID scanner indicator
+    _updateWifiSsidUi();
+  }
+
+  async function _updateWifiSsidUi() {
+    const badge = document.getElementById('statusWifiSsid');
+    const label = document.getElementById('wifiSsidLabel');
+    if (!badge || !label) return;
+    try {
+      const st = await Api.getWifiSsidStatus();
+      if (!st.enabled) {
+        badge.style.display = 'none';
+        return;
+      }
+      badge.style.display = '';
+      label.textContent = 'Sparrow';
+      if (st.running && st.last_poll_ok && !st.stale) {
+        badge.title = 'Sparrow WiFi agent — connected';
+        badge.classList.remove('status-error', 'status-warn');
+        badge.classList.add('status-ok');
+      } else if (st.running && st.stale) {
+        badge.title = `Sparrow WiFi agent — no data for ${Math.round(st.last_data_age_s || 0)}s`;
+        badge.classList.remove('status-ok', 'status-error');
+        badge.classList.add('status-warn');
+      } else if (st.running) {
+        badge.title = 'Sparrow WiFi agent — not connected';
+        badge.classList.remove('status-ok', 'status-warn');
+        badge.classList.add('status-error');
+      } else {
+        badge.title = 'Sparrow WiFi agent — stopped';
+        badge.classList.remove('status-ok', 'status-error', 'status-warn');
+      }
+    } catch (_) {
+      badge.style.display = 'none';
+    }
   }
 
   let _monitorWarningShown = false;

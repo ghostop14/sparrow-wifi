@@ -196,11 +196,15 @@ class SparrowDroneID:
 
         self.droneid_engine.on_detection = on_detection
 
-        # WiFi SSID scanner — shares the same on_detection callback
+        # WiFi SSID scanner — needs to go through _track_device so the
+        # drone appears in the active drones dict, DB, and API responses.
+        def on_ssid_detection(device):
+            self.droneid_engine._track_device(device)
+
         self.wifi_ssid_scanner = WifiSsidScanner(
             db=db,
             gps_engine=self.gps_engine,
-            on_detection=on_detection,
+            on_detection=on_ssid_detection,
         )
         wifi_enabled = db.get_setting('wifi_ssid_enabled', 'false').lower() == 'true'
         if wifi_enabled:
@@ -208,6 +212,7 @@ class SparrowDroneID:
                 enabled=True,
                 agent_url=db.get_setting('wifi_ssid_agent_url', 'http://127.0.0.1:8020'),
                 poll_interval=int(db.get_setting('wifi_ssid_poll_interval', '20')),
+                agent_interface=db.get_setting('wifi_ssid_agent_interface', '') or '',
             )
 
     def _setup_signal_handlers(self):

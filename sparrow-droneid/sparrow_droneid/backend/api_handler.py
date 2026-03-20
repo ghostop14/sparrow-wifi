@@ -1449,7 +1449,7 @@ _SETTINGS_WRITABLE = frozenset({
     'airport_geozone_radius_mi',
     'display_units',
     'vendor_codes_url',
-    'wifi_ssid_enabled', 'wifi_ssid_agent_url', 'wifi_ssid_poll_interval',
+    'wifi_ssid_enabled', 'wifi_ssid_agent_url', 'wifi_ssid_agent_interface', 'wifi_ssid_poll_interval',
 })
 
 
@@ -1510,12 +1510,13 @@ def api_settings_put(req: RequestHandler):
             )
 
     # Apply WiFi SSID scanner settings live if any related key changed.
-    if any(k in data for k in ('wifi_ssid_enabled', 'wifi_ssid_agent_url', 'wifi_ssid_poll_interval')):
+    if any(k in data for k in ('wifi_ssid_enabled', 'wifi_ssid_agent_url', 'wifi_ssid_agent_interface', 'wifi_ssid_poll_interval')):
         if _wifi_ssid_scanner:
             _wifi_ssid_scanner.configure(
                 enabled=_db.get_setting('wifi_ssid_enabled', 'false').lower() == 'true',
                 agent_url=_db.get_setting('wifi_ssid_agent_url', 'http://127.0.0.1:8020'),
                 poll_interval=int(_db.get_setting('wifi_ssid_poll_interval', '20')),
+                agent_interface=_db.get_setting('wifi_ssid_agent_interface', '') or '',
             )
 
     # Re-read and return the updated settings

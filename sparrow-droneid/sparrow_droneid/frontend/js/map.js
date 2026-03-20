@@ -302,10 +302,11 @@ const MapManager = (() => {
     const d = drone.derived || {};
 
     // Identity block
-    const typeStr = [drone.vendor, drone.ua_type_name].filter(Boolean).join(' ');
+    const uaType = (drone.ua_type_name && drone.ua_type_name !== 'None / Not Declared') ? drone.ua_type_name : '';
+    const typeStr = [drone.vendor, uaType].filter(Boolean).join(' ') || (drone.protocol === 'wifi_ssid' ? 'WiFi SSID Detection' : '—');
     const idRows = [
       _popupRow('Serial', drone.serial_number || '—'),
-      _popupRow('Type', typeStr || '—'),
+      _popupRow('Type', typeStr),
       _popupRow('Operator', drone.operator_id),
     ].filter(Boolean).join('');
 
