@@ -100,10 +100,15 @@ class ODIDParser:
             # id_type 0 (None) — can be a legitimate serial (reference
             # implementations use it) or a model name like "DJIMavicPro".
             # Accept as serial only if it looks like a CTA-2063-A format
-            # (>= 4 chars) and we don't already have one. Short strings
-            # and model names are filtered by the 4-char key length guard
-            # in the extraction layer.
-            if id_str and len(id_str) >= 4 and not device.serial_number:
+            # (>= 4 chars), isn't a known placeholder, and we don't
+            # already have one.
+            _PLACEHOLDER_STRINGS = {
+                'uninitialized', 'unknown', 'none', 'n/a', 'default',
+                'test', 'invalid', 'not set', 'unset',
+            }
+            if (id_str and len(id_str) >= 4
+                    and id_str.lower() not in _PLACEHOLDER_STRINGS
+                    and not device.serial_number):
                 device.serial_number = id_str
 
     @staticmethod
