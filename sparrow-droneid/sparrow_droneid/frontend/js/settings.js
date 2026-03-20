@@ -517,17 +517,8 @@ const SettingsManager = (() => {
                 </div>
               </div>
 
-              ${s.vendor_codes_url ? '' : `
-              <div class="mb-2">
-                <small class="text-muted">Set <strong>vendor_codes_url</strong> in settings to enable remote updates.</small>
-              </div>`}
-
-              <div class="mb-0 d-flex align-items-center gap-2">
-                <button class="btn btn-sm btn-outline-secondary" id="btn_vendor_update"
-                  ${s.vendor_codes_url ? '' : 'disabled'}>
-                  <i class="bi bi-arrow-repeat me-1"></i>Update Vendor Codes
-                </button>
-                <span id="vc_status" class="small text-muted"></span>
+              <div class="mb-0">
+                <small class="text-muted">Vendor codes are loaded from the bundled seed file on first startup.</small>
               </div>
 
             </div>
@@ -756,35 +747,6 @@ const SettingsManager = (() => {
 
     _reattachSsidDeleteListeners();
 
-    // Vendor codes update
-    document.getElementById('btn_vendor_update')?.addEventListener('click', async () => {
-      const btn    = document.getElementById('btn_vendor_update');
-      const status = document.getElementById('vc_status');
-      btn.disabled = true;
-      btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Updating…';
-      if (status) status.textContent = '';
-      try {
-        const result = await Api.updateVendorCodes();
-        const added = (result.added_serial_prefixes || 0) + (result.added_mac_ouis || 0);
-        Utils.toast(
-          `Vendor codes updated — ${result.serial_prefix_count} serial prefixes, ${result.mac_oui_count} MAC OUIs` +
-          (added > 0 ? ` (+${added} new)` : ''),
-          'success'
-        );
-        // Refresh displayed counts
-        const sc = document.getElementById('vc_serial_count');
-        const oc = document.getElementById('vc_oui_count');
-        if (sc) sc.textContent = result.serial_prefix_count;
-        if (oc) oc.textContent = result.mac_oui_count;
-        if (status) status.textContent = 'Updated';
-      } catch (e) {
-        Utils.toast('Vendor code update failed: ' + e.message, 'danger');
-        if (status) status.textContent = 'Failed';
-      } finally {
-        btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Update Vendor Codes';
-      }
-    });
   }
 
   // ---- WiFi SSID pattern delete ----
