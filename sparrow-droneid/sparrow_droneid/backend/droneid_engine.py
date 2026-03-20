@@ -38,7 +38,10 @@ ODID_MSG_SIZE = 25
 # OUIs
 OUI_WIFI_ALLIANCE = b'\x50\x6f\x9a'
 OUI_ASTM_BEACON = b'\xfa\x0b\xbc'
-OUI_DJI = b'\x26\x37\x12'
+# DJI uses 26:37:12 (unregistered, original Aeroscope) in vendor IEs.
+# 60:60:1F and 60:60:14 are registered DJI MAC OUIs that may also appear
+# as vendor IE OUIs in newer firmware.
+_DJI_OUIS = frozenset({b'\x26\x37\x12', b'\x60\x60\x1f', b'\x60\x60\x14'})
 
 # Vendor type bytes
 NAN_OUI_TYPE = 0x13
@@ -519,8 +522,8 @@ class FrameExtractor:
                 except Exception:
                     continue
 
-            # DJI proprietary
-            if oui == OUI_DJI:
+            # DJI proprietary (multiple known OUIs)
+            if oui in _DJI_OUIS:
                 try:
                     device = DJIParser.parse(bytes([oui_type]) + payload)
                     key = device.get_key()
