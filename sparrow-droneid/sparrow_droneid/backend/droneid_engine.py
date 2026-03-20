@@ -1211,7 +1211,11 @@ class DroneIDEngine:
         try:
             loop.run_until_complete(self._ble_scan_loop())
         except Exception as exc:
-            logging.warning("DroneID BLE thread exited with error: %s", exc)
+            # "Event loop stopped before Future completed" is normal on
+            # shutdown — the stop() method kills the loop while an await
+            # is pending.  Only warn on unexpected errors.
+            if self._monitoring:
+                logging.warning("DroneID BLE thread exited with error: %s", exc)
         finally:
             try:
                 loop.close()
