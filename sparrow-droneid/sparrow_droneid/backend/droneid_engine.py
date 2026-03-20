@@ -614,33 +614,167 @@ class CaptureManager:
         return [WifiInterface(**i).to_dict() for i in interfaces]
 
     @staticmethod
+    def _is_rpi_wireless(interface):
+        """Check if this is a Raspberry Pi onboard WiFi (brcmfmac).
+
+        RPi's brcmfmac driver supports simultaneous managed + monitor VIFs
+        on the same phy, so we don't need to delete the base interface.
+        """
+        try:
+            driver_path = f"/sys/class/net/{interface}/device/driver"
+            if os.path.islink(driver_path):
+                driver = os.path.basename(os.readlink(driver_path))
+                return driver in ('brcmfmac', 'brcm80211')
+        except Exception:
+            pass
+        return False
+
+    @staticmethod
     def start_monitor(interface, channel=6):
-        """Switch interface to monitor mode on the given channel."""
-        cmds = [
-            ['ip', 'link', 'set', interface, 'down'],
-            ['iw', 'dev', interface, 'set', 'type', 'monitor'],
-            ['ip', 'link', 'set', interface, 'up'],
-            ['iw', 'dev', interface, 'set', 'channel', str(channel)],
-        ]
-        for cmd in cmds:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-            if result.returncode != 0:
-                raise RuntimeError(f"Failed: {' '.join(cmd)}: {result.stderr.strip()}")
-        return interface
+        """Switch interface to monitor mode on the given channel.
+
+        First tries the standard in-place method (iw set type monitor).
+        If the driver is iwlwifi, uses the virtual interface (VIF) method
+        instead (iw phy add <name>mon type monitor), since iwlwifi firmware
+        silently drops frames in direct monitor mode but works with VIFs.
+
+        Returns the actual monitor interface name (may differ from input
+        if a VIF was created, e.g. 'wlan0' → 'wlan0mon').
+        """
+        # Detect driver
+        driver = ''
+        try:
+            driver_path = f"/sys/class/net/{interface}/device/driver"
+            if os.path.islink(driver_path):
+                driver = os.path.basename(os.readlink(driver_path))
+        except Exception:
+            pass
+
+        if driver == 'iwlwifi':
+            # VIF method: create a separate monitor interface
+            mon_iface = interface + 'mon'
+            # Get the phy name for this interface
+            try:
+                result = subprocess.run(
+                    ['iw', 'dev', interface, 'info'],
+                    capture_output=True, text=True, timeout=5
+                )
+                phy = None
+                for line in result.stdout.splitlines():
+                    if 'wiphy' in line:
+                        phy_idx = line.strip().split()[-1]
+                        phy = f"phy{phy_idx}"
+                        break
+                if not phy:
+                    raise RuntimeError(f"Could not determine phy for {interface}")
+
+                # Remove existing mon interface if present
+                subprocess.run(
+                    ['iw', 'dev', mon_iface, 'del'],
+                    capture_output=True, text=True, timeout=5
+                )
+                # Mirror airmon-ng methodology:
+                # 1. Bring base interface down
+                # 2. Create monitor VIF on the phy
+                # 3. Delete the base managed interface so the phy
+                #    has only the monitor VIF — prevents channel
+                #    conflicts with NetworkManager/wpa_supplicant
+                #    Exception: RPi brcmfmac can run both simultaneously
+                # 4. Bring VIF up and set channel
+                is_rpi = CaptureManager._is_rpi_wireless(interface)
+                subprocess.run(
+                    ['ip', 'link', 'set', interface, 'down'],
+                    capture_output=True, text=True, timeout=5
+                )
+                cmds = [
+                    ['iw', phy, 'interface', 'add', mon_iface, 'type', 'monitor'],
+                ]
+                if not is_rpi:
+                    # Non-RPi: delete base interface to free the phy
+                    cmds.append(['iw', 'dev', interface, 'del'])
+                cmds += [
+                    ['ip', 'link', 'set', mon_iface, 'up'],
+                    ['iw', 'dev', mon_iface, 'set', 'channel', str(channel)],
+                ]
+                for cmd in cmds:
+                    r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                    if r.returncode != 0:
+                        raise RuntimeError(f"Failed: {' '.join(cmd)}: {r.stderr.strip()}")
+                print(f"  Monitor:  Created VIF {mon_iface} for iwlwifi monitor mode")
+                return mon_iface
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                raise RuntimeError(f"Failed to create monitor VIF for iwlwifi: {exc}")
+        else:
+            # Standard in-place method
+            cmds = [
+                ['ip', 'link', 'set', interface, 'down'],
+                ['iw', 'dev', interface, 'set', 'type', 'monitor'],
+                ['ip', 'link', 'set', interface, 'up'],
+                ['iw', 'dev', interface, 'set', 'channel', str(channel)],
+            ]
+            for cmd in cmds:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                if result.returncode != 0:
+                    raise RuntimeError(f"Failed: {' '.join(cmd)}: {result.stderr.strip()}")
+            return interface
 
     @staticmethod
     def stop_monitor(interface):
-        """Restore interface to managed mode."""
-        cmds = [
-            ['ip', 'link', 'set', interface, 'down'],
-            ['iw', 'dev', interface, 'set', 'type', 'managed'],
-            ['ip', 'link', 'set', interface, 'up'],
-        ]
-        for cmd in cmds:
+        """Restore interface to managed mode, or delete VIF if it's a mon interface."""
+        if interface.endswith('mon'):
+            # VIF created by start_monitor — delete it and recreate
+            # the base managed interface if it was removed (non-RPi).
+            base_iface = interface[:-3]  # strip 'mon' suffix
             try:
-                subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                # Get phy before deleting the VIF
+                result = subprocess.run(
+                    ['iw', 'dev', interface, 'info'],
+                    capture_output=True, text=True, timeout=5
+                )
+                phy = None
+                for line in result.stdout.splitlines():
+                    if 'wiphy' in line:
+                        phy = f"phy{line.strip().split()[-1]}"
+                        break
+
+                subprocess.run(
+                    ['iw', 'dev', interface, 'del'],
+                    capture_output=True, text=True, timeout=5
+                )
+                print(f"  Monitor:  Removed VIF {interface}")
+
+                # Recreate the base managed interface if it was deleted
+                # (on RPi it was kept alive, so just bring it back up)
+                base_exists = os.path.exists(f"/sys/class/net/{base_iface}")
+                if phy and not base_exists:
+                    subprocess.run(
+                        ['iw', phy, 'interface', 'add', base_iface,
+                         'type', 'managed'],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    print(f"  Monitor:  Recreated managed interface {base_iface}")
+                if os.path.exists(f"/sys/class/net/{base_iface}"):
+                    subprocess.run(
+                        ['ip', 'link', 'set', base_iface, 'up'],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    print(f"  Monitor:  Restored {base_iface}")
             except Exception:
                 pass
+        else:
+            # Standard: restore to managed mode
+            cmds = [
+                ['ip', 'link', 'set', interface, 'down'],
+                ['iw', 'dev', interface, 'set', 'type', 'managed'],
+                ['ip', 'link', 'set', interface, 'up'],
+            ]
+            for cmd in cmds:
+                try:
+                    subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                except Exception:
+                    pass
 
     @staticmethod
     def start_capture(interface):
@@ -1298,21 +1432,24 @@ class DroneIDEngine:
         monitor mode as supported but the firmware silently drops all frames.
         We wait a few seconds after capture starts and check if any raw 802.11
         frames have arrived.  If not, set a warning for the user.
+
+        Continues checking periodically — if frames start flowing after the
+        warning was set, clears it.
         """
-        # Wait 8 seconds — even on a quiet channel, APs beacon every ~100ms
-        # so we should see dozens of frames if the adapter is working
+        warned = False
+
+        # Initial check: wait 8 seconds
         for _ in range(16):
             sleep(0.5)
             if not self._monitoring:
                 return
             if self._frame_count > 0:
-                # Frames are flowing — adapter works
                 driver = self._get_driver_name()
                 if driver:
                     print(f"  Monitor:  Receiving frames on {self._interface} (driver: {driver})")
                 return
 
-        # Zero frames after 8 seconds — something is wrong
+        # Zero frames after 8 seconds — warn
         driver = self._get_driver_name()
         driver_hint = f" (driver: {driver})" if driver else ""
         msg = (
@@ -1320,6 +1457,7 @@ class DroneIDEngine:
             f"The adapter may not support monitor mode at the firmware level."
         )
         self._monitor_warning = msg
+        warned = True
         print(f"  {msg}")
 
         if driver and 'iwlwifi' in driver:
@@ -1328,6 +1466,16 @@ class DroneIDEngine:
                 "monitor mode as supported but the firmware filters all frames. "
                 "Use an external USB adapter (Alfa, Realtek RTL8812AU, Atheros) instead."
             )
+
+        # Keep checking — clear warning if frames start arriving
+        while self._monitoring:
+            sleep(5)
+            if not self._monitoring:
+                return
+            if self._frame_count > 0 and warned:
+                self._monitor_warning = ""
+                warned = False
+                print(f"  Monitor:  Frames now flowing on {self._interface} — warning cleared")
 
     @staticmethod
     def _get_driver_name():
