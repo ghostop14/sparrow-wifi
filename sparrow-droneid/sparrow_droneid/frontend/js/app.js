@@ -194,8 +194,8 @@ const App = (() => {
         ]);
         let iface = (cfg.settings && cfg.settings.monitor_interface) || '';
         if (!iface) {
-          const capable = (ifaceList.interfaces || []).filter(i => i.monitor_capable);
-          if (capable.length === 1) iface = capable[0].name;
+          const capable = (ifaceList.interfaces || []).filter(i => i.monitor_capable && i.mode !== 'monitor');
+          if (capable.length === 1) iface = capable[0].base_name || capable[0].name;
         }
         if (!iface) {
           Utils.toast('Set a monitor interface in Settings first.', 'alert');
@@ -203,6 +203,8 @@ const App = (() => {
           return;
         }
         await Api.startMonitor(iface);
+        // Persist so backend auto-starts on next launch
+        Api.putSettings({ monitor_interface: iface }).catch(() => {});
         _monitoring = true;
         Utils.toast(`Monitoring started on ${iface}.`, 'success');
       }

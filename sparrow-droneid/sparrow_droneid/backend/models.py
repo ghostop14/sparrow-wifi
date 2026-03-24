@@ -383,6 +383,7 @@ class AlertRule:
 class WifiInterface:
     """A detected WiFi interface and its capabilities."""
     name: str = ""
+    base_name: str = ""   # canonical name (strips 'mon' suffix from VIFs)
     mac_address: str = ""
     mode: str = "managed"
     monitor_capable: bool = False

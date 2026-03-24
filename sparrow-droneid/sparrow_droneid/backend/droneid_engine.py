@@ -606,11 +606,19 @@ class CaptureManager:
                 elif not stripped.startswith('*') and stripped:
                     in_modes = False
 
-        # Get driver info
+        # Get driver info and compute base_name
         for iface in interfaces:
             iface['monitor_capable'] = iface['phy'] in phy_monitor
+            name = iface['name']
+            # VIFs created by start_monitor() have a 'mon' suffix — expose
+            # the base name so the frontend/settings can store the canonical
+            # (pre-monitor) interface name.
+            if name.endswith('mon') and iface.get('mode') == 'monitor':
+                iface['base_name'] = name[:-3]
+            else:
+                iface['base_name'] = name
             try:
-                driver_path = f"/sys/class/net/{iface['name']}/device/driver"
+                driver_path = f"/sys/class/net/{name}/device/driver"
                 if os.path.islink(driver_path):
                     iface['driver'] = os.path.basename(os.readlink(driver_path))
             except OSError:

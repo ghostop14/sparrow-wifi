@@ -71,10 +71,11 @@ const SettingsManager = (() => {
   function _sel(a, b)    { return a === b ? 'selected' : ''; }
 
   function _buildHtml(s, stats, ifaces, certs, gpsError, vendorCodes, wifiSsidPatterns) {
-    // Auto-select the only monitor-capable interface when none is stored
-    const monCapable = ifaces.filter(i => i.monitor_capable);
+    // Auto-select the only monitor-capable interface when none is stored.
+    // Use base_name (strips 'mon' VIF suffix) so we store the canonical name.
+    const monCapable = ifaces.filter(i => i.monitor_capable && i.mode !== 'monitor');
     const _effectiveIface = s.monitor_interface ||
-      (monCapable.length === 1 ? monCapable[0].name : '');
+      (monCapable.length === 1 ? monCapable[0].base_name || monCapable[0].name : '');
     return `
       <div class="row g-3">
 
@@ -165,9 +166,10 @@ const SettingsManager = (() => {
                 <select class="form-select form-select-sm" id="s_iface" style="max-width:200px;">
                   <option value="">(none)</option>
                   ${ifaces.map(iface => {
-                    const label = iface.name + (iface.monitor_capable ? '' : ' \u2014 no monitor');
-                    return `<option value="${_esc(iface.name)}"
-                      ${_sel(_effectiveIface, iface.name)}
+                    const bname = iface.base_name || iface.name;
+                    const label = bname + (iface.monitor_capable ? '' : ' \u2014 no monitor');
+                    return `<option value="${_esc(bname)}"
+                      ${_sel(_effectiveIface, bname)}
                       ${iface.monitor_capable ? '' : 'disabled'}
                     >${_esc(label)}</option>`;
                   }).join('')}

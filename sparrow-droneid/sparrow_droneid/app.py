@@ -255,15 +255,33 @@ class SparrowDroneID:
         self._maintenance_thread.start()
 
     def _auto_start_monitoring(self):
-        """Auto-start monitoring if interface is configured."""
+        """Auto-start monitoring if interface is configured.
+
+        Resolution order:
+        1. --interface CLI flag
+        2. monitor_interface from DB settings
+        3. Auto-detect: single monitor-capable interface on the system
+        """
         interface = self.auto_interface
         if not interface:
             interface = self.db.get_setting('monitor_interface', '')
+        if not interface:
+            # Auto-detect: if exactly one monitor-capable interface, use it
+            try:
+                capable = [i for i in CaptureManager.get_interfaces()
+                           if i.get('monitor_capable') and i.get('mode') != 'monitor']
+                if len(capable) == 1:
+                    interface = capable[0].get('base_name') or capable[0]['name']
+            except Exception:
+                pass
         if not interface:
             return
 
         try:
             self.droneid_engine.start(interface)
+            # Persist so future restarts auto-start without needing the
+            # CLI flag or manual Settings save.
+            self.db.set_setting('monitor_interface', interface)
             print(f"  Monitor:  {interface} on channel 6")
         except Exception as e:
             print(f"  Monitor:  Failed to start on {interface}: {e}")
