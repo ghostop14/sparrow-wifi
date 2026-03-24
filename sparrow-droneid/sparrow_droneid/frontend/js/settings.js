@@ -71,6 +71,10 @@ const SettingsManager = (() => {
   function _sel(a, b)    { return a === b ? 'selected' : ''; }
 
   function _buildHtml(s, stats, ifaces, certs, gpsError, vendorCodes, wifiSsidPatterns) {
+    // Auto-select the only monitor-capable interface when none is stored
+    const monCapable = ifaces.filter(i => i.monitor_capable);
+    const _effectiveIface = s.monitor_interface ||
+      (monCapable.length === 1 ? monCapable[0].name : '');
     return `
       <div class="row g-3">
 
@@ -163,7 +167,7 @@ const SettingsManager = (() => {
                   ${ifaces.map(iface => {
                     const label = iface.name + (iface.monitor_capable ? '' : ' \u2014 no monitor');
                     return `<option value="${_esc(iface.name)}"
-                      ${_sel(s.monitor_interface, iface.name)}
+                      ${_sel(_effectiveIface, iface.name)}
                       ${iface.monitor_capable ? '' : 'disabled'}
                     >${_esc(label)}</option>`;
                   }).join('')}

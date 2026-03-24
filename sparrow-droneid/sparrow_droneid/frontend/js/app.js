@@ -187,9 +187,16 @@ const App = (() => {
         _monitoring = false;
         Utils.toast('Monitoring stopped.', 'info');
       } else {
-        // Use interface from settings
-        const cfg = await Api.getSettings();
-        const iface = cfg.monitor_interface || '';
+        // Use interface from settings, auto-detect if only one available
+        const [cfg, ifaceList] = await Promise.all([
+          Api.getSettings(),
+          Api.getInterfaces().catch(() => ({ interfaces: [] })),
+        ]);
+        let iface = (cfg.settings && cfg.settings.monitor_interface) || '';
+        if (!iface) {
+          const capable = (ifaceList.interfaces || []).filter(i => i.monitor_capable);
+          if (capable.length === 1) iface = capable[0].name;
+        }
         if (!iface) {
           Utils.toast('Set a monitor interface in Settings first.', 'alert');
           btn.disabled = false;
