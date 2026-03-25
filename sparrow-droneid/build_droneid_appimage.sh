@@ -100,6 +100,20 @@ cp "$APP_DIR/app.py" "$APPDIR/usr/lib/python$PYTHON_VERSION/"
 cp "$APP_DIR/__init__.py" "$APPDIR/usr/lib/python$PYTHON_VERSION/"
 cp "$APP_DIR/requirements.txt" "$APPDIR/usr/lib/python$PYTHON_VERSION/"
 
+# Copy seed data files (vendor codes, SSID patterns)
+# app.py resolves these via Path(__file__).parent.parent / 'data', which
+# from usr/lib/python3.x/app.py lands at usr/lib/data/
+SEED_DIR="$SCRIPT_DIR/data"
+mkdir -p "$APPDIR/usr/lib/data"
+for seed_file in vendor_codes.json drone_ssid_patterns.json; do
+    if [ -f "$SEED_DIR/$seed_file" ]; then
+        cp "$SEED_DIR/$seed_file" "$APPDIR/usr/lib/data/"
+        echo "  Bundled seed: $seed_file"
+    else
+        echo "  WARNING: seed file not found: $SEED_DIR/$seed_file"
+    fi
+done
+
 # Create launcher script
 cat > "$APPDIR/usr/bin/$APP_NAME" << LAUNCHER_EOF
 #!/bin/bash
