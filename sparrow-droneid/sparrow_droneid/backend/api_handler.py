@@ -6,6 +6,8 @@ Provides a multithreaded HTTP server with:
 - IP/subnet allowlist and Bearer token authentication (API paths only)
 - Static file serving for the frontend SPA
 - Tile proxy with optional disk cache
+- OpenAPI 3.0 compliance via /api/v1/openapi.json
+- Legacy /api/ → /api/v1/ redirect with Deprecation headers
 """
 import ipaddress
 import json
@@ -30,6 +32,9 @@ from .database import Database
 from .export import generate_kml
 from .cert_manager import CertManager
 from .wifi_ssid_scanner import WifiSsidScanner
+from .openapi import (qparam, path_param, json_body, json_body_inline,
+                      response_ref, response_inline, build_openapi_spec)
+from .errors import ErrorCode
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +57,9 @@ _start_time: datetime = datetime.now(timezone.utc)
 # Persistent HTTP session for tile proxy upstream fetches
 _tile_session: _requests.Session = _requests.Session()
 _tile_session.headers.update({'User-Agent': 'SparrowDroneID/1.0'})
+
+# OpenAPI spec cache (built lazily on first request)
+_openapi_cache: Optional[bytes] = None
 
 
 def set_engines(droneid: DroneIDEngine, gps: GPSEngine, alert: AlertEngine,
@@ -139,9 +147,11 @@ class APIRouter:
                     return None, {'_allowed_methods': list(handlers.keys())}
         return None, {}
 
-    def route(self, method: str, pattern: str):
-        """Decorator: @router.route('GET', '/api/foo')"""
+    def route(self, method: str, pattern: str, spec: dict = None):
+        """Decorator: @router.route('GET', '/api/v1/foo', spec={...})"""
         def decorator(func: Callable):
+            if spec is not None:
+                func._openapi_spec = spec
             self.add_route(method, pattern, func)
             return func
         return decorator
@@ -178,6 +188,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.body_data: Optional[bytes] = None
         self.json_data: Optional[Dict] = None
         self.query_params: Dict[str, str] = {}
+        self._deprecated_path: bool = False
         super().__init__(*args, **kwargs)
 
     # ------------------------------------------------------------------
@@ -252,7 +263,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         if allowed_ips_raw.strip():
             client_ip = self.get_client_ip()
             if not _ip_is_allowed(client_ip, allowed_ips_raw):
-                self._send_error_json(403, 3, 'Connections not authorized from your IP address')
+                self._send_error(403, ErrorCode.FORBIDDEN, 'Connections not authorized from your IP address')
                 return False
 
         # --- Bearer token ---
@@ -270,10 +281,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if token_list:
                     token = token_list[0]
             if not token:
-                self._send_error_json(401, 401, 'Authentication required')
+                self._send_error(401, ErrorCode.AUTH_REQUIRED, 'Authentication required')
                 return False
             if token != required_token:
-                self._send_error_json(401, 401, 'Authentication required')
+                self._send_error(401, ErrorCode.AUTH_REQUIRED, 'Authentication required')
                 return False
 
         return True
@@ -294,14 +305,30 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Length', str(len(body)))
             self._send_cors_headers()
+            if getattr(self, '_deprecated_path', False):
+                self.send_header('Deprecation', 'true')
+                self.send_header('Sunset', '2026-09-01')
             self.end_headers()
             self.wfile.write(body)
         except BrokenPipeError:
             pass  # Client disconnected before response was sent
 
+    def _send_error(self, http_status: int, code: str, message: str, detail: dict = None) -> None:
+        """Send standardized OpenAPI error response."""
+        body = {'error': {'code': code, 'message': message}}
+        if detail:
+            body['error']['detail'] = detail
+        self._send_json(body, status=http_status)
+
+    def _send_ok(self, data: dict, status: int = 200) -> None:
+        """Send success response — domain data directly, no wrapper."""
+        self._send_json(data, status=status)
+
+    # LEGACY — remove after burn-in period
     def _send_error_json(self, http_status: int, errcode: int, errmsg: str) -> None:
         self._send_json({'errcode': errcode, 'errmsg': errmsg}, status=http_status)
 
+    # LEGACY — remove after burn-in period
     def _ok(self, extra: Dict = None) -> Dict:
         """Build a success response dict, merging in any extra fields."""
         d = {'errcode': 0, 'errmsg': ''}
@@ -317,6 +344,9 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Length', str(len(data)))
             self.send_header('Cache-Control', 'no-cache, must-revalidate')
             self._send_cors_headers()
+            if getattr(self, '_deprecated_path', False):
+                self.send_header('Deprecation', 'true')
+                self.send_header('Sunset', '2026-09-01')
             if extra_headers:
                 for k, v in extra_headers.items():
                     self.send_header(k, v)
@@ -333,7 +363,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         """Serve frontend static files from html_dir."""
         html_dir = _html_dir
         if html_dir is None:
-            self._send_error_json(503, 5, 'Frontend not available')
+            self._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Frontend not available')
             return
 
         # Strip leading slashes; normalise to prevent directory traversal.
@@ -343,7 +373,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         # Security: reject any path with ..
         if '..' in clean.split('/'):
-            self._send_error_json(403, 3, 'Forbidden')
+            self._send_error(403, ErrorCode.FORBIDDEN, 'Forbidden')
             return
 
         filepath = os.path.join(html_dir, clean)
@@ -365,7 +395,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                         contents = contents.encode('utf-8')
                     self._send_raw(contents, type_info['content-type'])
                 except OSError as e:
-                    self._send_error_json(500, 5, f'Error reading file: {e}')
+                    self._send_error(500, ErrorCode.INTERNAL_ERROR, f'Error reading file: {e}')
             else:
                 # Unknown extension — let mimetypes guess.
                 ct, _ = mimetypes.guess_type(filepath)
@@ -375,7 +405,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                         contents = fh.read()
                     self._send_raw(contents, ct)
                 except OSError as e:
-                    self._send_error_json(500, 5, f'Error reading file: {e}')
+                    self._send_error(500, ErrorCode.INTERNAL_ERROR, f'Error reading file: {e}')
         else:
             # SPA fallback: serve index.html for unknown paths so the JS
             # router can handle them.
@@ -386,9 +416,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                         contents = fh.read().encode('utf-8')
                     self._send_raw(contents, 'text/html')
                 except OSError:
-                    self._send_error_json(404, 2, 'Not found')
+                    self._send_error(404, ErrorCode.NOT_FOUND, 'Not found')
             else:
-                self._send_error_json(404, 2, 'Not found')
+                self._send_error(404, ErrorCode.NOT_FOUND, 'Not found')
 
     # ------------------------------------------------------------------
     # Request dispatch
@@ -397,8 +427,16 @@ class RequestHandler(BaseHTTPRequestHandler):
     def _handle_api(self, method: str) -> None:
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
+        self._deprecated_path = False
 
         handler, params = router.match(method, path)
+
+        # Legacy /api/ fallback → try /api/v1/
+        if handler is None and path.startswith('/api/') and not path.startswith('/api/v1/'):
+            v1_path = '/api/v1/' + path[len('/api/'):]
+            handler, params = router.match(method, v1_path)
+            if handler:
+                self._deprecated_path = True
 
         if handler:
             try:
@@ -408,7 +446,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 traceback.print_exc()
                 try:
-                    self._send_error_json(500, 5, f'Internal server error: {e}')
+                    self._send_error(500, ErrorCode.INTERNAL_ERROR, f'Internal server error: {e}')
                 except BrokenPipeError:
                     pass
         elif method == 'OPTIONS':
@@ -419,7 +457,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_header('Access-Control-Allow-Methods', ', '.join(allowed))
             self.end_headers()
         else:
-            self._send_error_json(404, 2, 'API endpoint not found')
+            self._send_error(404, ErrorCode.NOT_FOUND, 'API endpoint not found')
 
     def do_GET(self):
         self.parse_query_string()
@@ -529,7 +567,11 @@ def _coerce_settings(raw: Dict[str, str]) -> Dict[str, Any]:
 # System
 # ---------------------------------------------------------------------------
 
-@router.route('GET', '/api/status')
+@router.route('GET', '/api/v1/status', spec={
+    'summary': 'Server status and version',
+    'tags': ['System'],
+    'responses': {'200': response_ref('StatusResponse', 'Server status summary')},
+})
 def api_status(req: RequestHandler):
     engine_status = _droneid_engine.get_status() if _droneid_engine else {}
     gps_dict = _gps_engine.to_dict() if _gps_engine else {}
@@ -539,7 +581,7 @@ def api_status(req: RequestHandler):
     unique_total = _db.get_unique_serial_count() if _db else 0
     retention = int(_db.get_setting('retention_days', '14') or '14') if _db else 14
 
-    req._send_json(req._ok({
+    req._send_ok({
         'version': '1.0.0',
         'monitoring': engine_status.get('monitoring', False),
         'monitor_interface': engine_status.get('interface', ''),
@@ -555,23 +597,65 @@ def api_status(req: RequestHandler):
         'uptime_seconds': uptime,
         'db_size_bytes': db_stats.get('db_size_bytes', 0),
         'retention_days': retention,
-    }))
+    })
+
+
+@router.route('GET', '/api/v1/openapi.json', spec={
+    'summary': 'OpenAPI 3.0 specification',
+    'tags': ['System'],
+    'responses': {'200': response_inline({}, 'OpenAPI 3.0.3 JSON document')},
+})
+def api_openapi_spec(req: RequestHandler):
+    global _openapi_cache
+    if _openapi_cache is None:
+        spec = build_openapi_spec(router)
+        _openapi_cache = json.dumps(spec, indent=2).encode('utf-8')
+    req._send_raw(_openapi_cache, 'application/json')
 
 
 # ---------------------------------------------------------------------------
 # Monitoring
 # ---------------------------------------------------------------------------
 
-@router.route('GET', '/api/interfaces')
+@router.route('GET', '/api/v1/interfaces', spec={
+    'summary': 'List available WiFi interfaces',
+    'tags': ['Monitoring'],
+    'responses': {
+        '200': response_inline(
+            {'interfaces': {'type': 'array', 'items': {'$ref': '#/components/schemas/InterfaceInfo'}}},
+            'List of available interfaces',
+        ),
+    },
+})
 def api_interfaces(req: RequestHandler):
     interfaces = CaptureManager.get_interfaces()
-    req._send_json(req._ok({'interfaces': interfaces}))
+    req._send_ok({'interfaces': interfaces})
 
 
-@router.route('POST', '/api/monitor/start')
+@router.route('POST', '/api/v1/monitor/start', spec={
+    'summary': 'Start packet capture on a WiFi interface',
+    'tags': ['Monitoring'],
+    'requestBody': json_body_inline(
+        {'interface': {'type': 'string', 'description': 'Interface name'},
+         'channel':   {'type': 'integer', 'description': 'WiFi channel (default 6)'}},
+        required_props=['interface'],
+        description='Interface and channel to monitor',
+    ),
+    'responses': {
+        '200': response_inline(
+            {'interface': {'type': 'string'},
+             'channel':   {'type': 'integer'},
+             'status':    {'type': 'string'}},
+            'Monitoring started',
+        ),
+        '404': {'description': 'Interface not found', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+        '409': {'description': 'Already monitoring or conflict', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+        '503': {'description': 'Engine not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_monitor_start(req: RequestHandler):
     if _droneid_engine is None:
-        req._send_error_json(503, 5, 'Engine not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Engine not available')
         return
 
     body = req.json_data or {}
@@ -579,51 +663,65 @@ def api_monitor_start(req: RequestHandler):
     channel = int(body.get('channel', 6))
 
     if not interface:
-        req._send_error_json(400, 1, 'interface is required')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'interface is required')
         return
 
     if _droneid_engine.monitoring:
-        req._send_error_json(409, 3, 'Already monitoring')
+        req._send_error(409, ErrorCode.CONFLICT, 'Already monitoring')
         return
 
     # Validate that the interface exists
     ifaces = CaptureManager.get_interfaces()
     iface_names = [i['name'] for i in ifaces]
     if interface not in iface_names:
-        req._send_error_json(404, 2, f'Interface {interface!r} not found')
+        req._send_error(404, ErrorCode.NOT_FOUND, f'Interface {interface!r} not found')
         return
 
     # Validate monitor capability
     iface_info = next((i for i in ifaces if i['name'] == interface), {})
     if not iface_info.get('monitor_capable', False):
-        req._send_error_json(400, 3, f'Interface {interface!r} does not support monitor mode')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, f'Interface {interface!r} does not support monitor mode')
         return
 
     try:
         _droneid_engine.start(interface, channel)
     except RuntimeError as e:
-        req._send_error_json(409, 3, str(e))
+        req._send_error(409, ErrorCode.CONFLICT, str(e))
         return
     except Exception as e:
-        req._send_error_json(500, 5, f'Failed to start capture: {e}')
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Failed to start capture: {e}')
         return
 
     status = _droneid_engine.get_status()
-    req._send_json(req._ok({
+    req._send_ok({
         'interface': status['interface'],
         'channel': status['channel'],
         'status': 'monitoring',
-    }))
+    })
 
 
-@router.route('POST', '/api/monitor/stop')
+@router.route('POST', '/api/v1/monitor/stop', spec={
+    'summary': 'Stop active packet capture',
+    'tags': ['Monitoring'],
+    'responses': {
+        '200': response_inline(
+            {'status':                   {'type': 'string'},
+             'session_duration_seconds': {'type': 'integer'},
+             'frames_captured':          {'type': 'integer'},
+             'drones_detected':          {'type': 'integer'}},
+            'Session summary after stop',
+        ),
+        '409': {'description': 'Not currently monitoring', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+        '503': {'description': 'Engine not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_monitor_stop(req: RequestHandler):
     if _droneid_engine is None:
-        req._send_error_json(503, 5, 'Engine not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Engine not available')
         return
 
     if not _droneid_engine.monitoring:
-        req._send_error_json(409, 3, 'Not currently monitoring')
+        req._send_error(409, ErrorCode.CONFLICT, 'Not currently monitoring')
         return
 
     status_before = _droneid_engine.get_status()
@@ -634,34 +732,51 @@ def api_monitor_stop(req: RequestHandler):
     try:
         _droneid_engine.stop()
     except Exception as e:
-        req._send_error_json(500, 5, f'Error stopping capture: {e}')
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Error stopping capture: {e}')
         return
 
-    req._send_json(req._ok({
+    req._send_ok({
         'status': 'stopped',
         'session_duration_seconds': duration,
         'frames_captured': frames,
         'drones_detected': drones,
-    }))
+    })
 
 
-@router.route('GET', '/api/monitor/status')
+@router.route('GET', '/api/v1/monitor/status', spec={
+    'summary': 'Get current monitor status',
+    'tags': ['Monitoring'],
+    'responses': {
+        '200': response_ref('MonitorStatus', 'Current monitor status'),
+        '503': {'description': 'Engine not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_monitor_status(req: RequestHandler):
     if _droneid_engine is None:
-        req._send_error_json(503, 5, 'Engine not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Engine not available')
         return
     status = _droneid_engine.get_status()
-    req._send_json(req._ok(status))
+    req._send_ok(status)
 
 
 # ---------------------------------------------------------------------------
 # Detections (Live)
 # ---------------------------------------------------------------------------
 
-@router.route('GET', '/api/drones')
+@router.route('GET', '/api/v1/drones', spec={
+    'summary': 'List currently active drone detections',
+    'tags': ['Detections'],
+    'parameters': [
+        qparam('max_age', 'integer', 'Maximum age in seconds for a detection to be included (default 180)', default=180),
+    ],
+    'responses': {
+        '200': response_ref('DroneListResponse', 'Live drone detections with receiver position and counts'),
+        '503': {'description': 'Engine not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_drones(req: RequestHandler):
     if _droneid_engine is None:
-        req._send_error_json(503, 5, 'Engine not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Engine not available')
         return
 
     max_age = req._qparam_int('max_age', 180)
@@ -702,7 +817,7 @@ def api_drones(req: RequestHandler):
         else:
             stale_count += 1
 
-    req._send_json(req._ok({
+    req._send_ok({
         'receiver': receiver,
         'drones': drones,
         'counts': {
@@ -711,13 +826,25 @@ def api_drones(req: RequestHandler):
             'stale': stale_count,
         },
         'timestamp': datetime.utcnow().isoformat() + 'Z',
-    }))
+    })
 
 
-@router.route('GET', '/api/drones/{serial}')
+@router.route('GET', '/api/v1/drones/{serial}', spec={
+    'summary': 'Get detail and track for a single drone',
+    'tags': ['Detections'],
+    'parameters': [
+        path_param('serial', 'string', 'Drone serial number (URL-encoded)'),
+        qparam('track_minutes', 'integer', 'Number of minutes of track history to include (default 5)', default=5),
+    ],
+    'responses': {
+        '200': response_ref('DroneDetailResponse', 'Drone detail with track'),
+        '404': {'description': 'Drone not found', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+        '503': {'description': 'Engine not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_drone_detail(req: RequestHandler, serial: str):
     if _droneid_engine is None:
-        req._send_error_json(503, 5, 'Engine not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Engine not available')
         return
 
     serial = unquote(serial)
@@ -726,7 +853,7 @@ def api_drone_detail(req: RequestHandler, serial: str):
     drone_dict, track = _droneid_engine.get_drone_detail(serial, track_minutes)
 
     if drone_dict is None:
-        req._send_error_json(404, 2, f'Drone {serial!r} not found')
+        req._send_error(404, ErrorCode.NOT_FOUND, f'Drone {serial!r} not found')
         return
 
     # Enrich with vendor/manufacturer
@@ -737,20 +864,37 @@ def api_drone_detail(req: RequestHandler, serial: str):
             protocol=drone_dict.get('protocol', ''),
         )
 
-    req._send_json(req._ok({'drone': drone_dict, 'track': track}))
+    req._send_ok({'drone': drone_dict, 'track': track})
 
 
 # ---------------------------------------------------------------------------
 # History / Replay
 # ---------------------------------------------------------------------------
 
-@router.route('GET', '/api/history')
+@router.route('GET', '/api/v1/history', spec={
+    'summary': 'Query historical detection records',
+    'tags': ['History'],
+    'parameters': [
+        qparam('from', 'string', 'Start of time range (ISO 8601 UTC)', required=True),
+        qparam('to', 'string', 'End of time range (ISO 8601 UTC)', required=True),
+        qparam('serial', 'string', 'Filter to a specific serial number'),
+        qparam('limit', 'integer', 'Maximum records to return (default 10000)', default=10000),
+        qparam('offset', 'integer', 'Offset into result set (default 0)', default=0),
+    ],
+    'responses': {
+        '200': response_inline(
+            {'records':    {'type': 'array', 'items': {'$ref': '#/components/schemas/HistoryRecord'}},
+             'pagination': {'$ref': '#/components/schemas/PaginationMeta'}},
+            'Historical records with pagination metadata',
+        ),
+    },
+})
 def api_history(req: RequestHandler):
     from_ts = req._qparam('from')
     to_ts = req._qparam('to')
 
     if not from_ts or not to_ts:
-        req._send_error_json(400, 1, 'from and to query parameters are required')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'from and to query parameters are required')
         return
 
     serial = req._qparam('serial') or None
@@ -760,41 +904,72 @@ def api_history(req: RequestHandler):
     try:
         records, total = _db.get_history(from_ts, to_ts, serial, limit, offset)
     except Exception as e:
-        req._send_error_json(500, 5, f'Database error: {e}')
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
         return
 
-    req._send_json(req._ok({
+    req._send_ok({
         'records': records,
-        'total_count': total,
-        'returned_count': len(records),
-    }))
+        'pagination': {
+            'total_count': total,
+            'returned_count': len(records),
+            'limit': limit,
+            'offset': offset,
+        },
+    })
 
 
-@router.route('GET', '/api/history/serials')
+@router.route('GET', '/api/v1/history/serials', spec={
+    'summary': 'List distinct drone serials seen in a time window',
+    'tags': ['History'],
+    'parameters': [
+        qparam('from', 'string', 'Start of time range (ISO 8601 UTC)', required=True),
+        qparam('to', 'string', 'End of time range (ISO 8601 UTC)', required=True),
+    ],
+    'responses': {
+        '200': response_inline(
+            {'serials': {'type': 'array', 'items': {'$ref': '#/components/schemas/HistorySerial'}}},
+            'List of distinct serials seen in the window',
+        ),
+    },
+})
 def api_history_serials(req: RequestHandler):
     from_ts = req._qparam('from')
     to_ts = req._qparam('to')
 
     if not from_ts or not to_ts:
-        req._send_error_json(400, 1, 'from and to query parameters are required')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'from and to query parameters are required')
         return
 
     try:
         serials = _db.get_history_serials(from_ts, to_ts)
     except Exception as e:
-        req._send_error_json(500, 5, f'Database error: {e}')
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
         return
 
-    req._send_json(req._ok({'serials': serials}))
+    req._send_ok({'serials': serials})
 
 
-@router.route('GET', '/api/history/timeline')
+@router.route('GET', '/api/v1/history/timeline', spec={
+    'summary': 'Aggregate detection timeline into time buckets',
+    'tags': ['History'],
+    'parameters': [
+        qparam('from', 'string', 'Start of time range (ISO 8601 UTC)', required=True),
+        qparam('to', 'string', 'End of time range (ISO 8601 UTC)', required=True),
+        qparam('bucket_seconds', 'integer', 'Bucket width in seconds (default 10)', default=10),
+    ],
+    'responses': {
+        '200': response_inline(
+            {'buckets': {'type': 'array', 'items': {'$ref': '#/components/schemas/TimelineBucket'}}},
+            'Timeline buckets',
+        ),
+    },
+})
 def api_history_timeline(req: RequestHandler):
     from_ts = req._qparam('from')
     to_ts = req._qparam('to')
 
     if not from_ts or not to_ts:
-        req._send_error_json(400, 1, 'from and to query parameters are required')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'from and to query parameters are required')
         return
 
     bucket_seconds = req._qparam_int('bucket_seconds', 10)
@@ -802,23 +977,37 @@ def api_history_timeline(req: RequestHandler):
     try:
         buckets = _db.get_history_timeline(from_ts, to_ts, bucket_seconds)
     except Exception as e:
-        req._send_error_json(500, 5, f'Database error: {e}')
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
         return
 
-    req._send_json(req._ok({'buckets': buckets}))
+    req._send_ok({'buckets': buckets})
 
 
 # ---------------------------------------------------------------------------
 # Export
 # ---------------------------------------------------------------------------
 
-@router.route('GET', '/api/export/kml')
+@router.route('GET', '/api/v1/export/kml', spec={
+    'summary': 'Export detections as a KML file',
+    'tags': ['Export'],
+    'parameters': [
+        qparam('from', 'string', 'Start of time range (ISO 8601 UTC)', required=True),
+        qparam('to', 'string', 'End of time range (ISO 8601 UTC)', required=True),
+        qparam('serial', 'string', 'Filter to a specific serial number'),
+    ],
+    'responses': {
+        '200': {
+            'description': 'KML file download',
+            'content': {'application/vnd.google-earth.kml+xml': {'schema': {'type': 'string'}}},
+        },
+    },
+})
 def api_export_kml(req: RequestHandler):
     from_ts = req._qparam('from')
     to_ts = req._qparam('to')
 
     if not from_ts or not to_ts:
-        req._send_error_json(400, 1, 'from and to query parameters are required')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'from and to query parameters are required')
         return
 
     serial = req._qparam('serial') or None
@@ -837,7 +1026,7 @@ def api_export_kml(req: RequestHandler):
             receiver_alt=rx_alt,
         )
     except Exception as e:
-        req._send_error_json(500, 5, f'KML generation failed: {e}')
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'KML generation failed: {e}')
         return
 
     kml_bytes = kml_str.encode('utf-8')
@@ -856,45 +1045,90 @@ def api_export_kml(req: RequestHandler):
 # Alerts
 # ---------------------------------------------------------------------------
 
-@router.route('GET', '/api/alerts/config')
+@router.route('GET', '/api/v1/alerts/config', spec={
+    'summary': 'Get alert configuration and rules',
+    'tags': ['Alerts'],
+    'responses': {
+        '200': response_ref('AlertConfig', 'Current alert configuration'),
+        '503': {'description': 'Alert engine not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_alerts_config_get(req: RequestHandler):
     if _alert_engine is None:
-        req._send_error_json(503, 5, 'Alert engine not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Alert engine not available')
         return
     config = _alert_engine.get_config()
-    req._send_json(req._ok(config))
+    req._send_ok(config)
 
 
-@router.route('PUT', '/api/alerts/config')
+@router.route('PUT', '/api/v1/alerts/config', spec={
+    'summary': 'Replace alert configuration and rules',
+    'tags': ['Alerts'],
+    'requestBody': json_body('AlertConfig', 'Updated alert configuration'),
+    'responses': {
+        '200': response_inline({}, 'Configuration updated'),
+        '503': {'description': 'Alert engine not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_alerts_config_put(req: RequestHandler):
     if _alert_engine is None:
-        req._send_error_json(503, 5, 'Alert engine not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Alert engine not available')
         return
     if req.json_data is None:
-        req._send_error_json(400, 1, 'JSON body required')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'JSON body required')
         return
     try:
         _alert_engine.set_config(req.json_data)
     except Exception as e:
-        req._send_error_json(500, 5, f'Failed to update alert config: {e}')
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Failed to update alert config: {e}')
         return
-    req._send_json(req._ok())
+    req._send_ok({})
 
 
-@router.route('POST', '/api/alerts/slack-test')
+@router.route('POST', '/api/v1/alerts/slack-test', spec={
+    'summary': 'Send a test Slack notification',
+    'tags': ['Alerts'],
+    'requestBody': json_body_inline(
+        {'webhook_url':   {'type': 'string', 'description': 'Slack incoming webhook URL'},
+         'display_name':  {'type': 'string', 'description': 'Bot display name'}},
+        required_props=['webhook_url'],
+        description='Slack webhook parameters',
+    ),
+    'responses': {
+        '200': response_inline(
+            {'success': {'type': 'boolean'}, 'message': {'type': 'string'}},
+            'Slack test result',
+        ),
+    },
+})
 def api_alerts_slack_test(req: RequestHandler):
     if req.json_data is None:
-        req._send_error_json(400, 1, 'JSON body required')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'JSON body required')
         return
     webhook_url = req.json_data.get('webhook_url', '')
     display_name = req.json_data.get('display_name', 'Sparrow DroneID')
     result = AlertEngine.test_slack(webhook_url, display_name)
-    resp = req._ok()
-    resp.update(result)
-    req._send_json(resp)
+    req._send_ok(result)
 
 
-@router.route('GET', '/api/alerts/log')
+@router.route('GET', '/api/v1/alerts/log', spec={
+    'summary': 'Query alert event log',
+    'tags': ['Alerts'],
+    'parameters': [
+        qparam('from', 'string', 'Start of time range (ISO 8601 UTC)'),
+        qparam('to', 'string', 'End of time range (ISO 8601 UTC)'),
+        qparam('limit', 'integer', 'Maximum records to return (default 100)', default=100),
+        qparam('offset', 'integer', 'Offset into result set (default 0)', default=0),
+        qparam('state', 'string', 'Filter by alert state', enum=['ACTIVE', 'ACKNOWLEDGED', 'RESOLVED']),
+    ],
+    'responses': {
+        '200': response_inline(
+            {'alerts':     {'type': 'array', 'items': {'$ref': '#/components/schemas/AlertEvent'}},
+             'pagination': {'$ref': '#/components/schemas/PaginationMeta'}},
+            'Alert log with pagination metadata',
+        ),
+    },
+})
 def api_alerts_log(req: RequestHandler):
     from_ts = req._qparam('from') or None
     to_ts = req._qparam('to') or None
@@ -904,23 +1138,45 @@ def api_alerts_log(req: RequestHandler):
 
     # Validate state filter if provided
     if state and state not in ('ACTIVE', 'ACKNOWLEDGED', 'RESOLVED'):
-        req._send_error_json(400, 1, "state must be 'ACTIVE', 'ACKNOWLEDGED', or 'RESOLVED'")
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, "state must be 'ACTIVE', 'ACKNOWLEDGED', or 'RESOLVED'")
         return
 
     try:
         alerts, total = _db.get_alerts(from_ts, to_ts, limit, offset, state=state)
     except Exception as e:
-        req._send_error_json(500, 5, f'Database error: {e}')
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
         return
 
-    req._send_json(req._ok({'alerts': alerts, 'total_count': total}))
+    req._send_ok({
+        'alerts': alerts,
+        'pagination': {
+            'total_count': total,
+            'returned_count': len(alerts),
+            'limit': limit,
+            'offset': offset,
+        },
+    })
 
 
-@router.route('PUT', '/api/alerts/acknowledge')
+@router.route('PUT', '/api/v1/alerts/acknowledge', spec={
+    'summary': 'Bulk-acknowledge all ACTIVE alerts',
+    'tags': ['Alerts'],
+    'requestBody': json_body_inline(
+        {'operator': {'type': 'string', 'description': 'Operator name to record on acknowledgements'}},
+        description='Acknowledgement details',
+    ),
+    'responses': {
+        '200': response_inline(
+            {'count': {'type': 'integer', 'description': 'Number of alerts acknowledged'}},
+            'Bulk acknowledgement result',
+        ),
+        '503': {'description': 'Database not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_alerts_acknowledge_all(req: RequestHandler):
     """Bulk-acknowledge all ACTIVE alerts."""
     if _db is None:
-        req._send_error_json(503, 5, 'Database not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
         return
 
     body = req.json_data or {}
@@ -929,23 +1185,38 @@ def api_alerts_acknowledge_all(req: RequestHandler):
     try:
         count = _db.acknowledge_all_active(operator)
     except Exception as e:
-        req._send_error_json(500, 5, f'Database error: {e}')
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
         return
 
-    req._send_json(req._ok({'count': count}))
+    req._send_ok({'count': count})
 
 
-@router.route('PUT', '/api/alerts/{alert_id}/acknowledge')
+@router.route('PUT', '/api/v1/alerts/{alert_id}/acknowledge', spec={
+    'summary': 'Acknowledge a single alert by ID',
+    'tags': ['Alerts'],
+    'parameters': [
+        path_param('alert_id', 'integer', 'Alert row ID'),
+    ],
+    'requestBody': json_body_inline(
+        {'operator': {'type': 'string', 'description': 'Operator name to record on acknowledgement'}},
+        description='Acknowledgement details',
+    ),
+    'responses': {
+        '200': response_inline({}, 'Alert acknowledged'),
+        '404': {'description': 'Alert not found or not in ACTIVE state', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+        '503': {'description': 'Database not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_alert_acknowledge(req: RequestHandler, alert_id: str):
     """Acknowledge a single alert by ID."""
     if _db is None:
-        req._send_error_json(503, 5, 'Database not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
         return
 
     try:
         aid = int(alert_id)
     except (ValueError, TypeError):
-        req._send_error_json(400, 1, 'alert_id must be an integer')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'alert_id must be an integer')
         return
 
     body = req.json_data or {}
@@ -954,48 +1225,75 @@ def api_alert_acknowledge(req: RequestHandler, alert_id: str):
     try:
         updated = _db.acknowledge_alert(aid, operator)
     except Exception as e:
-        req._send_error_json(500, 5, f'Database error: {e}')
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
         return
 
     if not updated:
-        req._send_error_json(404, 2, f'Alert {aid} not found or not in ACTIVE state')
+        req._send_error(404, ErrorCode.NOT_FOUND, f'Alert {aid} not found or not in ACTIVE state')
         return
 
-    req._send_json(req._ok())
+    req._send_ok({})
 
 
 # ---------------------------------------------------------------------------
 # GPS
 # ---------------------------------------------------------------------------
 
-@router.route('GET', '/api/gps')
+@router.route('GET', '/api/v1/gps', spec={
+    'summary': 'Get receiver GPS position and status',
+    'tags': ['GPS'],
+    'responses': {
+        '200': response_ref('GpsStatus', 'Current GPS status'),
+        '503': {'description': 'GPS engine not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_gps(req: RequestHandler):
     if _gps_engine is None:
-        req._send_error_json(503, 5, 'GPS engine not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'GPS engine not available')
         return
     gps_dict = _gps_engine.to_dict()
-    req._send_json(req._ok(gps_dict))
+    req._send_ok(gps_dict)
 
 
 # ---------------------------------------------------------------------------
 # Cursor on Target (CoT)
 # ---------------------------------------------------------------------------
 
-@router.route('GET', '/api/cot/status')
+@router.route('GET', '/api/v1/cot/status', spec={
+    'summary': 'Get CoT output status',
+    'tags': ['CoT'],
+    'responses': {
+        '200': response_ref('CotStatus', 'Current CoT engine status'),
+        '503': {'description': 'CoT engine not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_cot_status(req: RequestHandler):
     if _cot_engine is None:
-        req._send_error_json(503, 5, 'CoT engine not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'CoT engine not available')
         return
-    req._send_json(req._ok(_cot_engine.get_status()))
+    req._send_ok(_cot_engine.get_status())
 
 
-@router.route('PUT', '/api/cot/config')
+@router.route('PUT', '/api/v1/cot/config', spec={
+    'summary': 'Configure CoT output',
+    'tags': ['CoT'],
+    'requestBody': json_body_inline(
+        {'enabled': {'type': 'boolean', 'description': 'Enable or disable CoT output'},
+         'address': {'type': 'string',  'description': 'UDP multicast destination address'},
+         'port':    {'type': 'integer', 'description': 'UDP destination port'}},
+        description='CoT configuration',
+    ),
+    'responses': {
+        '200': response_inline({}, 'CoT configuration updated'),
+        '503': {'description': 'CoT engine not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_cot_config(req: RequestHandler):
     if _cot_engine is None:
-        req._send_error_json(503, 5, 'CoT engine not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'CoT engine not available')
         return
     if req.json_data is None:
-        req._send_error_json(400, 1, 'JSON body required')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'JSON body required')
         return
 
     body = req.json_data
@@ -1004,13 +1302,13 @@ def api_cot_config(req: RequestHandler):
     try:
         port = int(body.get('port', _cot_engine.port))
     except (ValueError, TypeError):
-        req._send_error_json(400, 1, 'port must be an integer')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'port must be an integer')
         return
 
     try:
         _cot_engine.configure(enabled, address, port)
     except Exception as e:
-        req._send_error_json(500, 5, f'Failed to configure CoT: {e}')
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Failed to configure CoT: {e}')
         return
 
     # Persist to DB so settings survive restart
@@ -1019,18 +1317,36 @@ def api_cot_config(req: RequestHandler):
         _db.set_setting('cot_address', address)
         _db.set_setting('cot_port', str(port))
 
-    req._send_json(req._ok())
+    req._send_ok({})
 
 
 # ---------------------------------------------------------------------------
 # Map Tiles
 # ---------------------------------------------------------------------------
 
-@router.route('GET', '/api/tiles/{source}/{z}/{x}/{y}')
+@router.route('GET', '/api/v1/tiles/{source}/{z}/{x}/{y}', spec={
+    'summary': 'Proxy a map tile (with optional disk cache)',
+    'tags': ['Tiles'],
+    'parameters': [
+        path_param('source', 'string', 'Tile source identifier (osm or esri_satellite)'),
+        path_param('z', 'string', 'Zoom level'),
+        path_param('x', 'string', 'Tile X coordinate'),
+        path_param('y', 'string', 'Tile Y coordinate (may include .png/.jpg suffix)'),
+    ],
+    'responses': {
+        '200': {
+            'description': 'Tile image',
+            'content': {'image/png': {'schema': {'type': 'string', 'format': 'binary'}},
+                        'image/jpeg': {'schema': {'type': 'string', 'format': 'binary'}}},
+        },
+        '400': {'description': 'Unknown tile source', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+        '503': {'description': 'Tile upstream unavailable', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_tiles(req: RequestHandler, source: str, z: str, x: str, y: str):
     y = y.rsplit('.', 1)[0]  # strip .png/.jpg suffix if present
     if source not in _TILE_UPSTREAM:
-        req._send_error_json(400, 1, f'Unknown tile source {source!r}. Supported: {list(_TILE_UPSTREAM)}')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, f'Unknown tile source {source!r}. Supported: {list(_TILE_UPSTREAM)}')
         return
 
     # --- Cache lookup ---
@@ -1073,7 +1389,7 @@ def api_tiles(req: RequestHandler, source: str, z: str, x: str, y: str):
                 return
             except OSError:
                 pass
-        req._send_error_json(503, 5, 'Tile upstream unavailable and no cached tile')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Tile upstream unavailable and no cached tile')
         return
 
     # --- Save to cache ---
@@ -1092,46 +1408,84 @@ def api_tiles(req: RequestHandler, source: str, z: str, x: str, y: str):
 # Data Maintenance
 # ---------------------------------------------------------------------------
 
-@router.route('GET', '/api/data/stats')
+@router.route('GET', '/api/v1/data/stats', spec={
+    'summary': 'Get database and storage statistics',
+    'tags': ['Data'],
+    'responses': {
+        '200': response_ref('DataStats', 'Database and tile cache statistics'),
+        '503': {'description': 'Database not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_data_stats(req: RequestHandler):
     if _db is None:
-        req._send_error_json(503, 5, 'Database not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
         return
     stats = _db.get_stats()
     retention = int(_db.get_setting('retention_days', '14') or '14')
     stats['retention_days'] = retention
-    req._send_json(req._ok(stats))
+    req._send_ok(stats)
 
 
-@router.route('POST', '/api/data/purge')
+@router.route('POST', '/api/v1/data/purge', spec={
+    'summary': 'Purge detection and alert records older than a timestamp',
+    'tags': ['Data'],
+    'requestBody': json_body_inline(
+        {'before': {'type': 'string', 'description': 'ISO 8601 UTC timestamp — records older than this will be deleted'}},
+        required_props=['before'],
+        description='Purge threshold',
+    ),
+    'responses': {
+        '200': response_inline(
+            {'detections_deleted': {'type': 'integer'},
+             'alerts_deleted':     {'type': 'integer'}},
+            'Purge result',
+        ),
+        '503': {'description': 'Database not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_data_purge(req: RequestHandler):
     if _db is None:
-        req._send_error_json(503, 5, 'Database not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
         return
 
     body = req.json_data or {}
     before_ts = body.get('before', '').strip()
     if not before_ts:
-        req._send_error_json(400, 1, 'before timestamp is required')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'before timestamp is required')
         return
 
     try:
         detections_deleted = _db.purge_detections(before_ts)
         alerts_deleted = _db.purge_alerts(before_ts)
     except Exception as e:
-        req._send_error_json(500, 5, f'Purge failed: {e}')
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Purge failed: {e}')
         return
 
-    req._send_json(req._ok({
+    req._send_ok({
         'detections_deleted': detections_deleted,
         'alerts_deleted': alerts_deleted,
-    }))
+    })
 
 
-@router.route('POST', '/api/data/purge-tiles')
+@router.route('POST', '/api/v1/data/purge-tiles', spec={
+    'summary': 'Delete cached map tiles',
+    'tags': ['Data'],
+    'requestBody': json_body_inline(
+        {'source': {'type': 'string', 'description': 'Tile source to purge (omit for all sources)', 'enum': ['osm', 'esri_satellite']}},
+        description='Optional source filter',
+    ),
+    'responses': {
+        '200': response_inline(
+            {'tiles_deleted': {'type': 'integer'},
+             'bytes_freed':   {'type': 'integer'}},
+            'Tile purge result',
+        ),
+        '503': {'description': 'Data directory not configured', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_data_purge_tiles(req: RequestHandler):
     if _data_dir is None:
-        req._send_error_json(503, 5, 'Data directory not configured')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Data directory not configured')
         return
 
     body = req.json_data or {}
@@ -1142,7 +1496,7 @@ def api_data_purge_tiles(req: RequestHandler):
     bytes_freed = 0
 
     if not os.path.isdir(tile_base):
-        req._send_json(req._ok({'tiles_deleted': 0, 'bytes_freed': 0}))
+        req._send_ok({'tiles_deleted': 0, 'bytes_freed': 0})
         return
 
     try:
@@ -1179,13 +1533,13 @@ def api_data_purge_tiles(req: RequestHandler):
             except OSError:
                 pass
     except Exception as e:
-        req._send_error_json(500, 5, f'Tile purge failed: {e}')
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Tile purge failed: {e}')
         return
 
-    req._send_json(req._ok({
+    req._send_ok({
         'tiles_deleted': tiles_deleted,
         'bytes_freed': bytes_freed,
-    }))
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -1204,7 +1558,21 @@ def _get_geozone_cache():
     return _geozone_cache
 
 
-@router.route('GET', '/api/geozones/airports')
+@router.route('GET', '/api/v1/geozones/airports', spec={
+    'summary': 'List airports near a position',
+    'tags': ['Geozones'],
+    'parameters': [
+        qparam('lat', 'number', 'Latitude (decimal degrees); defaults to receiver GPS position'),
+        qparam('lon', 'number', 'Longitude (decimal degrees); defaults to receiver GPS position'),
+        qparam('radius_mi', 'number', 'Search radius in miles (default 50)', default=50),
+    ],
+    'responses': {
+        '200': response_inline(
+            {'airports': {'type': 'array', 'items': {'type': 'object'}}},
+            'Airports within the search radius',
+        ),
+    },
+})
 def api_geozones_airports(req: RequestHandler):
     cache = _get_geozone_cache()
     lat = float(req._qparam('lat') or 0)
@@ -1215,10 +1583,23 @@ def api_geozones_airports(req: RequestHandler):
         lat, lon, _ = _gps_engine.get_receiver_position()
 
     airports = cache.get_airports(lat, lon, radius)
-    req._send_json(req._ok({'airports': airports}))
+    req._send_ok({'airports': airports})
 
 
-@router.route('GET', '/api/geozones/nofly')
+@router.route('GET', '/api/v1/geozones/nofly', spec={
+    'summary': 'Get FAA no-fly zone GeoJSON features near a position',
+    'tags': ['Geozones'],
+    'parameters': [
+        qparam('lat', 'number', 'Latitude (decimal degrees); defaults to receiver GPS position'),
+        qparam('lon', 'number', 'Longitude (decimal degrees); defaults to receiver GPS position'),
+    ],
+    'responses': {
+        '200': response_inline(
+            {'features': {'type': 'array', 'items': {'type': 'object'}}},
+            'GeoJSON feature collection of no-fly zones',
+        ),
+    },
+})
 def api_geozones_nofly(req: RequestHandler):
     cache = _get_geozone_cache()
     lat = float(req._qparam('lat') or 0)
@@ -1228,70 +1609,104 @@ def api_geozones_nofly(req: RequestHandler):
         lat, lon, _ = _gps_engine.get_receiver_position()
 
     nofly = cache.get_nofly_zones(lat, lon)
-    req._send_json(req._ok({'features': nofly.get('features', [])}))
+    req._send_ok({'features': nofly.get('features', [])})
 
 
 # ---------------------------------------------------------------------------
 # Vendor Codes
 # ---------------------------------------------------------------------------
 
-@router.route('GET', '/api/vendor-codes')
+@router.route('GET', '/api/v1/vendor-codes', spec={
+    'summary': 'Get current vendor code tables',
+    'tags': ['Vendor Codes'],
+    'responses': {
+        '200': response_ref('VendorCodeStats', 'Current vendor code tables with counts'),
+        '503': {'description': 'Database or alert engine not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_vendor_codes_get(req: RequestHandler):
     """Return current vendor code tables from the database."""
     if _db is None:
-        req._send_error_json(503, 5, 'Database not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
         return
     if _alert_engine is None:
-        req._send_error_json(503, 5, 'Alert engine not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Alert engine not available')
         return
     codes = _alert_engine.get_vendor_codes()
-    req._send_json(req._ok({
+    req._send_ok({
         'serial_prefixes': codes['serial_prefixes'],
         'mac_oui': codes['mac_oui'],
         'serial_prefix_count': len(codes['serial_prefixes']),
         'mac_oui_count': len(codes['mac_oui']),
-    }))
+    })
 
 
-@router.route('PUT', '/api/vendor-codes')
+@router.route('PUT', '/api/v1/vendor-codes', spec={
+    'summary': 'Replace vendor code tables',
+    'tags': ['Vendor Codes'],
+    'requestBody': json_body_inline(
+        {'serial_prefixes': {'type': 'object', 'description': 'Map of serial prefix → manufacturer name'},
+         'mac_oui':         {'type': 'object', 'description': 'Map of MAC OUI → manufacturer name'}},
+        description='Vendor code tables to replace (each key is optional)',
+    ),
+    'responses': {
+        '200': response_ref('VendorCodeStats', 'Updated vendor code tables with counts'),
+        '503': {'description': 'Database or alert engine not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_vendor_codes_put(req: RequestHandler):
     """Replace vendor code tables in the database and reload the alert engine."""
     if _db is None:
-        req._send_error_json(503, 5, 'Database not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
         return
     if _alert_engine is None:
-        req._send_error_json(503, 5, 'Alert engine not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Alert engine not available')
         return
     if req.json_data is None:
-        req._send_error_json(400, 1, 'JSON body required')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'JSON body required')
         return
 
     body = req.json_data
     if 'serial_prefixes' in body:
         sp = body['serial_prefixes']
         if not isinstance(sp, dict):
-            req._send_error_json(400, 1, 'serial_prefixes must be an object')
+            req._send_error(400, ErrorCode.VALIDATION_ERROR, 'serial_prefixes must be an object')
             return
         _db.set_setting('vendor_serial_prefixes', json.dumps(sp))
 
     if 'mac_oui' in body:
         oui = body['mac_oui']
         if not isinstance(oui, dict):
-            req._send_error_json(400, 1, 'mac_oui must be an object')
+            req._send_error(400, ErrorCode.VALIDATION_ERROR, 'mac_oui must be an object')
             return
         _db.set_setting('vendor_mac_oui', json.dumps(oui))
 
     _alert_engine.reload_vendor_codes()
     codes = _alert_engine.get_vendor_codes()
-    req._send_json(req._ok({
+    req._send_ok({
         'serial_prefixes': codes['serial_prefixes'],
         'mac_oui': codes['mac_oui'],
         'serial_prefix_count': len(codes['serial_prefixes']),
         'mac_oui_count': len(codes['mac_oui']),
-    }))
+    })
 
 
-@router.route('POST', '/api/vendor-codes/update')
+@router.route('POST', '/api/v1/vendor-codes/update', spec={
+    'summary': 'Fetch and merge vendor codes from a configured remote URL',
+    'tags': ['Vendor Codes'],
+    'responses': {
+        '200': response_inline(
+            {'serial_prefix_count':    {'type': 'integer'},
+             'mac_oui_count':          {'type': 'integer'},
+             'added_serial_prefixes':  {'type': 'integer'},
+             'added_mac_ouis':         {'type': 'integer'}},
+            'Merge result',
+        ),
+        '400': {'description': 'vendor_codes_url not configured', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+        '502': {'description': 'Remote fetch failed', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+        '503': {'description': 'Database or alert engine not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_vendor_codes_update(req: RequestHandler):
     """Fetch vendor codes from a remote URL, merge with existing, persist, and reload.
 
@@ -1302,15 +1717,15 @@ def api_vendor_codes_update(req: RequestHandler):
     If no URL is configured (vendor_codes_url is empty) the request is rejected.
     """
     if _db is None:
-        req._send_error_json(503, 5, 'Database not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
         return
     if _alert_engine is None:
-        req._send_error_json(503, 5, 'Alert engine not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Alert engine not available')
         return
 
     url = _db.get_setting('vendor_codes_url', '').strip()
     if not url:
-        req._send_error_json(400, 2, 'vendor_codes_url is not configured')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'vendor_codes_url is not configured')
         return
 
     try:
@@ -1318,11 +1733,11 @@ def api_vendor_codes_update(req: RequestHandler):
         resp.raise_for_status()
         remote = resp.json()
     except Exception as e:
-        req._send_error_json(502, 3, f'Failed to fetch vendor codes from remote: {e}')
+        req._send_error(502, ErrorCode.BAD_GATEWAY, f'Failed to fetch vendor codes from remote: {e}')
         return
 
     if not isinstance(remote, dict):
-        req._send_error_json(502, 3, 'Remote vendor codes document is not a JSON object')
+        req._send_error(502, ErrorCode.BAD_GATEWAY, 'Remote vendor codes document is not a JSON object')
         return
 
     # Merge: load existing, overlay remote entries (remote wins on conflict).
@@ -1342,32 +1757,59 @@ def api_vendor_codes_update(req: RequestHandler):
     _db.set_setting('vendor_mac_oui', json.dumps(merged_oui))
     _alert_engine.reload_vendor_codes()
 
-    req._send_json(req._ok({
+    req._send_ok({
         'serial_prefix_count': len(merged_serial),
         'mac_oui_count': len(merged_oui),
         'added_serial_prefixes': len(merged_serial) - len(current['serial_prefixes']),
         'added_mac_ouis': len(merged_oui) - len(current['mac_oui']),
-    }))
+    })
 
 
 # ---------------------------------------------------------------------------
 # WiFi SSID Detection
 # ---------------------------------------------------------------------------
 
-@router.route('GET', '/api/wifi-ssid/patterns')
+@router.route('GET', '/api/v1/wifi-ssid/patterns', spec={
+    'summary': 'Get SSID drone detection patterns',
+    'tags': ['WiFi SSID'],
+    'responses': {
+        '200': response_inline(
+            {'patterns': {'type': 'array', 'items': {'$ref': '#/components/schemas/WifiSsidPattern'}},
+             'count':    {'type': 'integer'}},
+            'Current SSID patterns',
+        ),
+        '503': {'description': 'Scanner not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_wifi_ssid_patterns_get(req: RequestHandler):
     """Return current SSID drone detection patterns."""
     if _db is None:
-        req._send_error_json(503, 5, 'Database not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
         return
     if _wifi_ssid_scanner is None:
-        req._send_error_json(503, 5, 'WiFi SSID scanner not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'WiFi SSID scanner not available')
         return
     patterns = _wifi_ssid_scanner.get_patterns()
-    req._send_json(req._ok({'patterns': patterns, 'count': len(patterns)}))
+    req._send_ok({'patterns': patterns, 'count': len(patterns)})
 
 
-@router.route('PUT', '/api/wifi-ssid/patterns')
+@router.route('PUT', '/api/v1/wifi-ssid/patterns', spec={
+    'summary': 'Replace SSID drone detection patterns',
+    'tags': ['WiFi SSID'],
+    'requestBody': json_body_inline(
+        {'patterns': {'type': 'array', 'items': {'$ref': '#/components/schemas/WifiSsidPattern'}}},
+        required_props=['patterns'],
+        description='Replacement patterns list; each regex is validated',
+    ),
+    'responses': {
+        '200': response_inline(
+            {'patterns': {'type': 'array', 'items': {'$ref': '#/components/schemas/WifiSsidPattern'}},
+             'count':    {'type': 'integer'}},
+            'Updated patterns',
+        ),
+        '503': {'description': 'Scanner not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_wifi_ssid_patterns_put(req: RequestHandler):
     """Replace the SSID drone detection patterns list.
 
@@ -1376,51 +1818,58 @@ def api_wifi_ssid_patterns_put(req: RequestHandler):
     Each regex is validated with re.compile — invalid patterns are rejected.
     """
     if _db is None:
-        req._send_error_json(503, 5, 'Database not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
         return
     if _wifi_ssid_scanner is None:
-        req._send_error_json(503, 5, 'WiFi SSID scanner not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'WiFi SSID scanner not available')
         return
     if req.json_data is None:
-        req._send_error_json(400, 1, 'JSON body required')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'JSON body required')
         return
 
     patterns = req.json_data.get('patterns')
     if not isinstance(patterns, list):
-        req._send_error_json(400, 1, 'patterns must be an array')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'patterns must be an array')
         return
 
     validated = []
     for i, item in enumerate(patterns):
         if not isinstance(item, dict):
-            req._send_error_json(400, 1, f'patterns[{i}] must be an object')
+            req._send_error(400, ErrorCode.VALIDATION_ERROR, f'patterns[{i}] must be an object')
             return
         pattern_str = item.get('pattern', '')
         label = item.get('label', '')
         if not pattern_str:
-            req._send_error_json(400, 1, f'patterns[{i}].pattern is required')
+            req._send_error(400, ErrorCode.VALIDATION_ERROR, f'patterns[{i}].pattern is required')
             return
         try:
             import re as _re
             _re.compile(pattern_str)
         except _re.error as exc:
-            req._send_error_json(400, 1, f'patterns[{i}].pattern is invalid regex: {exc}')
+            req._send_error(400, ErrorCode.VALIDATION_ERROR, f'patterns[{i}].pattern is invalid regex: {exc}')
             return
         validated.append({'pattern': pattern_str, 'label': label})
 
     _db.set_setting('wifi_ssid_patterns', json.dumps(validated))
     _wifi_ssid_scanner.reload_patterns()
 
-    req._send_json(req._ok({'patterns': validated, 'count': len(validated)}))
+    req._send_ok({'patterns': validated, 'count': len(validated)})
 
 
-@router.route('GET', '/api/wifi-ssid/status')
+@router.route('GET', '/api/v1/wifi-ssid/status', spec={
+    'summary': 'Get WiFi SSID scanner status',
+    'tags': ['WiFi SSID'],
+    'responses': {
+        '200': response_ref('WifiSsidStatus', 'WiFi SSID scanner status'),
+        '503': {'description': 'Scanner not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_wifi_ssid_status_get(req: RequestHandler):
     """Return WiFi SSID scanner status."""
     if _wifi_ssid_scanner is None:
-        req._send_error_json(503, 5, 'WiFi SSID scanner not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'WiFi SSID scanner not available')
         return
-    req._send_json(req._ok(_wifi_ssid_scanner.get_status()))
+    req._send_ok(_wifi_ssid_scanner.get_status())
 
 
 # ---------------------------------------------------------------------------
@@ -1453,30 +1902,60 @@ _SETTINGS_WRITABLE = frozenset({
 })
 
 
-@router.route('GET', '/api/settings')
+@router.route('GET', '/api/v1/settings', spec={
+    'summary': 'Get all application settings',
+    'tags': ['Settings'],
+    'responses': {
+        '200': response_inline(
+            {'settings': {'$ref': '#/components/schemas/Settings'}},
+            'Current application settings',
+        ),
+        '503': {'description': 'Database not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_settings_get(req: RequestHandler):
     if _db is None:
-        req._send_error_json(503, 5, 'Database not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
         return
     raw = _db.get_all_settings()
     coerced = _coerce_settings(raw)
-    req._send_json(req._ok({'settings': coerced}))
+    req._send_ok({'settings': coerced})
 
 
-@router.route('PUT', '/api/settings')
+@router.route('PUT', '/api/v1/settings', spec={
+    'summary': 'Update application settings',
+    'tags': ['Settings'],
+    'requestBody': json_body('Settings', 'Settings to update (only writable keys accepted)'),
+    'responses': {
+        '200': response_inline(
+            {'settings':         {'$ref': '#/components/schemas/Settings'},
+             'restart_required': {'type': 'boolean', 'description': 'True when a restart is needed for changes to take effect'}},
+            'Updated settings with restart flag',
+        ),
+        '400': {'description': 'Unknown settings keys', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+        '503': {'description': 'Database not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_settings_put(req: RequestHandler):
     if _db is None:
-        req._send_error_json(503, 5, 'Database not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
         return
     if req.json_data is None:
-        req._send_error_json(400, 1, 'JSON body required')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'JSON body required')
+        return
+
+    # Reject unknown keys
+    unknown_keys = [k for k in req.json_data if k not in _SETTINGS_WRITABLE]
+    if unknown_keys:
+        req._send_error(
+            400, ErrorCode.VALIDATION_ERROR,
+            f'Unknown settings key(s): {", ".join(sorted(unknown_keys))}',
+            detail={'unknown_keys': unknown_keys},
+        )
         return
 
     restart_required = False
     for key, value in req.json_data.items():
-        if key not in _SETTINGS_WRITABLE:
-            # Silently skip unknown / non-writable keys.
-            continue
         # Normalise value to string for DB storage
         if isinstance(value, bool):
             str_value = 'true' if value else 'false'
@@ -1523,53 +2002,81 @@ def api_settings_put(req: RequestHandler):
     raw = _db.get_all_settings()
     coerced = _coerce_settings(raw)
 
-    req._send_json(req._ok({
+    req._send_ok({
         'settings': coerced,
         'restart_required': restart_required,
-    }))
+    })
+
 
 # ---------------------------------------------------------------------------
 # Certificate Management
 # ---------------------------------------------------------------------------
 
-@router.route('GET', '/api/certs')
+@router.route('GET', '/api/v1/certs', spec={
+    'summary': 'List all certificates',
+    'tags': ['Certificates'],
+    'responses': {
+        '200': response_inline(
+            {'certs': {'type': 'array', 'items': {'$ref': '#/components/schemas/CertInfo'}}},
+            'List of installed certificates',
+        ),
+        '503': {'description': 'Certificate manager not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_certs_list(req: RequestHandler):
     if _cert_manager is None:
-        req._send_error_json(503, 5, 'Certificate manager not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Certificate manager not available')
         return
     try:
         certs = _cert_manager.list_certs()
     except Exception as e:
-        req._send_error_json(500, 5, f'Failed to list certs: {e}')
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Failed to list certs: {e}')
         return
-    req._send_json(req._ok({'certs': certs}))
+    req._send_ok({'certs': certs})
 
 
-@router.route('POST', '/api/certs/self-signed')
+@router.route('POST', '/api/v1/certs/self-signed', spec={
+    'summary': 'Generate a self-signed certificate',
+    'tags': ['Certificates'],
+    'requestBody': json_body_inline(
+        {'common_name': {'type': 'string', 'description': 'Certificate CN (hostname or IP)'},
+         'days':        {'type': 'integer', 'description': 'Validity period in days (default 365)'},
+         'key_size':    {'type': 'integer', 'description': 'RSA key size in bits (default 2048)'}},
+        required_props=['common_name'],
+        description='Self-signed certificate parameters',
+    ),
+    'responses': {
+        '201': response_inline(
+            {'cert': {'$ref': '#/components/schemas/CertInfo'}},
+            'Generated certificate details',
+        ),
+        '503': {'description': 'Certificate manager not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_certs_self_signed(req: RequestHandler):
     if _cert_manager is None:
-        req._send_error_json(503, 5, 'Certificate manager not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Certificate manager not available')
         return
     if req.json_data is None:
-        req._send_error_json(400, 1, 'JSON body required')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'JSON body required')
         return
 
     body = req.json_data
     common_name = body.get('common_name', '').strip()
     if not common_name:
-        req._send_error_json(400, 1, 'common_name is required')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'common_name is required')
         return
 
     try:
         days = int(body.get('days', 365))
     except (ValueError, TypeError):
-        req._send_error_json(400, 1, 'days must be an integer')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'days must be an integer')
         return
 
     try:
         key_size = int(body.get('key_size', 2048))
     except (ValueError, TypeError):
-        req._send_error_json(400, 1, 'key_size must be an integer')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'key_size must be an integer')
         return
 
     try:
@@ -1579,28 +2086,46 @@ def api_certs_self_signed(req: RequestHandler):
             key_size=key_size,
         )
     except RuntimeError as e:
-        req._send_error_json(500, 5, str(e))
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, str(e))
         return
     except Exception as e:
-        req._send_error_json(500, 5, f'Failed to generate certificate: {e}')
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Failed to generate certificate: {e}')
         return
 
-    req._send_json(req._ok({'cert': cert_info}))
+    req._send_ok({'cert': cert_info}, status=201)
 
 
-@router.route('POST', '/api/certs/csr')
+@router.route('POST', '/api/v1/certs/csr', spec={
+    'summary': 'Generate a Certificate Signing Request (CSR)',
+    'tags': ['Certificates'],
+    'requestBody': json_body_inline(
+        {'common_name':   {'type': 'string', 'description': 'Certificate CN'},
+         'organization':  {'type': 'string', 'description': 'Organization name (O field)'},
+         'country':       {'type': 'string', 'description': 'Two-letter country code (C field)'},
+         'key_size':      {'type': 'integer', 'description': 'RSA key size in bits (default 2048)'}},
+        required_props=['common_name'],
+        description='CSR parameters',
+    ),
+    'responses': {
+        '201': response_inline(
+            {'csr': {'type': 'object', 'description': 'CSR details including PEM text'}},
+            'Generated CSR details',
+        ),
+        '503': {'description': 'Certificate manager not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_certs_csr(req: RequestHandler):
     if _cert_manager is None:
-        req._send_error_json(503, 5, 'Certificate manager not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Certificate manager not available')
         return
     if req.json_data is None:
-        req._send_error_json(400, 1, 'JSON body required')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'JSON body required')
         return
 
     body = req.json_data
     common_name = body.get('common_name', '').strip()
     if not common_name:
-        req._send_error_json(400, 1, 'common_name is required')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'common_name is required')
         return
 
     organization = body.get('organization', '')
@@ -1609,7 +2134,7 @@ def api_certs_csr(req: RequestHandler):
     try:
         key_size = int(body.get('key_size', 2048))
     except (ValueError, TypeError):
-        req._send_error_json(400, 1, 'key_size must be an integer')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'key_size must be an integer')
         return
 
     try:
@@ -1620,22 +2145,39 @@ def api_certs_csr(req: RequestHandler):
             key_size=key_size,
         )
     except RuntimeError as e:
-        req._send_error_json(500, 5, str(e))
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, str(e))
         return
     except Exception as e:
-        req._send_error_json(500, 5, f'Failed to generate CSR: {e}')
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Failed to generate CSR: {e}')
         return
 
-    req._send_json(req._ok({'csr': csr_info}))
+    req._send_ok({'csr': csr_info}, status=201)
 
 
-@router.route('POST', '/api/certs/import')
+@router.route('POST', '/api/v1/certs/import', spec={
+    'summary': 'Import an existing certificate (and optional private key)',
+    'tags': ['Certificates'],
+    'requestBody': json_body_inline(
+        {'name':     {'type': 'string', 'description': 'Certificate name (used as filename stem)'},
+         'cert_pem': {'type': 'string', 'description': 'PEM-encoded certificate'},
+         'key_pem':  {'type': 'string', 'description': 'PEM-encoded private key (optional)'}},
+        required_props=['name', 'cert_pem'],
+        description='Certificate import payload',
+    ),
+    'responses': {
+        '201': response_inline(
+            {'cert': {'$ref': '#/components/schemas/CertInfo'}},
+            'Imported certificate details',
+        ),
+        '503': {'description': 'Certificate manager not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_certs_import(req: RequestHandler):
     if _cert_manager is None:
-        req._send_error_json(503, 5, 'Certificate manager not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Certificate manager not available')
         return
     if req.json_data is None:
-        req._send_error_json(400, 1, 'JSON body required')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'JSON body required')
         return
 
     body = req.json_data
@@ -1644,10 +2186,10 @@ def api_certs_import(req: RequestHandler):
     key_pem = body.get('key_pem', None)
 
     if not name:
-        req._send_error_json(400, 1, 'name is required')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'name is required')
         return
     if not cert_pem:
-        req._send_error_json(400, 1, 'cert_pem is required')
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'cert_pem is required')
         return
 
     try:
@@ -1657,52 +2199,80 @@ def api_certs_import(req: RequestHandler):
             key_pem=key_pem if key_pem else None,
         )
     except (ValueError, RuntimeError) as e:
-        req._send_error_json(400, 1, str(e))
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, str(e))
         return
     except Exception as e:
-        req._send_error_json(500, 5, f'Failed to import certificate: {e}')
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Failed to import certificate: {e}')
         return
 
-    req._send_json(req._ok({'cert': cert_info}))
+    req._send_ok({'cert': cert_info}, status=201)
 
 
-@router.route('GET', '/api/certs/{name}')
+@router.route('GET', '/api/v1/certs/{name}', spec={
+    'summary': 'Get details for a single certificate',
+    'tags': ['Certificates'],
+    'parameters': [
+        path_param('name', 'string', 'Certificate name (filename stem, URL-encoded)'),
+    ],
+    'responses': {
+        '200': response_inline(
+            {'cert': {'$ref': '#/components/schemas/CertInfo'}},
+            'Certificate details',
+        ),
+        '404': {'description': 'Certificate not found', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+        '503': {'description': 'Certificate manager not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_cert_detail(req: RequestHandler, name: str):
     if _cert_manager is None:
-        req._send_error_json(503, 5, 'Certificate manager not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Certificate manager not available')
         return
 
     name = unquote(name)
     try:
         cert_info = _cert_manager.get_cert_info(name)
     except FileNotFoundError as e:
-        req._send_error_json(404, 2, str(e))
+        req._send_error(404, ErrorCode.NOT_FOUND, str(e))
         return
     except RuntimeError as e:
-        req._send_error_json(500, 5, str(e))
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, str(e))
         return
     except Exception as e:
-        req._send_error_json(500, 5, f'Failed to get cert info: {e}')
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Failed to get cert info: {e}')
         return
 
-    req._send_json(req._ok({'cert': cert_info}))
+    req._send_ok({'cert': cert_info})
 
 
-@router.route('DELETE', '/api/certs/{name}')
+@router.route('DELETE', '/api/v1/certs/{name}', spec={
+    'summary': 'Delete a certificate by name',
+    'tags': ['Certificates'],
+    'parameters': [
+        path_param('name', 'string', 'Certificate name (filename stem, URL-encoded)'),
+    ],
+    'responses': {
+        '200': response_inline(
+            {'deleted': {'type': 'boolean'}, 'name': {'type': 'string'}},
+            'Deletion confirmation',
+        ),
+        '404': {'description': 'Certificate not found', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+        '503': {'description': 'Certificate manager not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
 def api_cert_delete(req: RequestHandler, name: str):
     if _cert_manager is None:
-        req._send_error_json(503, 5, 'Certificate manager not available')
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Certificate manager not available')
         return
 
     name = unquote(name)
     try:
         deleted = _cert_manager.delete_cert(name)
     except Exception as e:
-        req._send_error_json(500, 5, f'Failed to delete cert: {e}')
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Failed to delete cert: {e}')
         return
 
     if not deleted:
-        req._send_error_json(404, 2, f'Certificate {name!r} not found')
+        req._send_error(404, ErrorCode.NOT_FOUND, f'Certificate {name!r} not found')
         return
 
-    req._send_json(req._ok({'deleted': True, 'name': name}))
+    req._send_ok({'deleted': True, 'name': name})

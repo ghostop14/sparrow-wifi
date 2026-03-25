@@ -25,7 +25,7 @@ const MapManager = (() => {
 
   // ---- Tile URL builder (proxied through backend) ----
   function tileUrl(source) {
-    return `/api/tiles/${source}/{z}/{x}/{y}.png`;
+    return `/api/v1/tiles/${source}/{z}/{x}/{y}.png`;
   }
 
   // ---- Init ----

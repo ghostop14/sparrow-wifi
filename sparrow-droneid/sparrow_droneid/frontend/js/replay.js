@@ -93,7 +93,8 @@ const ReplayManager = (() => {
 
       // Fix #20: warn if results were truncated
       const returnedCount = _records.length;
-      const totalCount = histResp.total_count ?? returnedCount;
+      const pg = histResp.pagination || {};
+      const totalCount = pg.total_count ?? histResp.total_count ?? returnedCount;
       if (totalCount > returnedCount) {
         Utils.toast(
           `Showing ${returnedCount.toLocaleString()} of ${totalCount.toLocaleString()} records. Narrow the time range for complete data.`,

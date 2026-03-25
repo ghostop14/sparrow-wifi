@@ -5,7 +5,7 @@
 
 const Api = (() => {
 
-  const BASE = '/api';
+  const BASE = '/api/v1';
   const TOKEN_KEY = 'sparrow_auth_token';
 
   // ---- Token management ----
@@ -41,18 +41,15 @@ const Api = (() => {
       const data = await resp.json();
 
       if (!resp.ok) {
-        const msg = data.errmsg || `HTTP ${resp.status}`;
-        throw new ApiError(data.errcode ?? resp.status, msg);
-      }
-
-      if (data.errcode && data.errcode !== 0) {
-        throw new ApiError(data.errcode, data.errmsg || 'Unknown error');
+        // OpenAPI error format: { error: { code, message } }
+        const err = data.error || {};
+        throw new ApiError(err.code || `HTTP_${resp.status}`, err.message || `HTTP ${resp.status}`);
       }
 
       return data;
     } catch (err) {
       if (err instanceof ApiError) throw err;
-      throw new ApiError(-1, err.message || 'Network error');
+      throw new ApiError('NETWORK_ERROR', err.message || 'Network error');
     }
   }
 
