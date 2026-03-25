@@ -217,9 +217,9 @@ if [ "$RUNTIME_ARCH" != "$HOST_ARCH" ]; then
     RUNTIME_OPT="--runtime-file $RUNTIME_FILE"
 fi
 
-# Package the AppImage (gzip compression — zstd not supported by latest appimagetool)
+# Package the AppImage
 echo "Packaging AppImage (ARCH=$APPIMAGETOOL_ARCH)..."
-ARCH="$APPIMAGETOOL_ARCH" "$APPIMAGETOOL" --comp gzip $RUNTIME_OPT "$APPDIR" "$SCRIPT_DIR/$APPIMAGE_NAME"
+ARCH="$APPIMAGETOOL_ARCH" "$APPIMAGETOOL" $RUNTIME_OPT "$APPDIR" "$SCRIPT_DIR/$APPIMAGE_NAME"
 
 # Clean up build directory
 echo "Cleaning up build directory..."
