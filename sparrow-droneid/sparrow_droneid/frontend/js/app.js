@@ -155,6 +155,9 @@ const App = (() => {
     document.documentElement.setAttribute('data-bs-theme', theme);
     const icon = document.getElementById('themeIcon');
     if (icon) icon.className = theme === 'dark' ? 'bi bi-moon-fill' : 'bi bi-sun-fill';
+    if (typeof MapManager !== 'undefined' && MapManager.setTheme) {
+      MapManager.setTheme(theme);
+    }
   }
 
   // ---- Unit toggle (metric / imperial) ----

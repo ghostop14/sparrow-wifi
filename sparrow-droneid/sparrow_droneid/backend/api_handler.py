@@ -85,12 +85,14 @@ def set_engines(droneid: DroneIDEngine, gps: GPSEngine, alert: AlertEngine,
 # ---------------------------------------------------------------------------
 
 _TILE_UPSTREAM = {
-    'osm':           'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    'osm':            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    'osm_dark':       'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
     'esri_satellite': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
 }
 
 _TILE_CONTENT_TYPE = {
-    'osm':           'image/png',
+    'osm':            'image/png',
+    'osm_dark':       'image/png',
     'esri_satellite': 'image/jpeg',
 }
 

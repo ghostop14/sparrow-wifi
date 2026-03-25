@@ -14,9 +14,12 @@ const MapManager = (() => {
   let _selectedSerial = null;
   let _trackPolyline = null;
   let _onDroneClick = null;     // callback(serial)
-  let _osmLayer = null;
+  let _osmLightLayer = null;
+  let _osmDarkLayer = null;
+  let _osmLayer = null;       // currently active OSM layer (light or dark)
   let _satelliteLayer = null;
   let _layerControl = null;
+  let _currentTheme = 'dark';
 
   // Default center (Washington DC area) — will update from receiver position
   const DEFAULT_CENTER = [38.8977, -77.0365];
@@ -39,23 +42,36 @@ const MapManager = (() => {
       attributionControl: true,
     });
 
-    // Tile layers
-    _osmLayer = L.tileLayer(tileUrl('osm'), {
+    // Tile layers — light and dark OSM variants
+    _osmLightLayer = L.tileLayer(tileUrl('osm'), {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       maxZoom: 19,
-    }).addTo(_map);
+    });
+
+    _osmDarkLayer = L.tileLayer(tileUrl('osm_dark'), {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+      maxZoom: 20,
+    });
 
     _satelliteLayer = L.tileLayer(tileUrl('esri_satellite'), {
       attribution: '&copy; Esri &mdash; Source: Esri, USGS',
       maxZoom: 19,
     });
 
+    // Pick initial OSM layer based on current theme
+    _currentTheme = document.documentElement.getAttribute('data-bs-theme') || 'dark';
+    _osmLayer = _currentTheme === 'dark' ? _osmDarkLayer : _osmLightLayer;
+    _osmLayer.addTo(_map);
+
     // Layer control
     _layerControl = L.control.layers(
-      { 'OSM': _osmLayer, 'Satellite': _satelliteLayer },
+      { 'Map': _osmLayer, 'Satellite': _satelliteLayer },
       {},
       { position: 'topright', collapsed: true }
     ).addTo(_map);
+
+    // Refresh range ring colors when switching between Map and Satellite
+    _map.on('baselayerchange', () => _refreshRangeRings());
 
     // Click on map deselects
     _map.on('click', () => {
@@ -105,6 +121,19 @@ const MapManager = (() => {
   }
 
   // ---- Range rings ----
+
+  // Ring color palettes per visual context
+  const _ringStyles = {
+    light:     { color: '#2563EB', opacity: 0.45, labelColor: '#2563EB', labelShadow: '0 0 3px #fff, 0 0 3px #fff' },
+    dark:      { color: '#22D3EE', opacity: 0.55, labelColor: '#22D3EE', labelShadow: '0 0 4px #0d1117' },
+    satellite: { color: '#FFFFFF', opacity: 0.55, labelColor: '#FFFFFF', labelShadow: '0 1px 3px rgba(0,0,0,0.8)' },
+  };
+
+  function _getRingStyle() {
+    if (_map && _map.hasLayer(_satelliteLayer)) return _ringStyles.satellite;
+    return _currentTheme === 'dark' ? _ringStyles.dark : _ringStyles.light;
+  }
+
   function updateRangeRings(lat, lon) {
     _rangeRings.forEach(r => _map.removeLayer(r));
     _rangeRings = [];
@@ -112,17 +141,25 @@ const MapManager = (() => {
     if (!_rangeRingsVisible || !lat || !lon) return;
 
     const imperial = Utils.getUnits && Utils.getUnits() === 'imperial';
-    const radii  = imperial ? [804.7, 1609.3, 2414.0] : [500, 1000, 2500]; // meters
-    const colors = ['rgba(37,99,235,0.8)', 'rgba(37,99,235,0.6)', 'rgba(37,99,235,0.4)'];
-    const labels = imperial ? ['0.5 mi', '1 mi', '1.5 mi'] : ['500 m', '1 km', '2.5 km'];
+    const radii  = imperial
+      ? [402.3, 804.7, 1609.3, 3218.7]   // 0.25mi, 0.5mi, 1mi, 2mi
+      : [500, 1000, 2000, 3000];           // 0.5km, 1km, 2km, 3km
+    const labels = imperial
+      ? ['0.25 mi', '0.5 mi', '1 mi', '2 mi']
+      : ['500 m', '1 km', '2 km', '3 km'];
+
+    const style = _getRingStyle();
+    // Opacity gradient: inner rings more visible, outer rings lighter
+    const opacityScale = [1.0, 0.85, 0.7, 0.55];
 
     radii.forEach((r, i) => {
       const circle = L.circle([lat, lon], {
         radius: r,
-        color: colors[i],
+        color: style.color,
+        opacity: style.opacity * opacityScale[i],
         weight: 1.5,
-        dashArray: '6 4',
-        fillOpacity: 0.04,
+        dashArray: '6 8',
+        fillOpacity: 0,
         interactive: false,
       }).addTo(_map);
       _rangeRings.push(circle);
@@ -130,7 +167,7 @@ const MapManager = (() => {
       // Label
       const labelIcon = L.divIcon({
         className: '',
-        html: `<span style="font-size:10px;font-weight:600;color:rgba(37,99,235,0.9);text-shadow:0 0 3px #fff, 0 0 3px #fff;">${labels[i]}</span>`,
+        html: `<span style="font-size:10px;font-weight:600;color:${style.labelColor};opacity:0.9;text-shadow:${style.labelShadow};">${labels[i]}</span>`,
         iconAnchor: [0, 0],
       });
       const bearing = 45; // NE label position
@@ -138,6 +175,13 @@ const MapManager = (() => {
       const labelMarker = L.marker(labelLatLng, { icon: labelIcon, interactive: false }).addTo(_map);
       _rangeRings.push(labelMarker);
     });
+  }
+
+  function _refreshRangeRings() {
+    if (_receiverMarker && _rangeRingsVisible) {
+      const ll = _receiverMarker.getLatLng();
+      updateRangeRings(ll.lat, ll.lng);
+    }
   }
 
   function toggleRangeRings() {
@@ -585,6 +629,32 @@ const MapManager = (() => {
   }
 
   // Fix #24: invalidate map size after sidebar opens so Leaflet recalculates viewport
+  function setTheme(theme) {
+    if (!_map) return;
+    _currentTheme = theme;
+    const newOsm = theme === 'dark' ? _osmDarkLayer : _osmLightLayer;
+    if (newOsm === _osmLayer) return;
+
+    // Only swap if the user is currently viewing the OSM layer
+    const wasActive = _map.hasLayer(_osmLayer);
+    if (wasActive) {
+      _map.removeLayer(_osmLayer);
+      newOsm.addTo(_map);
+    }
+
+    // Rebuild layer control with the new OSM layer
+    if (_layerControl) _map.removeControl(_layerControl);
+    _osmLayer = newOsm;
+    _layerControl = L.control.layers(
+      { 'Map': _osmLayer, 'Satellite': _satelliteLayer },
+      {},
+      { position: 'topright', collapsed: true }
+    ).addTo(_map);
+
+    // Refresh range ring colors for the new theme
+    _refreshRangeRings();
+  }
+
   function invalidateSizeDelayed(ms) {
     setTimeout(() => {
       if (_map) _map.invalidateSize();
@@ -602,6 +672,7 @@ const MapManager = (() => {
     clearAll,
     fitToDrones,
     renderReplaySnapshot,
+    setTheme,
     invalidateSizeDelayed,
     _popupDetailClick,
     getMap: () => _map,
