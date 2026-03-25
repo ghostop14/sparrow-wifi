@@ -98,62 +98,6 @@ const SettingsManager = (() => {
             </div>
           </div>
 
-          <!-- Network & Security -->
-          <div class="card settings-card mb-3">
-            <div class="card-header">
-              <i class="bi bi-shield-lock me-2"></i>Network &amp; Security
-            </div>
-            <div class="card-body">
-
-              <div class="mb-3">
-                <label class="form-label" for="s_port">Port</label>
-                <input type="number" class="form-control form-control-sm" id="s_port"
-                  value="${s.port || 8097}" min="1" max="65535" style="max-width:110px;">
-                <small class="text-muted">HTTP listen port (restart required)</small>
-              </div>
-
-              <div class="mb-3">
-                <label class="form-label" for="s_bind">Bind Address</label>
-                <input type="text" class="form-control form-control-sm" id="s_bind"
-                  value="${_esc(s.bind_address || '0.0.0.0')}" placeholder="0.0.0.0" style="max-width:170px;">
-                <small class="text-muted">IP to listen on (restart required)</small>
-              </div>
-
-              <div class="mb-3">
-                <label class="form-label">HTTPS</label>
-                <div class="form-check form-switch">
-                  <input class="form-check-input" type="checkbox" id="s_https" ${_checked(s.https_enabled)}>
-                  <label class="form-check-label" for="s_https">Enable HTTPS (restart required)</label>
-                </div>
-              </div>
-
-              <div class="mb-3">
-                <label class="form-label" for="s_https_cert_name">TLS Certificate</label>
-                <select class="form-select form-select-sm" id="s_https_cert_name" style="max-width:220px;">
-                  <option value="">(none)</option>
-                  ${certs.map(c => `<option value="${_esc(c.name)}" ${_sel(s.https_cert_name, c.name)}>${_esc(c.name)}</option>`).join('')}
-                </select>
-                <small class="text-muted">Certificate to use for HTTPS</small>
-              </div>
-
-              <div class="mb-3">
-                <label class="form-label" for="s_allowed_ips">Allowed IPs</label>
-                <input type="text" class="form-control form-control-sm" id="s_allowed_ips"
-                  value="${_esc(s.allowed_ips || '')}" placeholder="192.168.1.0/24" style="max-width:220px;">
-                <small class="text-muted">Comma-separated IPs/CIDRs; empty = allow all</small>
-              </div>
-
-              <div class="mb-0">
-                <label class="form-label" for="s_token">Auth Token</label>
-                <input type="password" class="form-control form-control-sm" id="s_token"
-                  value="" placeholder="${s.auth_token === '(set)' ? '(set — enter new to change)' : '(not set)'}"
-                  autocomplete="new-password" style="max-width:220px;">
-                <small class="text-muted">Bearer token; leave blank to keep current</small>
-              </div>
-
-            </div>
-          </div>
-
           <!-- Monitoring -->
           <div class="card settings-card mb-3">
             <div class="card-header">
@@ -207,81 +151,6 @@ const SettingsManager = (() => {
             </div>
           </div>
 
-          <!-- Alerts -->
-          <div class="card settings-card mb-3">
-            <div class="card-header">
-              <i class="bi bi-bell me-2"></i>Alerts
-            </div>
-            <div class="card-body">
-
-              <div class="mb-2 d-flex align-items-center gap-2">
-                <div class="form-check form-switch mb-0">
-                  <input class="form-check-input" type="checkbox" id="s_alert_audio" ${_checked(s.alert_audio_enabled)}>
-                  <label class="form-check-label" for="s_alert_audio">Audio notifications</label>
-                </div>
-                <button class="btn btn-sm btn-outline-secondary" id="btn_audio_test" type="button">
-                  <i class="bi bi-volume-up me-1"></i>Test
-                </button>
-              </div>
-
-              <div class="mb-2">
-                <div class="form-check form-switch">
-                  <input class="form-check-input" type="checkbox" id="s_alert_visual" ${_checked(s.alert_visual_enabled)}>
-                  <label class="form-check-label" for="s_alert_visual">Visual notifications</label>
-                </div>
-              </div>
-
-              <div class="mb-2">
-                <div class="form-check form-switch">
-                  <input class="form-check-input" type="checkbox" id="s_alert_script" ${_checked(s.alert_script_enabled)}>
-                  <label class="form-check-label" for="s_alert_script">Script notifications</label>
-                </div>
-              </div>
-
-              <div class="mb-0">
-                <label class="form-label" for="s_alert_script_path">Script Path</label>
-                <input type="text" class="form-control form-control-sm" id="s_alert_script_path"
-                  value="${_esc(s.alert_script_path || '')}" placeholder="/path/to/alert.sh">
-                <small class="text-muted">Executed when an alert fires</small>
-              </div>
-
-            </div>
-          </div>
-
-          <!-- Certificates -->
-          <div class="card settings-card mb-3">
-            <div class="card-header">
-              <i class="bi bi-file-earmark-lock me-2"></i>Certificates
-            </div>
-            <div class="card-body">
-
-              <div id="certList" class="mb-3">
-                ${_buildCertTable(certs, s.https_cert_name)}
-              </div>
-
-              <div class="d-flex flex-wrap gap-2">
-                <button class="btn btn-sm btn-outline-secondary" id="btnGenSelfSigned">
-                  <i class="bi bi-key me-1"></i>Generate Self-Signed
-                </button>
-                <button class="btn btn-sm btn-outline-secondary" id="btnGenCSR">
-                  <i class="bi bi-file-earmark-text me-1"></i>Generate CSR
-                </button>
-                <button class="btn btn-sm btn-outline-secondary" id="btnImportCert">
-                  <i class="bi bi-upload me-1"></i>Import Certificate
-                </button>
-              </div>
-
-              <!-- Inline forms, hidden by default -->
-              <div id="certFormArea" class="mt-3"></div>
-
-            </div>
-          </div>
-
-        </div><!-- /col-1 -->
-
-        <!-- ===== Col 2 ===== -->
-        <div class="col-lg-6">
-
           <!-- GPS Configuration -->
           <div class="card settings-card mb-3">
             <div class="card-header">
@@ -329,6 +198,91 @@ const SettingsManager = (() => {
             </div>
           </div>
 
+          <!-- Network Security -->
+          <div class="card settings-card mb-3">
+            <div class="card-header">
+              <i class="bi bi-shield-lock me-2"></i>Network Security
+            </div>
+            <div class="card-body">
+
+              <div class="mb-3">
+                <label class="form-label" for="s_port">Port</label>
+                <input type="number" class="form-control form-control-sm" id="s_port"
+                  value="${s.port || 8097}" min="1" max="65535" style="max-width:110px;">
+                <small class="text-muted">HTTP listen port (restart required)</small>
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label" for="s_bind">Bind Address</label>
+                <input type="text" class="form-control form-control-sm" id="s_bind"
+                  value="${_esc(s.bind_address || '0.0.0.0')}" placeholder="0.0.0.0" style="max-width:170px;">
+                <small class="text-muted">IP to listen on (restart required)</small>
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label">HTTPS</label>
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="s_https" ${_checked(s.https_enabled)}>
+                  <label class="form-check-label" for="s_https">Enable HTTPS (restart required)</label>
+                </div>
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label" for="s_https_cert_name">TLS Certificate</label>
+                <select class="form-select form-select-sm" id="s_https_cert_name" style="max-width:220px;">
+                  <option value="">(none)</option>
+                  ${certs.map(c => `<option value="${_esc(c.name)}" ${_sel(s.https_cert_name, c.name)}>${_esc(c.name)}</option>`).join('')}
+                </select>
+                <small class="text-muted">Certificate to use for HTTPS</small>
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label" for="s_allowed_ips">Allowed IPs</label>
+                <input type="text" class="form-control form-control-sm" id="s_allowed_ips"
+                  value="${_esc(s.allowed_ips || '')}" placeholder="192.168.1.0/24" style="max-width:220px;">
+                <small class="text-muted">Comma-separated IPs/CIDRs; empty = allow all</small>
+              </div>
+
+              <div class="mb-0">
+                <label class="form-label" for="s_token">Auth Token</label>
+                <input type="password" class="form-control form-control-sm" id="s_token"
+                  value="" placeholder="${s.auth_token === '(set)' ? '(set — enter new to change)' : '(not set)'}"
+                  autocomplete="new-password" style="max-width:220px;">
+                <small class="text-muted">Bearer token; leave blank to keep current</small>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- Certificates -->
+          <div class="card settings-card mb-3">
+            <div class="card-header">
+              <i class="bi bi-file-earmark-lock me-2"></i>Certificates
+            </div>
+            <div class="card-body">
+
+              <div id="certList" class="mb-3">
+                ${_buildCertTable(certs, s.https_cert_name)}
+              </div>
+
+              <div class="d-flex flex-wrap gap-2">
+                <button class="btn btn-sm btn-outline-secondary" id="btnGenSelfSigned">
+                  <i class="bi bi-key me-1"></i>Generate Self-Signed
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" id="btnGenCSR">
+                  <i class="bi bi-file-earmark-text me-1"></i>Generate CSR
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" id="btnImportCert">
+                  <i class="bi bi-upload me-1"></i>Import Certificate
+                </button>
+              </div>
+
+              <!-- Inline forms, hidden by default -->
+              <div id="certFormArea" class="mt-3"></div>
+
+            </div>
+          </div>
+
           <!-- Cursor on Target -->
           <div class="card settings-card mb-3">
             <div class="card-header">
@@ -359,15 +313,53 @@ const SettingsManager = (() => {
             </div>
           </div>
 
-          <!-- Slack Notifications -->
+        </div><!-- /col-1 -->
+
+        <!-- ===== Col 2 ===== -->
+        <div class="col-lg-6">
+
+          <!-- Alerts -->
           <div class="card settings-card mb-3">
             <div class="card-header">
-              <i class="bi bi-chat-dots me-2"></i>Slack Notifications
+              <i class="bi bi-bell me-2"></i>Alerts
             </div>
             <div class="card-body">
 
+              <div class="mb-2 d-flex align-items-center gap-2">
+                <div class="form-check form-switch mb-0">
+                  <input class="form-check-input" type="checkbox" id="s_alert_audio" ${_checked(s.alert_audio_enabled)}>
+                  <label class="form-check-label" for="s_alert_audio">Audio notifications</label>
+                </div>
+                <button class="btn btn-sm btn-outline-secondary" id="btn_audio_test" type="button">
+                  <i class="bi bi-volume-up me-1"></i>Test
+                </button>
+              </div>
+
+              <div class="mb-2">
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="s_alert_visual" ${_checked(s.alert_visual_enabled)}>
+                  <label class="form-check-label" for="s_alert_visual">Visual notifications</label>
+                </div>
+              </div>
+
+              <div class="mb-2">
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="s_alert_script" ${_checked(s.alert_script_enabled)}>
+                  <label class="form-check-label" for="s_alert_script">Script notifications</label>
+                </div>
+              </div>
+
               <div class="mb-3">
-                <label class="form-label">Enable Slack</label>
+                <label class="form-label" for="s_alert_script_path">Script Path</label>
+                <input type="text" class="form-control form-control-sm" id="s_alert_script_path"
+                  value="${_esc(s.alert_script_path || '')}" placeholder="/path/to/alert.sh">
+                <small class="text-muted">Executed when an alert fires</small>
+              </div>
+
+              <hr class="my-2">
+
+              <div class="mb-3">
+                <label class="form-label">Slack</label>
                 <div class="form-check form-switch">
                   <input class="form-check-input" type="checkbox" id="s_alert_slack" ${_checked(s.alert_slack_enabled)}>
                   <label class="form-check-label" for="s_alert_slack">Send drone alerts to Slack</label>
@@ -391,44 +383,6 @@ const SettingsManager = (() => {
                   <i class="bi bi-send me-1"></i>Test Slack
                 </button>
               </div>
-
-            </div>
-          </div>
-
-          <!-- Data & Retention -->
-          <div class="card settings-card mb-3">
-            <div class="card-header">
-              <i class="bi bi-database me-2"></i>Data &amp; Retention
-            </div>
-            <div class="card-body">
-
-              <div class="mb-3">
-                <label class="form-label" for="s_retention">Retention Period</label>
-                <div class="d-flex align-items-center gap-2">
-                  <input type="number" class="form-control form-control-sm" id="s_retention"
-                    value="${s.retention_days || 14}" min="1" max="365" style="max-width:80px;">
-                  <span class="text-secondary small">days</span>
-                </div>
-                <small class="text-muted">Auto-purge data older than this</small>
-              </div>
-
-              ${stats ? `
-              <div class="settings-stats-grid mb-3">
-                <div><span class="text-secondary">DB Size</span><span>${Utils.formatBytes(stats.db_size_bytes)}</span></div>
-                <div><span class="text-secondary">Tile Cache</span><span>${Utils.formatBytes(stats.tile_cache_size_bytes)}</span></div>
-                <div><span class="text-secondary">Detections</span><span>${(stats.detection_count || 0).toLocaleString()}</span></div>
-                <div><span class="text-secondary">Unique Drones</span><span>${stats.unique_serials || 0}</span></div>
-                <div><span class="text-secondary">Alerts Logged</span><span>${stats.alert_count || 0}</span></div>
-                <div><span class="text-secondary">Oldest Record</span><span>${Utils.formatDateTime(stats.oldest_record)}</span></div>
-              </div>
-              <div class="d-flex gap-2">
-                <button class="btn btn-sm btn-outline-danger" id="btnPurgeData">
-                  <i class="bi bi-trash me-1"></i>Purge Old Data
-                </button>
-                <button class="btn btn-sm btn-outline-secondary" id="btnPurgeTiles">
-                  <i class="bi bi-map me-1"></i>Purge Tile Cache
-                </button>
-              </div>` : '<p class="text-secondary small mb-0">Stats unavailable.</p>'}
 
             </div>
           </div>
@@ -526,6 +480,44 @@ const SettingsManager = (() => {
               <div class="mb-0">
                 <small class="text-muted">Vendor codes are loaded from the bundled seed file on first startup.</small>
               </div>
+
+            </div>
+          </div>
+
+          <!-- Data Management -->
+          <div class="card settings-card mb-3">
+            <div class="card-header">
+              <i class="bi bi-database me-2"></i>Data Management
+            </div>
+            <div class="card-body">
+
+              <div class="mb-3">
+                <label class="form-label" for="s_retention">Retention Period</label>
+                <div class="d-flex align-items-center gap-2">
+                  <input type="number" class="form-control form-control-sm" id="s_retention"
+                    value="${s.retention_days || 14}" min="1" max="365" style="max-width:80px;">
+                  <span class="text-secondary small">days</span>
+                </div>
+                <small class="text-muted">Auto-purge data older than this</small>
+              </div>
+
+              ${stats ? `
+              <div class="settings-stats-grid mb-3">
+                <div><span class="text-secondary">DB Size</span><span>${Utils.formatBytes(stats.db_size_bytes)}</span></div>
+                <div><span class="text-secondary">Tile Cache</span><span>${Utils.formatBytes(stats.tile_cache_size_bytes)}</span></div>
+                <div><span class="text-secondary">Detections</span><span>${(stats.detection_count || 0).toLocaleString()}</span></div>
+                <div><span class="text-secondary">Unique Drones</span><span>${stats.unique_serials || 0}</span></div>
+                <div><span class="text-secondary">Alerts Logged</span><span>${stats.alert_count || 0}</span></div>
+                <div><span class="text-secondary">Oldest Record</span><span>${Utils.formatDateTime(stats.oldest_record)}</span></div>
+              </div>
+              <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-outline-danger" id="btnPurgeData">
+                  <i class="bi bi-trash me-1"></i>Purge Old Data
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" id="btnPurgeTiles">
+                  <i class="bi bi-map me-1"></i>Purge Tile Cache
+                </button>
+              </div>` : '<p class="text-secondary small mb-0">Stats unavailable.</p>'}
 
             </div>
           </div>

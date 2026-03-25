@@ -5,6 +5,11 @@
 # Creates a portable AppImage that can run on most Linux distributions.
 # Requires: Python 3.10+, pip, appimagetool (auto-downloaded if missing)
 #
+# Usage:
+#   ./build_droneid_appimage.sh              # Build x86_64 AppImage (default)
+#   ./build_droneid_appimage.sh aarch64      # Build aarch64 AppImage
+#   ./build_droneid_appimage.sh --arch arm64 # Same, via flag
+#
 
 set -e
 
@@ -12,23 +17,35 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$SCRIPT_DIR/sparrow_droneid"
 APP_NAME="SparrowDroneID"
 APPIMAGE_VERSION="1.0.0"
-PYTHON_VERSION="3.10"
-APPIMAGE_NAME="${APP_NAME}-${APPIMAGE_VERSION}-x86_64.AppImage"
+PYTHON_VERSION="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
 TOOLS_DIR="$SCRIPT_DIR/tools"
 
 # Parse arguments
+TARGET_ARCH=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --help|-h)
-            echo "Usage: $0 [options]"
+            echo "Usage: $0 [options] [ARCH]"
+            echo ""
+            echo "Arguments:"
+            echo "  ARCH              Target architecture: x86_64 (default), aarch64"
             echo ""
             echo "Options:"
-            echo "  --help, -h    Show this help message"
+            echo "  --arch ARCH       Target architecture (alternative to positional)"
+            echo "  --help, -h        Show this help message"
             echo ""
             echo "Builds an AppImage for Sparrow DroneID."
             echo "The resulting AppImage can be run on most Linux distributions."
             echo "Requires root/sudo to run (monitor mode capture)."
             exit 0
+            ;;
+        --arch)
+            TARGET_ARCH="$2"
+            shift 2
+            ;;
+        x86_64|aarch64|arm64)
+            TARGET_ARCH="$1"
+            shift
             ;;
         *)
             shift
@@ -36,7 +53,30 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-echo "Building $APP_NAME AppImage v$APPIMAGE_VERSION"
+# Default to x86_64 if not specified
+TARGET_ARCH="${TARGET_ARCH:-x86_64}"
+
+case "$TARGET_ARCH" in
+    x86_64)
+        APPIMAGETOOL_ARCH="x86_64"
+        RUNTIME_ARCH="x86_64"
+        ARCH_SUFFIX="x86_64"
+        ;;
+    aarch64|arm64)
+        APPIMAGETOOL_ARCH="arm_aarch64"
+        RUNTIME_ARCH="aarch64"
+        ARCH_SUFFIX="aarch64"
+        ;;
+    *)
+        echo "ERROR: Unsupported architecture: $TARGET_ARCH"
+        echo "Supported: x86_64, aarch64"
+        exit 1
+        ;;
+esac
+
+APPIMAGE_NAME="${APP_NAME}-${APPIMAGE_VERSION}-${ARCH_SUFFIX}.AppImage"
+
+echo "Building $APP_NAME AppImage v$APPIMAGE_VERSION ($TARGET_ARCH)"
 echo "=========================================="
 
 # Create build directory
@@ -61,13 +101,13 @@ cp "$APP_DIR/__init__.py" "$APPDIR/usr/lib/python$PYTHON_VERSION/"
 cp "$APP_DIR/requirements.txt" "$APPDIR/usr/lib/python$PYTHON_VERSION/"
 
 # Create launcher script
-cat > "$APPDIR/usr/bin/$APP_NAME" << 'LAUNCHER_EOF'
+cat > "$APPDIR/usr/bin/$APP_NAME" << LAUNCHER_EOF
 #!/bin/bash
-APPDIR="$(dirname "$(dirname "$(dirname "$(readlink -f "$0")")")")"
-PYLIB="$APPDIR/usr/lib/python3.10"
-export PYTHONPATH="$PYLIB:$PYTHONPATH"
+APPDIR="\$(dirname "\$(dirname "\$(dirname "\$(readlink -f "\$0")")")")"
+PYLIB="\$APPDIR/usr/lib/python$PYTHON_VERSION"
+export PYTHONPATH="\$PYLIB:\$PYTHONPATH"
 # Run from current working directory so relative paths (like --data) work correctly
-exec python3 "$PYLIB/app.py" --html-dir "$PYLIB/frontend" "$@"
+exec python3 "\$PYLIB/app.py" --html-dir "\$PYLIB/frontend" "\$@"
 LAUNCHER_EOF
 chmod +x "$APPDIR/usr/bin/$APP_NAME"
 
@@ -121,7 +161,10 @@ pip install --target="$APPDIR/usr/lib/python$PYTHON_VERSION" \
     -r "$APP_DIR/requirements.txt" \
     --quiet --no-warn-script-location
 
-# Find or download appimagetool
+# Determine host architecture for appimagetool binary
+HOST_ARCH="$(uname -m)"
+
+# Find or download appimagetool (runs on host arch, ARCH env var controls output)
 echo "Locating appimagetool..."
 APPIMAGETOOL="${APPIMAGETOOL:-}"
 
@@ -131,32 +174,52 @@ if [ -z "$APPIMAGETOOL" ]; then
 fi
 
 if [ -z "$APPIMAGETOOL" ] || [ ! -e "$APPIMAGETOOL" ]; then
-    if [ -e /usr/local/bin/appimagetool ]; then
-        APPIMAGETOOL="/usr/local/bin/appimagetool"
-    elif [ -e /opt/appimagetoolkit/appimagetool-x86_64.AppImage ]; then
-        APPIMAGETOOL="/opt/appimagetoolkit/appimagetool-x86_64.AppImage"
-    elif [ -e "$TOOLS_DIR/appimagetool-x86_64.AppImage" ]; then
-        APPIMAGETOOL="$TOOLS_DIR/appimagetool-x86_64.AppImage"
-    fi
+    for candidate in \
+        "/usr/local/bin/appimagetool" \
+        "/opt/appimagetoolkit/appimagetool-${HOST_ARCH}.AppImage" \
+        "$TOOLS_DIR/appimagetool-${HOST_ARCH}.AppImage" \
+        "$SCRIPT_DIR/appimagetool-${HOST_ARCH}.AppImage"; do
+        if [ -x "$candidate" ]; then
+            APPIMAGETOOL="$candidate"
+            break
+        fi
+    done
 fi
 
 # Auto-download if not found (cache in tools/ directory)
 if [ -z "$APPIMAGETOOL" ] || [ ! -e "$APPIMAGETOOL" ]; then
-    echo "appimagetool not found. Downloading..."
+    echo "appimagetool not found. Downloading for ${HOST_ARCH}..."
     mkdir -p "$TOOLS_DIR"
-    APPIMAGETOOL="$TOOLS_DIR/appimagetool-x86_64.AppImage"
+    APPIMAGETOOL="$TOOLS_DIR/appimagetool-${HOST_ARCH}.AppImage"
     curl -fSL --progress-bar \
         -o "$APPIMAGETOOL" \
-        "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+        "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${HOST_ARCH}.AppImage"
     chmod +x "$APPIMAGETOOL"
     echo "Downloaded and cached at: $APPIMAGETOOL"
 fi
 
 echo "Using: $APPIMAGETOOL"
 
+# Use cached runtime if available, otherwise download for cross-arch builds
+RUNTIME_OPT=""
+if [ "$RUNTIME_ARCH" != "$HOST_ARCH" ]; then
+    RUNTIME_FILE="$TOOLS_DIR/runtime-${RUNTIME_ARCH}"
+    mkdir -p "$TOOLS_DIR"
+    if [ -f "$RUNTIME_FILE" ]; then
+        echo "Using cached runtime: $RUNTIME_FILE"
+    else
+        echo "Downloading runtime for ${RUNTIME_ARCH}..."
+        curl -fSL --progress-bar \
+            -o "$RUNTIME_FILE" \
+            "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-${RUNTIME_ARCH}"
+        echo "Downloaded and cached at: $RUNTIME_FILE"
+    fi
+    RUNTIME_OPT="--runtime-file $RUNTIME_FILE"
+fi
+
 # Package the AppImage (gzip compression — zstd not supported by latest appimagetool)
-echo "Packaging AppImage..."
-ARCH=x86_64 "$APPIMAGETOOL" --comp gzip "$APPDIR" "$SCRIPT_DIR/$APPIMAGE_NAME"
+echo "Packaging AppImage (ARCH=$APPIMAGETOOL_ARCH)..."
+ARCH="$APPIMAGETOOL_ARCH" "$APPIMAGETOOL" --comp gzip $RUNTIME_OPT "$APPDIR" "$SCRIPT_DIR/$APPIMAGE_NAME"
 
 # Clean up build directory
 echo "Cleaning up build directory..."
