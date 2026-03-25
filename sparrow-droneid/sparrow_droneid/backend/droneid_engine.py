@@ -859,6 +859,7 @@ class DroneIDEngine:
         # BLE scanning state
         self._ble_thread = None
         self._ble_loop = None        # asyncio event loop owned by BLE thread
+        self._ble_task = None        # asyncio.Task for _ble_scan_loop
         self._ble_frame_count = 0
         self._ble_enabled = False    # True when BLE adapter was found and scan started
         self._ble_last_emit = {}     # MAC -> monotonic timestamp of last DB/alert emit
@@ -909,15 +910,17 @@ class DroneIDEngine:
             self._parse_thread.join(timeout=5)
             self._parse_thread = None
 
-        # Signal the BLE event loop to stop and wait for its thread
-        if self._ble_loop is not None:
+        # Cancel the BLE scan task so its finally block can clean up the
+        # scanner, then wait for the thread to finish.
+        if self._ble_task is not None and self._ble_loop is not None:
             try:
-                self._ble_loop.call_soon_threadsafe(self._ble_loop.stop)
+                self._ble_loop.call_soon_threadsafe(self._ble_task.cancel)
             except Exception:
                 pass
         if self._ble_thread:
             self._ble_thread.join(timeout=5)
             self._ble_thread = None
+        self._ble_task = None
         self._ble_loop = None
 
         if self._interface:
@@ -1222,18 +1225,24 @@ class DroneIDEngine:
         loop = asyncio.new_event_loop()
         self._ble_loop = loop
         try:
-            loop.run_until_complete(self._ble_scan_loop())
+            self._ble_task = loop.create_task(self._ble_scan_loop())
+            loop.run_until_complete(self._ble_task)
+        except asyncio.CancelledError:
+            pass  # Normal shutdown — stop() cancelled the task
         except Exception as exc:
-            # "Event loop stopped before Future completed" is normal on
-            # shutdown — the stop() method kills the loop while an await
-            # is pending.  Only warn on unexpected errors.
             if self._monitoring:
                 logging.warning("DroneID BLE thread exited with error: %s", exc)
         finally:
+            # Shut down any remaining async generators / tasks cleanly
+            try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception:
+                pass
             try:
                 loop.close()
             except Exception:
                 pass
+            self._ble_task = None
             self._ble_loop = None
 
     @staticmethod
