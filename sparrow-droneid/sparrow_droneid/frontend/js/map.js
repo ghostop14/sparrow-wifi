@@ -128,9 +128,9 @@ const MapManager = (() => {
   // Ring color palettes per visual context
   // Cyan on dark/satellite matches aviation convention (VFR charts, TCAS displays)
   const _ringStyles = {
-    light:     { color: '#2563EB', opacity: 0.45, labelColor: '#2563EB', labelShadow: '0 0 3px #fff, 0 0 3px #fff' },
-    dark:      { color: '#22D3EE', opacity: 0.55, labelColor: '#22D3EE', labelShadow: '0 0 4px #0d1117' },
-    satellite: { color: '#22D3EE', opacity: 0.65, labelColor: '#22D3EE', labelShadow: '0 1px 3px rgba(0,0,0,0.8)' },
+    light:     { color: '#2563EB', opacity: 0.60, labelColor: '#2563EB', labelShadow: '0 0 3px #fff, 0 0 3px #fff' },
+    dark:      { color: '#22D3EE', opacity: 0.70, labelColor: '#22D3EE', labelShadow: '0 0 4px #0d1117' },
+    satellite: { color: '#22D3EE', opacity: 0.75, labelColor: '#22D3EE', labelShadow: '0 1px 3px rgba(0,0,0,0.8)' },
   };
 
   function _getRingStyle() {
@@ -153,15 +153,15 @@ const MapManager = (() => {
       : ['500 m', '1 km', '2 km', '3 km'];
 
     const style = _getRingStyle();
-    // Opacity gradient: inner rings more visible, outer rings lighter
-    const opacityScale = [1.0, 0.85, 0.7, 0.55];
+    // Opacity gradient: inner rings full strength, outer rings slightly lighter
+    const opacityScale = [1.0, 0.9, 0.8, 0.7];
 
     radii.forEach((r, i) => {
       const circle = L.circle([lat, lon], {
         radius: r,
         color: style.color,
         opacity: style.opacity * opacityScale[i],
-        weight: 1.5,
+        weight: 2.5,
         dashArray: '6 8',
         fillOpacity: 0,
         interactive: false,
