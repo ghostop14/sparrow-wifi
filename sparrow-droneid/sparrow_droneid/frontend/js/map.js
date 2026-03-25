@@ -43,14 +43,17 @@ const MapManager = (() => {
     });
 
     // Tile layers — light and dark OSM variants
+    // Dark mode uses the same OSM tiles with a CSS invert filter applied via
+    // className — this preserves all road detail and labels unlike CartoDB Dark Matter.
     _osmLightLayer = L.tileLayer(tileUrl('osm'), {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       maxZoom: 19,
     });
 
-    _osmDarkLayer = L.tileLayer(tileUrl('osm_dark'), {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
-      maxZoom: 20,
+    _osmDarkLayer = L.tileLayer(tileUrl('osm'), {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      maxZoom: 19,
+      className: 'dark-tiles',
     });
 
     _satelliteLayer = L.tileLayer(tileUrl('esri_satellite'), {
@@ -123,10 +126,11 @@ const MapManager = (() => {
   // ---- Range rings ----
 
   // Ring color palettes per visual context
+  // Cyan on dark/satellite matches aviation convention (VFR charts, TCAS displays)
   const _ringStyles = {
     light:     { color: '#2563EB', opacity: 0.45, labelColor: '#2563EB', labelShadow: '0 0 3px #fff, 0 0 3px #fff' },
     dark:      { color: '#22D3EE', opacity: 0.55, labelColor: '#22D3EE', labelShadow: '0 0 4px #0d1117' },
-    satellite: { color: '#FFFFFF', opacity: 0.55, labelColor: '#FFFFFF', labelShadow: '0 1px 3px rgba(0,0,0,0.8)' },
+    satellite: { color: '#22D3EE', opacity: 0.65, labelColor: '#22D3EE', labelShadow: '0 1px 3px rgba(0,0,0,0.8)' },
   };
 
   function _getRingStyle() {

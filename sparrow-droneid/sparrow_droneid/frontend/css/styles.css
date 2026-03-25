@@ -188,6 +188,11 @@ html, body {
 
 /* Leaflet dark theme overrides */
 .leaflet-container { background: #192231; }
+
+/* Dark mode OSM tiles — invert + hue-rotate preserves road detail and labels */
+.dark-tiles {
+  filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(1.15);
+}
 .leaflet-control-layers,
 .leaflet-bar a {
   background: var(--bg-secondary) !important;
