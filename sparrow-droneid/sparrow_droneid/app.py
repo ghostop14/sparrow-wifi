@@ -261,6 +261,9 @@ class SparrowDroneID:
         1. --interface CLI flag
         2. monitor_interface from DB settings
         3. Auto-detect: single monitor-capable interface on the system
+
+        Retries up to 30 seconds if the interface isn't ready yet (common
+        at boot when iwlwifi firmware is still loading).
         """
         interface = self.auto_interface
         if not interface:
@@ -277,14 +280,19 @@ class SparrowDroneID:
         if not interface:
             return
 
-        try:
-            self.droneid_engine.start(interface)
-            # Persist so future restarts auto-start without needing the
-            # CLI flag or manual Settings save.
-            self.db.set_setting('monitor_interface', interface)
-            print(f"  Monitor:  {interface} on channel 6")
-        except Exception as e:
-            print(f"  Monitor:  Failed to start on {interface}: {e}")
+        max_attempts = 6
+        for attempt in range(1, max_attempts + 1):
+            try:
+                self.droneid_engine.start(interface)
+                self.db.set_setting('monitor_interface', interface)
+                print(f"  Monitor:  {interface} on channel 6")
+                return
+            except Exception as e:
+                if attempt < max_attempts:
+                    print(f"  Monitor:  Waiting for {interface} (attempt {attempt}/{max_attempts}): {e}")
+                    sleep(5)
+                else:
+                    print(f"  Monitor:  Failed to start on {interface} after {max_attempts} attempts: {e}")
 
     def run(self):
         """Run the application."""
