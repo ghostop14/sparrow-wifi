@@ -280,19 +280,28 @@ class SparrowDroneID:
         if not interface:
             return
 
-        max_attempts = 6
-        for attempt in range(1, max_attempts + 1):
-            try:
-                self.droneid_engine.start(interface)
-                self.db.set_setting('monitor_interface', interface)
-                print(f"  Monitor:  {interface} on channel 6")
+        # Wait for the interface to appear (iwlwifi firmware can take 60s+)
+        sysfs_path = f"/sys/class/net/{interface}"
+        wait_max = 90
+        waited = 0
+        if not os.path.exists(sysfs_path):
+            print(f"  Monitor:  Waiting for {interface} to appear...")
+            while waited < wait_max:
+                sleep(5)
+                waited += 5
+                if os.path.exists(sysfs_path):
+                    print(f"  Monitor:  {interface} appeared after {waited}s")
+                    break
+            else:
+                print(f"  Monitor:  {interface} not found after {wait_max}s — skipping auto-start")
                 return
-            except Exception as e:
-                if attempt < max_attempts:
-                    print(f"  Monitor:  Waiting for {interface} (attempt {attempt}/{max_attempts}): {e}")
-                    sleep(5)
-                else:
-                    print(f"  Monitor:  Failed to start on {interface} after {max_attempts} attempts: {e}")
+
+        try:
+            self.droneid_engine.start(interface)
+            self.db.set_setting('monitor_interface', interface)
+            print(f"  Monitor:  {interface} on channel 6")
+        except Exception as e:
+            print(f"  Monitor:  Failed to start on {interface}: {e}")
 
     def run(self):
         """Run the application."""
