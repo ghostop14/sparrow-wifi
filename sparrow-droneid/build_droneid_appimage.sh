@@ -121,7 +121,7 @@ APPDIR="\$(dirname "\$(dirname "\$(dirname "\$(readlink -f "\$0")")")")"
 PYLIB="\$APPDIR/usr/lib/python$PYTHON_VERSION"
 export PYTHONPATH="\$PYLIB:\$PYTHONPATH"
 # Run from current working directory so relative paths (like --data) work correctly
-exec python3 "\$PYLIB/app.py" --html-dir "\$PYLIB/frontend" "\$@"
+exec python3 -u "\$PYLIB/app.py" --html-dir "\$PYLIB/frontend" "\$@"
 LAUNCHER_EOF
 chmod +x "$APPDIR/usr/bin/$APP_NAME"
 
