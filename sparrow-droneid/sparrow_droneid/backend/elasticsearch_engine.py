@@ -378,6 +378,7 @@ def _is_resource_exists(exc: Exception) -> bool:
 
 def _push_dashboards_http(url: str, auth: Dict, verify_tls: bool,
                           ndjson_bytes: bytes, overwrite: bool) -> Dict:
+    import json
     """POST saved-objects NDJSON to Kibana / OpenSearch Dashboards."""
     import requests
 
@@ -402,13 +403,56 @@ def _push_dashboards_http(url: str, auth: Dict, verify_tls: bool,
         timeout=30,
     )
     if resp.status_code >= 400:
-        # Include the response body in the error for debugging
-        try:
-            detail = resp.json()
-        except Exception:
-            detail = resp.text[:500]
-        raise RuntimeError(
-            f"Kibana/OSD returned {resp.status_code}: {detail}")
+        # Bulk import failed — try importing one object at a time to
+        # identify which one is causing the error.
+        lines = [l for l in ndjson_bytes.decode("utf-8").splitlines() if l.strip()]
+        failed_objects = []
+        succeeded = 0
+        for line in lines:
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            single_resp = requests.post(
+                endpoint,
+                headers=headers,
+                auth=req_auth,
+                files={"file": ("single.ndjson", (line + "\n").encode("utf-8"),
+                                "application/ndjson")},
+                verify=verify_tls,
+                timeout=15,
+            )
+            if single_resp.status_code >= 400:
+                try:
+                    err_detail = single_resp.json()
+                except Exception:
+                    err_detail = single_resp.text[:200]
+                failed_objects.append({
+                    "id": obj.get("id", "?"),
+                    "type": obj.get("type", "?"),
+                    "status": single_resp.status_code,
+                    "error": err_detail,
+                })
+            else:
+                # Check for per-object errors in successful response
+                try:
+                    result = single_resp.json()
+                    for err in result.get("errors", []):
+                        failed_objects.append({
+                            "id": err.get("id", obj.get("id", "?")),
+                            "type": err.get("type", obj.get("type", "?")),
+                            "error": err.get("error", {}),
+                        })
+                    if not result.get("errors"):
+                        succeeded += 1
+                except Exception:
+                    succeeded += 1
+        if failed_objects:
+            raise RuntimeError(
+                f"{succeeded} objects imported, {len(failed_objects)} failed: "
+                f"{json.dumps(failed_objects, default=str)}")
+        # All objects imported individually even though bulk failed
+        return {"success": True, "successCount": succeeded}
     return resp.json()
 
 
