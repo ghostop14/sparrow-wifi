@@ -18,6 +18,13 @@ const SettingsManager = (() => {
 
     // Load data whenever the settings modal opens
     document.getElementById('settingsModal')?.addEventListener('show.bs.modal', () => {
+      // Reset to General tab — content is rebuilt on every open, so the
+      // active tab button must match the hardcoded "show active" pane.
+      const generalTab = document.getElementById('generalTab-tab');
+      if (generalTab) {
+        const tab = bootstrap.Tab.getOrCreateInstance(generalTab);
+        tab.show();
+      }
       _loadAndRender();
     });
   }
@@ -77,6 +84,8 @@ const SettingsManager = (() => {
     const _effectiveIface = s.monitor_interface ||
       (monCapable.length === 1 ? monCapable[0].base_name || monCapable[0].name : '');
     return `
+      <div class="tab-content">
+      <div class="tab-pane fade show active" id="generalTabPane" role="tabpanel" aria-labelledby="generalTab-tab">
       <div class="row g-3">
 
         <!-- ===== Col 1 ===== -->
@@ -524,6 +533,391 @@ const SettingsManager = (() => {
 
         </div><!-- /col-2 -->
       </div><!-- /row -->
+      </div><!-- /generalTabPane -->
+
+      ${_buildEsTabHtml(s)}
+
+      </div><!-- /tab-content -->
+    `;
+  }
+
+  function _buildEsTabHtml(s) {
+    // Settings are flat es_* keys, not nested
+    const setupDismissed = localStorage.getItem('sparrow_es_setup_dismissed') === '1';
+    const backendType = _esc(s.es_backend_type || 'elasticsearch');
+    const isOpenSearch = backendType === 'opensearch';
+    const dashboardsLabel = isOpenSearch ? 'OpenSearch Dashboards Connection' : 'Dashboards Connection';
+    const clusterAuthMethod = _esc(s.es_auth_method || 'none');
+    const dashAuthMethod = _esc(s.es_dashboards_auth_method || 'none');
+
+    return `
+      <div class="tab-pane fade" id="elasticsearchTabPane" role="tabpanel" aria-labelledby="elasticsearchTab-tab">
+        <div class="p-3">
+          <div class="row g-3">
+
+            <!-- ===== Card 1: Cluster Connection (includes Enable + Backend Type) ===== -->
+            <div class="col-lg-6">
+              <div class="card settings-card mb-3">
+                <div class="card-header">
+                  <i class="bi bi-hdd-network me-2"></i>Cluster Connection
+                </div>
+                <div class="card-body">
+
+                  ${setupDismissed ? '' : `
+                  <div class="alert alert-info py-2 px-3 mb-3 d-flex align-items-start gap-2" id="es_setup_banner" style="font-size:12px;">
+                    <i class="bi bi-info-circle-fill mt-1 flex-shrink-0"></i>
+                    <div class="flex-grow-1">
+                      Enter your cluster URL, click <strong>Test Cluster</strong>, then <strong>Save Settings</strong>.
+                      Default index settings work for most installs.
+                    </div>
+                    <button type="button" class="btn-close btn-close-white ms-2 flex-shrink-0" id="btn_es_dismiss_banner" aria-label="Dismiss" style="font-size:10px;"></button>
+                  </div>`}
+
+                  <div class="d-flex gap-3 mb-3">
+                    <div class="form-check form-switch pt-1">
+                      <input class="form-check-input" type="checkbox" id="s_es_enabled" ${_checked(s.es_enabled)}>
+                      <label class="form-check-label" for="s_es_enabled">Enable</label>
+                    </div>
+                    <div>
+                      <select class="form-select form-select-sm" id="s_es_backend_type" style="max-width:170px;">
+                        <option value="elasticsearch" ${_sel(backendType, 'elasticsearch')}>Elasticsearch</option>
+                        <option value="opensearch"    ${_sel(backendType, 'opensearch')}>OpenSearch</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div class="mb-3">
+                    <label class="form-label" for="s_es_url">URL</label>
+                    <input type="url" class="form-control form-control-sm" id="s_es_url"
+                      value="${_esc(s.es_url || 'https://localhost:9200')}" placeholder="https://localhost:9200">
+                  </div>
+
+                  <fieldset class="mb-3">
+                    <legend class="form-label">Authentication</legend>
+
+                    <div class="d-flex flex-column gap-1 mb-2">
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="es_auth_method" id="s_es_auth_none"
+                          value="none" ${clusterAuthMethod === 'none' ? 'checked' : ''}>
+                        <label class="form-check-label" for="s_es_auth_none">None</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="es_auth_method" id="s_es_auth_basic"
+                          value="basic" ${clusterAuthMethod === 'basic' ? 'checked' : ''}>
+                        <label class="form-check-label" for="s_es_auth_basic">Basic (username / password)</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="es_auth_method" id="s_es_auth_apikey"
+                          value="apikey" ${clusterAuthMethod === 'apikey' ? 'checked' : ''}
+                          ${isOpenSearch ? 'disabled' : ''}>
+                        <label class="form-check-label ${isOpenSearch ? 'text-muted' : ''}" for="s_es_auth_apikey">
+                          API Key
+                          ${isOpenSearch ? '<span class="ms-1 text-muted" style="font-size:11px;">(Elasticsearch only)</span>' : ''}
+                        </label>
+                      </div>
+                    </div>
+
+                    <div id="es_basic_fields" style="display:${clusterAuthMethod === 'basic' ? '' : 'none'}">
+                      <div class="mb-2">
+                        <label class="form-label" for="s_es_username">Username</label>
+                        <input type="text" class="form-control form-control-sm" id="s_es_username"
+                          value="${_esc(s.es_username || '')}" placeholder="elastic" style="max-width:200px;">
+                      </div>
+                      <div class="mb-2">
+                        <label class="form-label" for="s_es_password">Password</label>
+                        <input type="password" class="form-control form-control-sm" id="s_es_password"
+                          value="" placeholder="${s.es_password === '(set)' ? '(set — enter new to change)' : '(not set)'}"
+                          autocomplete="new-password" style="max-width:200px;">
+                      </div>
+                    </div>
+
+                    <div id="es_apikey_field" style="display:${clusterAuthMethod === 'apikey' ? '' : 'none'}">
+                      <div class="mb-2">
+                        <label class="form-label" for="s_es_api_key">API Key</label>
+                        <input type="password" class="form-control form-control-sm" id="s_es_api_key"
+                          value="" placeholder="${s.es_api_key === '(set)' ? '(set — enter new to change)' : '(not set)'}"
+                          autocomplete="off" style="max-width:280px;">
+                        <small class="text-muted">Base64-encoded id:api_key pair</small>
+                      </div>
+                    </div>
+
+                  </fieldset>
+
+                  <div class="mb-3">
+                    <label class="form-label">TLS</label>
+                    <div class="form-check form-switch">
+                      <input class="form-check-input" type="checkbox" id="s_es_verify_tls" ${_checked(s.es_verify_tls !== false)}>
+                      <label class="form-check-label" for="s_es_verify_tls">Verify TLS certificate</label>
+                    </div>
+                  </div>
+
+                  <div class="mb-3">
+                    <label class="form-label" for="s_es_agent_name">Agent Name</label>
+                    <input type="text" class="form-control form-control-sm" id="s_es_agent_name"
+                      value="${_esc(s.es_agent_name || '')}" placeholder="" style="max-width:220px;">
+                    <small class="text-muted">Tags records by source host (hostname used if blank)</small>
+                  </div>
+
+                  <div class="mb-0">
+                    <button class="btn btn-sm btn-outline-secondary" id="btn_es_test_cluster" type="button">
+                      <i class="bi bi-plug me-1"></i>Test Cluster
+                    </button>
+                    <span id="es_cluster_test_status" class="ms-2 small text-muted"></span>
+                  </div>
+
+                </div>
+              </div>
+            </div><!-- /col -->
+
+            <!-- ===== Card 2: Dashboards Connection ===== -->
+            <div class="col-lg-6">
+              <div class="card settings-card mb-3">
+                <div class="card-header">
+                  <i class="bi bi-grid me-2"></i><span id="es_dashboards_card_title">${_esc(dashboardsLabel)}</span>
+                </div>
+                <div class="card-body">
+
+                  <div class="mb-3">
+                    <label class="form-label" for="s_es_dashboards_url">URL</label>
+                    <input type="url" class="form-control form-control-sm" id="s_es_dashboards_url"
+                      value="${_esc(s.es_dashboards_url || 'https://localhost:5601')}" placeholder="https://localhost:5601">
+                    <small class="text-muted">Kibana or OpenSearch Dashboards URL</small>
+                  </div>
+
+                  <fieldset class="mb-3">
+                    <legend class="form-label">Authentication</legend>
+
+                    <div class="d-flex flex-column gap-1 mb-2">
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="es_dashboards_auth_method" id="s_es_dash_auth_none"
+                          value="none" ${dashAuthMethod === 'none' ? 'checked' : ''}>
+                        <label class="form-check-label" for="s_es_dash_auth_none">None</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="es_dashboards_auth_method" id="s_es_dash_auth_basic"
+                          value="basic" ${dashAuthMethod === 'basic' ? 'checked' : ''}>
+                        <label class="form-check-label" for="s_es_dash_auth_basic">Basic (username / password)</label>
+                      </div>
+                      <div class="form-check">
+                        <input class="form-check-input" type="radio" name="es_dashboards_auth_method" id="s_es_dash_auth_apikey"
+                          value="apikey" ${dashAuthMethod === 'apikey' ? 'checked' : ''}
+                          ${isOpenSearch ? 'disabled' : ''}>
+                        <label class="form-check-label ${isOpenSearch ? 'text-muted' : ''}" for="s_es_dash_auth_apikey">
+                          API Key
+                          ${isOpenSearch ? '<span class="ms-1 text-muted" style="font-size:11px;">(Elasticsearch only)</span>' : ''}
+                        </label>
+                      </div>
+                    </div>
+
+                    <div id="es_dash_basic_fields" style="display:${dashAuthMethod === 'basic' ? '' : 'none'}">
+                      <div class="mb-2">
+                        <label class="form-label" for="s_es_dashboards_username">Username</label>
+                        <input type="text" class="form-control form-control-sm" id="s_es_dashboards_username"
+                          value="${_esc(s.es_dashboards_username || '')}" placeholder="elastic" style="max-width:200px;">
+                      </div>
+                      <div class="mb-2">
+                        <label class="form-label" for="s_es_dashboards_password">Password</label>
+                        <input type="password" class="form-control form-control-sm" id="s_es_dashboards_password"
+                          value="" placeholder="${s.es_dashboards_password === '(set)' ? '(set — enter new to change)' : '(not set)'}"
+                          autocomplete="new-password" style="max-width:200px;">
+                      </div>
+                    </div>
+
+                    <div id="es_dash_apikey_field" style="display:${dashAuthMethod === 'apikey' ? '' : 'none'}">
+                      <div class="mb-2">
+                        <label class="form-label" for="s_es_dashboards_api_key">API Key</label>
+                        <input type="password" class="form-control form-control-sm" id="s_es_dashboards_api_key"
+                          value="" placeholder="${s.es_dashboards_api_key === '(set)' ? '(set — enter new to change)' : '(not set)'}"
+                          autocomplete="off" style="max-width:280px;">
+                        <small class="text-muted">Base64-encoded id:api_key pair</small>
+                      </div>
+                    </div>
+
+                  </fieldset>
+
+                  <div class="mb-3">
+                    <label class="form-label">TLS</label>
+                    <div class="form-check form-switch">
+                      <input class="form-check-input" type="checkbox" id="s_es_dashboards_verify_tls" ${_checked(s.es_dashboards_verify_tls !== false)}>
+                      <label class="form-check-label" for="s_es_dashboards_verify_tls">Verify TLS certificate</label>
+                    </div>
+                  </div>
+
+                  <div class="mb-0">
+                    <button class="btn btn-sm btn-outline-secondary" id="btn_es_test_dashboards" type="button">
+                      <i class="bi bi-plug me-1"></i>Test Dashboards
+                    </button>
+                    <span id="es_dash_test_status" class="ms-2 small text-muted"></span>
+                  </div>
+
+                </div>
+              </div>
+            </div><!-- /col -->
+
+            <!-- ===== Card 3: Index Configuration ===== -->
+            <div class="col-lg-6">
+              <div class="card settings-card mb-3">
+                <div class="card-header">
+                  <i class="bi bi-table me-2"></i>Index Configuration
+                </div>
+                <div class="card-body">
+
+                  <div class="mb-3">
+                    <label class="form-label" for="s_es_index_prefix">Index Prefix</label>
+                    <input type="text" class="form-control form-control-sm" id="s_es_index_prefix"
+                      value="${_esc(s.es_index_prefix || 'sparrow-droneid')}" placeholder="sparrow-droneid" style="max-width:220px;">
+                    <small class="text-muted">Prefix for all created indices (e.g. sparrow-droneid-000001)</small>
+                  </div>
+
+                  <div class="d-flex gap-3 mb-3">
+                    <div>
+                      <label class="form-label" for="s_es_shards">Shards</label>
+                      <input type="number" class="form-control form-control-sm" id="s_es_shards"
+                        value="${s.es_shards || 2}" min="1" step="1" style="max-width:80px;">
+                    </div>
+                    <div>
+                      <label class="form-label" for="s_es_replicas">Replicas</label>
+                      <input type="number" class="form-control form-control-sm" id="s_es_replicas"
+                        value="${s.es_replicas !== undefined ? s.es_replicas : 0}" min="0" step="1" style="max-width:80px;">
+                    </div>
+                  </div>
+                  <small class="text-muted d-block mb-3" style="margin-top:-0.5rem;">Applied on index creation. 0 replicas for single-node clusters.</small>
+
+                  <div class="mb-3">
+                    <label class="form-label" for="s_es_ilm_policy">ILM / ISM Policy</label>
+                    <div class="d-flex align-items-center gap-2">
+                      <select class="form-select form-select-sm" id="s_es_ilm_policy" style="max-width:200px;">
+                        <option value="">(none)</option>
+                        ${s.es_ilm_policy ? `<option value="${_esc(s.es_ilm_policy)}" selected>${_esc(s.es_ilm_policy)}</option>` : ''}
+                        <option value="__create_new__">+ Create new…</option>
+                      </select>
+                      <button class="btn btn-sm btn-outline-secondary" id="btn_es_refresh_ilm" type="button" title="Fetch policies from cluster">
+                        <i class="bi bi-arrow-clockwise"></i>
+                      </button>
+                      <span id="es_ilm_status" class="small text-muted"></span>
+                    </div>
+                    <div id="es_ilm_create_form" style="display:none;" class="mt-2 p-2 rounded border border-secondary">
+                      <div class="mb-2">
+                        <label class="form-label small mb-1" for="s_es_new_ilm_name">Policy Name</label>
+                        <input type="text" class="form-control form-control-sm" id="s_es_new_ilm_name"
+                          value="7d-hot-30d-warm-90d-delete" placeholder="7d-hot-30d-warm-90d-delete" style="max-width:220px;">
+                      </div>
+                      <div class="d-flex gap-3 mb-2">
+                        <div>
+                          <label class="form-label small mb-1" for="s_es_ilm_hot_days">Hot</label>
+                          <div class="d-flex align-items-center gap-1">
+                            <input type="number" class="form-control form-control-sm" id="s_es_ilm_hot_days"
+                              value="7" min="1" max="365" step="1" style="max-width:60px;">
+                            <span class="text-muted small">days</span>
+                          </div>
+                        </div>
+                        <div>
+                          <label class="form-label small mb-1" for="s_es_ilm_warm_days">Warm</label>
+                          <div class="d-flex align-items-center gap-1">
+                            <input type="number" class="form-control form-control-sm" id="s_es_ilm_warm_days"
+                              value="30" min="1" max="3650" step="1" style="max-width:60px;">
+                            <span class="text-muted small">days</span>
+                          </div>
+                        </div>
+                        <div>
+                          <label class="form-label small mb-1" for="s_es_ilm_delete_days">Delete</label>
+                          <div class="d-flex align-items-center gap-1">
+                            <input type="number" class="form-control form-control-sm" id="s_es_ilm_delete_days"
+                              value="90" min="1" max="3650" step="1" style="max-width:60px;">
+                            <span class="text-muted small">days</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="d-flex align-items-center gap-2">
+                        <button class="btn btn-sm btn-outline-primary" id="btn_es_create_ilm" type="button">Create</button>
+                        <button class="btn btn-sm btn-outline-secondary" id="btn_es_cancel_ilm" type="button">Cancel</button>
+                      </div>
+                      <small class="text-muted">Hot: active writes + rollover. Warm: read-only + force-merge. Delete: purge.</small>
+                    </div>
+                    <small class="text-muted">Lifecycle policy for rollover and retention</small>
+                  </div>
+
+                  <div class="mb-0">
+                    <a href="#" id="es_manage_policies_link" class="small text-muted"
+                      target="_blank" rel="noopener noreferrer"
+                      style="display:${s.es_dashboards_url ? '' : 'none'};">
+                      <i class="bi bi-box-arrow-up-right me-1"></i>Manage policies in Kibana / OSD
+                    </a>
+                  </div>
+
+                </div>
+              </div>
+            </div><!-- /col -->
+
+            <!-- ===== Card 4: Dashboard Management ===== -->
+            <div class="col-lg-6">
+              <div class="card settings-card mb-3">
+                <div class="card-header" style="background:var(--bg-elevated);">
+                  <i class="bi bi-layout-wtf me-2"></i>Dashboard Management
+                </div>
+                <div class="card-body">
+
+                  <p class="text-secondary small mb-3">
+                    Push pre-built drone detection dashboards to your Kibana / OpenSearch Dashboards instance.
+                  </p>
+
+                  <div class="mb-3">
+                    <div class="form-check form-switch">
+                      <input class="form-check-input" type="checkbox" id="s_es_overwrite_dashboards">
+                      <label class="form-check-label" for="s_es_overwrite_dashboards">
+                        Overwrite existing dashboards
+                      </label>
+                    </div>
+                    <small class="text-danger">Warning: overwrites any customisations you've made</small>
+                  </div>
+
+                  <div class="mb-3">
+                    <button class="btn btn-sm btn-outline-primary" id="btn_es_push_dashboards" type="button">
+                      <i class="bi bi-cloud-upload me-1"></i>Create Dashboards
+                    </button>
+                  </div>
+
+                  <div id="es_dashboard_status" class="small text-muted">Not installed</div>
+
+                </div>
+              </div>
+            </div><!-- /col -->
+
+            <!-- ===== Card 5: Ingest ===== -->
+            <div class="col-lg-6">
+              <div class="card settings-card mb-3">
+                <div class="card-header">
+                  <i class="bi bi-arrow-right-circle me-2"></i>Ingest
+                </div>
+                <div class="card-body">
+
+                  <div class="mb-3">
+                    <label class="form-label" for="s_es_bulk_size">Bulk Batch Size</label>
+                    <div class="d-flex align-items-center gap-2">
+                      <input type="number" class="form-control form-control-sm" id="s_es_bulk_size"
+                        value="${s.es_bulk_size || 100}" min="1" max="10000" step="1" style="max-width:100px;">
+                      <span class="text-secondary small">records</span>
+                    </div>
+                    <small class="text-muted">Max detections per bulk request</small>
+                  </div>
+
+                  <div class="mb-0">
+                    <label class="form-label" for="s_es_flush_interval">Flush Interval</label>
+                    <div class="d-flex align-items-center gap-2">
+                      <input type="number" class="form-control form-control-sm" id="s_es_flush_interval"
+                        value="${s.es_flush_interval || 5}" min="1" max="60" step="1" style="max-width:80px;">
+                      <span class="text-secondary small">seconds</span>
+                    </div>
+                    <small class="text-muted">Maximum time between flushes to the cluster</small>
+                  </div>
+
+                </div>
+              </div>
+            </div><!-- /col -->
+
+          </div><!-- /row -->
+        </div><!-- /p-3 -->
+      </div><!-- /elasticsearchTabPane -->
     `;
   }
 
@@ -745,6 +1139,326 @@ const SettingsManager = (() => {
 
     _reattachSsidDeleteListeners();
 
+    // ---- Elasticsearch listeners ----
+
+    // Quick setup banner dismiss
+    document.getElementById('btn_es_dismiss_banner')?.addEventListener('click', () => {
+      localStorage.setItem('sparrow_es_setup_dismissed', '1');
+      const banner = document.getElementById('es_setup_banner');
+      if (banner) banner.style.display = 'none';
+    });
+
+    // Backend type change: disable API Key for OpenSearch, update dashboards card title
+    document.getElementById('s_es_backend_type')?.addEventListener('change', e => {
+      const isOpenSearch = e.target.value === 'opensearch';
+      _applyBackendTypeUi(isOpenSearch);
+    });
+
+    // Cluster auth method toggle
+    document.querySelectorAll('input[name="es_auth_method"]').forEach(radio => {
+      radio.addEventListener('change', () => _updateEsAuthFields());
+    });
+
+    // Dashboards auth method toggle
+    document.querySelectorAll('input[name="es_dashboards_auth_method"]').forEach(radio => {
+      radio.addEventListener('change', () => _updateEsDashAuthFields());
+    });
+
+    // Test Cluster
+    document.getElementById('btn_es_test_cluster')?.addEventListener('click', async () => {
+      const btn = document.getElementById('btn_es_test_cluster');
+      const statusEl = document.getElementById('es_cluster_test_status');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Saving…';
+      if (statusEl) { statusEl.textContent = ''; statusEl.className = 'ms-2 small text-muted'; }
+      await _saveEsConnectionSettings();
+      btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Testing…';
+      try {
+        const resp = await Api.testEsCluster();
+        if (statusEl) {
+          const detail = resp.cluster_name && resp.version
+            ? `${resp.cluster_name} v${resp.version}`
+            : 'Connected';
+          statusEl.textContent = detail;
+          statusEl.className = 'ms-2 small text-success';
+        }
+        Utils.toast('Cluster connection successful', 'success');
+        // Auto-refresh ILM policies on successful connection test
+        _loadIlmPolicies();
+      } catch (e) {
+        if (statusEl) {
+          statusEl.textContent = e.message || 'Connection failed';
+          statusEl.className = 'ms-2 small text-danger';
+        }
+        Utils.toast('Cluster test failed: ' + e.message, 'danger');
+      }
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-plug me-1"></i>Test Cluster';
+    });
+
+    // Test Dashboards
+    document.getElementById('btn_es_test_dashboards')?.addEventListener('click', async () => {
+      const btn = document.getElementById('btn_es_test_dashboards');
+      const statusEl = document.getElementById('es_dash_test_status');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Saving…';
+      if (statusEl) { statusEl.textContent = ''; statusEl.className = 'ms-2 small text-muted'; }
+      await _saveEsConnectionSettings();
+      btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Testing…';
+      try {
+        const resp = await Api.testEsDashboards();
+        if (resp.ok && statusEl) {
+          const detail = resp.version ? `v${resp.version}` : 'Connected';
+          statusEl.textContent = detail;
+          statusEl.className = 'ms-2 small text-success';
+        } else if (statusEl) {
+          statusEl.textContent = resp.error || 'Connection failed';
+          statusEl.className = 'ms-2 small text-danger';
+        }
+        if (resp.ok) Utils.toast('Dashboards connection successful', 'success');
+        else Utils.toast('Dashboards test failed: ' + (resp.error || 'Unknown error'), 'danger');
+      } catch (e) {
+        if (statusEl) {
+          statusEl.textContent = e.message || 'Connection failed';
+          statusEl.className = 'ms-2 small text-danger';
+        }
+        Utils.toast('Dashboards test failed: ' + e.message, 'danger');
+      }
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-plug me-1"></i>Test Dashboards';
+    });
+
+    // Create Dashboards
+    document.getElementById('btn_es_push_dashboards')?.addEventListener('click', async () => {
+      const overwrite = document.getElementById('s_es_overwrite_dashboards')?.checked || false;
+      const msg = overwrite
+        ? 'Push dashboards and overwrite any existing customisations?'
+        : 'Push pre-built dashboards? Existing dashboards will not be overwritten.';
+      if (!confirm(msg)) return;
+      const btn = document.getElementById('btn_es_push_dashboards');
+      const statusEl = document.getElementById('es_dashboard_status');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Pushing…';
+      if (statusEl) { statusEl.textContent = 'Installing…'; statusEl.className = 'small text-muted'; }
+      try {
+        const resp = await Api.pushEsDashboards(overwrite);
+        if (statusEl) {
+          statusEl.textContent = resp.message || 'Dashboards installed';
+          statusEl.className = 'small text-success';
+        }
+        Utils.toast('Dashboards pushed successfully', 'success');
+      } catch (e) {
+        if (statusEl) {
+          statusEl.textContent = 'Failed: ' + e.message;
+          statusEl.className = 'small text-danger';
+        }
+        Utils.toast('Dashboard push failed: ' + e.message, 'danger');
+      }
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-cloud-upload me-1"></i>Create Dashboards';
+    });
+
+    // ILM policies: load when ES tab is shown
+    document.getElementById('elasticsearchTab-tab')?.addEventListener('shown.bs.tab', () => {
+      _loadIlmPolicies();
+    });
+
+    // ILM policies: manual refresh button
+    document.getElementById('btn_es_refresh_ilm')?.addEventListener('click', async () => {
+      const btn = document.getElementById('btn_es_refresh_ilm');
+      const statusEl = document.getElementById('es_ilm_status');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+      if (statusEl) { statusEl.textContent = ''; statusEl.className = 'small text-muted'; }
+      await _saveEsConnectionSettings();
+      try {
+        await _loadIlmPolicies();
+        const select = document.getElementById('s_es_ilm_policy');
+        // Subtract 2 for the fixed options: (none) and + Create new…
+        const count = select ? Math.max(0, select.options.length - 2) : 0;
+        if (statusEl) {
+          statusEl.textContent = count > 0 ? `${count} found` : 'No policies found';
+          statusEl.className = count > 0 ? 'small text-success' : 'small text-warning';
+        }
+      } catch (_) {
+        if (statusEl) {
+          statusEl.textContent = 'Could not reach cluster';
+          statusEl.className = 'small text-danger';
+        }
+      }
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i>';
+    });
+
+    // ILM: show create form when "Create new" is selected
+    document.getElementById('s_es_ilm_policy')?.addEventListener('change', (e) => {
+      const createForm = document.getElementById('es_ilm_create_form');
+      if (e.target.value === '__create_new__') {
+        if (createForm) createForm.style.display = '';
+        document.getElementById('s_es_new_ilm_name')?.focus();
+      } else {
+        if (createForm) createForm.style.display = 'none';
+      }
+    });
+
+    // ILM: cancel create
+    document.getElementById('btn_es_cancel_ilm')?.addEventListener('click', () => {
+      const select = document.getElementById('s_es_ilm_policy');
+      const createForm = document.getElementById('es_ilm_create_form');
+      if (createForm) createForm.style.display = 'none';
+      if (select) select.value = '';  // Reset to (none)
+    });
+
+    // ILM: create policy
+    document.getElementById('btn_es_create_ilm')?.addEventListener('click', async () => {
+      const nameInput = document.getElementById('s_es_new_ilm_name');
+      const name = (nameInput?.value || '').trim();
+      if (!name) {
+        Utils.toast('Policy name is required', 'warning');
+        nameInput?.focus();
+        return;
+      }
+      const hotDays = parseInt(document.getElementById('s_es_ilm_hot_days')?.value || '7', 10);
+      const warmDays = parseInt(document.getElementById('s_es_ilm_warm_days')?.value || '30', 10);
+      const deleteDays = parseInt(document.getElementById('s_es_ilm_delete_days')?.value || '90', 10);
+      if (warmDays <= hotDays) {
+        Utils.toast('Warm phase must be greater than hot phase', 'warning');
+        return;
+      }
+      if (deleteDays <= warmDays) {
+        Utils.toast('Delete threshold must be greater than warm phase', 'warning');
+        return;
+      }
+      const btn = document.getElementById('btn_es_create_ilm');
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+      await _saveEsConnectionSettings();
+      btn.textContent = 'Creating…';
+      try {
+        const resp = await Api.createEsIlmPolicy(name, hotDays, warmDays, deleteDays);
+        if (resp.ok) {
+          Utils.toast(`Policy "${name}" created`, 'success');
+          // Refresh the policy list and select the new one
+          await _loadIlmPolicies();
+          const select = document.getElementById('s_es_ilm_policy');
+          if (select) select.value = name;
+          const createForm = document.getElementById('es_ilm_create_form');
+          if (createForm) createForm.style.display = 'none';
+        } else {
+          Utils.toast('Failed to create policy: ' + (resp.error || 'Unknown error'), 'danger');
+        }
+      } catch (e) {
+        Utils.toast('Failed to create policy: ' + e.message, 'danger');
+      }
+      btn.disabled = false;
+      btn.textContent = 'Create';
+    });
+
+  }
+
+  function _applyBackendTypeUi(isOpenSearch) {
+    // Update dashboards card title
+    const titleEl = document.getElementById('es_dashboards_card_title');
+    if (titleEl) titleEl.textContent = isOpenSearch ? 'OpenSearch Dashboards Connection' : 'Dashboards Connection';
+
+    // Disable API Key radio for both cluster and dashboards
+    const clusterApiKeyRadio = document.getElementById('s_es_auth_apikey');
+    const dashApiKeyRadio    = document.getElementById('s_es_dash_auth_apikey');
+
+    if (clusterApiKeyRadio) {
+      clusterApiKeyRadio.disabled = isOpenSearch;
+      const lbl = clusterApiKeyRadio.nextElementSibling;
+      if (lbl) lbl.className = isOpenSearch ? 'form-check-label text-muted' : 'form-check-label';
+      // If currently selected and now disabled, fall back to none
+      if (isOpenSearch && clusterApiKeyRadio.checked) {
+        const noneRadio = document.getElementById('s_es_auth_none');
+        if (noneRadio) noneRadio.checked = true;
+        _updateEsAuthFields();
+      }
+    }
+
+    if (dashApiKeyRadio) {
+      dashApiKeyRadio.disabled = isOpenSearch;
+      const lbl = dashApiKeyRadio.nextElementSibling;
+      if (lbl) lbl.className = isOpenSearch ? 'form-check-label text-muted' : 'form-check-label';
+      if (isOpenSearch && dashApiKeyRadio.checked) {
+        const noneRadio = document.getElementById('s_es_dash_auth_none');
+        if (noneRadio) noneRadio.checked = true;
+        _updateEsDashAuthFields();
+      }
+    }
+  }
+
+  function _updateEsAuthFields() {
+    const method = document.querySelector('input[name="es_auth_method"]:checked')?.value || 'none';
+    const basicDiv  = document.getElementById('es_basic_fields');
+    const apikeyDiv = document.getElementById('es_apikey_field');
+    if (basicDiv)  basicDiv.style.display  = method === 'basic'  ? '' : 'none';
+    if (apikeyDiv) apikeyDiv.style.display = method === 'apikey' ? '' : 'none';
+  }
+
+  function _updateEsDashAuthFields() {
+    const method = document.querySelector('input[name="es_dashboards_auth_method"]:checked')?.value || 'none';
+    const basicDiv  = document.getElementById('es_dash_basic_fields');
+    const apikeyDiv = document.getElementById('es_dash_apikey_field');
+    if (basicDiv)  basicDiv.style.display  = method === 'basic'  ? '' : 'none';
+    if (apikeyDiv) apikeyDiv.style.display = method === 'apikey' ? '' : 'none';
+  }
+
+  async function _saveEsConnectionSettings() {
+    // Persist current ES connection fields (cluster + dashboards) to the
+    // backend so that ad-hoc operations (test, ILM query, policy create,
+    // dashboard push) can use them before the user clicks Save Settings.
+    const conn = {};
+    // Cluster connection
+    conn.es_backend_type = document.getElementById('s_es_backend_type')?.value || 'elasticsearch';
+    conn.es_url = document.getElementById('s_es_url')?.value?.trim() || '';
+    conn.es_auth_method = document.querySelector('input[name="es_auth_method"]:checked')?.value || 'none';
+    conn.es_username = document.getElementById('s_es_username')?.value?.trim() || '';
+    conn.es_verify_tls = !!(document.getElementById('s_es_verify_tls')?.checked);
+    conn.es_index_prefix = document.getElementById('s_es_index_prefix')?.value?.trim() || 'sparrow-droneid';
+    const pw = document.getElementById('s_es_password')?.value || '';
+    if (pw && pw !== '(set)') conn.es_password = pw;
+    const ak = document.getElementById('s_es_api_key')?.value || '';
+    if (ak && ak !== '(set)') conn.es_api_key = ak;
+    // Dashboards connection
+    conn.es_dashboards_url = document.getElementById('s_es_dashboards_url')?.value?.trim() || '';
+    conn.es_dashboards_auth_method = document.querySelector('input[name="es_dashboards_auth_method"]:checked')?.value || 'none';
+    conn.es_dashboards_username = document.getElementById('s_es_dashboards_username')?.value?.trim() || '';
+    conn.es_dashboards_verify_tls = !!(document.getElementById('s_es_dashboards_verify_tls')?.checked);
+    const dpw = document.getElementById('s_es_dashboards_password')?.value || '';
+    if (dpw && dpw !== '(set)') conn.es_dashboards_password = dpw;
+    const dak = document.getElementById('s_es_dashboards_api_key')?.value || '';
+    if (dak && dak !== '(set)') conn.es_dashboards_api_key = dak;
+    try {
+      await Api.putSettings(conn);
+    } catch (_) {
+      // Best-effort — don't block the operation
+    }
+  }
+
+  async function _loadIlmPolicies() {
+    const select = document.getElementById('s_es_ilm_policy');
+    if (!select) return;
+    const currentVal = select.value === '__create_new__' ? '' : select.value;
+    const createNewOpt = '<option value="__create_new__">+ Create new…</option>';
+    try {
+      const resp = await Api.getEsIlmPolicies();
+      // resp.policies is { name: body, ... } — extract names
+      const policyObj = resp.policies || {};
+      const names = Object.keys(policyObj).sort();
+      select.innerHTML = '<option value="">(none)</option>' +
+        names.map(p => `<option value="${_esc(p)}" ${p === currentVal ? 'selected' : ''}>${_esc(p)}</option>`).join('') +
+        createNewOpt;
+      if (currentVal && names.includes(currentVal)) {
+        select.value = currentVal;
+      }
+    } catch (_) {
+      // Cluster unreachable — keep existing options
+      if (select.options.length <= 1 && currentVal) {
+        select.innerHTML = `<option value="">(none)</option><option value="${_esc(currentVal)}" selected>${_esc(currentVal)}</option>` + createNewOpt;
+      }
+    }
   }
 
   // ---- WiFi SSID pattern delete ----
@@ -1029,6 +1743,42 @@ const SettingsManager = (() => {
       Utils.toast('Slack notifications require a webhook URL — disabled.', 'warning');
     }
     intField  ('s_retention',        'retention_days');
+
+    // Elasticsearch settings — flat es_* keys matching backend _SETTINGS_WRITABLE
+    const esEnabled = document.getElementById('s_es_enabled');
+    if (esEnabled) {
+      changes.es_enabled       = esEnabled.checked;
+      changes.es_backend_type  = document.getElementById('s_es_backend_type')?.value || 'elasticsearch';
+      changes.es_url           = document.getElementById('s_es_url')?.value?.trim() || '';
+      changes.es_auth_method   = document.querySelector('input[name="es_auth_method"]:checked')?.value || 'none';
+      changes.es_username      = document.getElementById('s_es_username')?.value?.trim() || '';
+      changes.es_verify_tls    = !!(document.getElementById('s_es_verify_tls')?.checked);
+      changes.es_agent_name    = document.getElementById('s_es_agent_name')?.value?.trim() || '';
+      changes.es_dashboards_url        = document.getElementById('s_es_dashboards_url')?.value?.trim() || '';
+      changes.es_dashboards_auth_method = document.querySelector('input[name="es_dashboards_auth_method"]:checked')?.value || 'none';
+      changes.es_dashboards_username   = document.getElementById('s_es_dashboards_username')?.value?.trim() || '';
+      changes.es_dashboards_verify_tls = !!(document.getElementById('s_es_dashboards_verify_tls')?.checked);
+      changes.es_index_prefix  = document.getElementById('s_es_index_prefix')?.value?.trim() || 'sparrow-droneid';
+      changes.es_shards        = parseInt(document.getElementById('s_es_shards')?.value || '2', 10);
+      changes.es_replicas      = parseInt(document.getElementById('s_es_replicas')?.value || '0', 10);
+      const ilmVal = document.getElementById('s_es_ilm_policy')?.value || '';
+      changes.es_ilm_policy    = ilmVal === '__create_new__' ? '' : ilmVal;
+      changes.es_bulk_size     = parseInt(document.getElementById('s_es_bulk_size')?.value || '100', 10);
+      changes.es_flush_interval = parseInt(document.getElementById('s_es_flush_interval')?.value || '5', 10);
+
+      // Only include sensitive fields if not blank and not the placeholder mask
+      const esPasswordVal = document.getElementById('s_es_password')?.value || '';
+      if (esPasswordVal && esPasswordVal !== '(set)') changes.es_password = esPasswordVal;
+
+      const esApiKeyVal = document.getElementById('s_es_api_key')?.value || '';
+      if (esApiKeyVal && esApiKeyVal !== '(set)') changes.es_api_key = esApiKeyVal;
+
+      const esDashPasswordVal = document.getElementById('s_es_dashboards_password')?.value || '';
+      if (esDashPasswordVal && esDashPasswordVal !== '(set)') changes.es_dashboards_password = esDashPasswordVal;
+
+      const esDashApiKeyVal = document.getElementById('s_es_dashboards_api_key')?.value || '';
+      if (esDashApiKeyVal && esDashApiKeyVal !== '(set)') changes.es_dashboards_api_key = esDashApiKeyVal;
+    }
 
     // Token only if entered
     const tokenVal = document.getElementById('s_token')?.value?.trim();

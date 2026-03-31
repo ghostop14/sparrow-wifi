@@ -61,6 +61,10 @@ class AlertEngine:
         # Alerts waiting to be consumed by the frontend polling endpoint.
         self._pending_alerts: List[dict] = []
 
+        # Optional callback for external consumers (e.g. Elasticsearch engine).
+        # Signature: on_alert(alert_event: AlertEvent, device: DroneIDDevice)
+        self.on_alert = None
+
         # Deferred new-drone alerts: wait a few seconds for more frames to
         # arrive so the alert has position, altitude, vendor, etc.
         # key -> (first_seen_monotonic, latest_device)
@@ -441,6 +445,13 @@ class AlertEngine:
             self._pending_alerts.append(alert_dict)
 
         log.info("alert_engine: %s — %s — %s", alert_type, event.serial_number, detail)
+
+        # Fire external callback (e.g. Elasticsearch indexing)
+        if self.on_alert:
+            try:
+                self.on_alert(event, device)
+            except Exception:
+                pass
 
         if self._script_enabled and self._script_path:
             self._run_script(alert_dict)

@@ -16,3 +16,7 @@ bleak>=0.21.0
 
 # bleak's Linux backend (auto-installed by bleak, listed for clarity)
 dbus-fast>=1.80.0
+
+# Elasticsearch / OpenSearch integration (both optional — only the configured backend is used)
+elasticsearch>=8.0,<9.0
+opensearch-py>=2.0,<3.0

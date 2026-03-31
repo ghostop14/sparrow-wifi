@@ -28,6 +28,7 @@ from .droneid_engine import DroneIDEngine, CaptureManager, check_prerequisites
 from .gps_engine import GPSEngine
 from .alert_engine import AlertEngine
 from .cot_engine import CotEngine
+from .elasticsearch_engine import ElasticsearchEngine
 from .database import Database
 from .export import generate_kml
 from .cert_manager import CertManager
@@ -45,6 +46,7 @@ _droneid_engine: Optional[DroneIDEngine] = None
 _gps_engine: Optional[GPSEngine] = None
 _alert_engine: Optional[AlertEngine] = None
 _cot_engine: Optional[CotEngine] = None
+_es_engine: Optional[ElasticsearchEngine] = None
 _db: Optional[Database] = None
 _data_dir: Optional[str] = None
 _html_dir: Optional[str] = None
@@ -65,14 +67,16 @@ _openapi_cache: Optional[bytes] = None
 def set_engines(droneid: DroneIDEngine, gps: GPSEngine, alert: AlertEngine,
                 cot: CotEngine, db: Database, data_dir: str, html_dir: str,
                 cert_manager: CertManager = None,
-                wifi_ssid_scanner: WifiSsidScanner = None) -> None:
+                wifi_ssid_scanner: WifiSsidScanner = None,
+                es_engine: ElasticsearchEngine = None) -> None:
     """Called by app.py at startup to wire engine references into this module."""
-    global _droneid_engine, _gps_engine, _alert_engine, _cot_engine
+    global _droneid_engine, _gps_engine, _alert_engine, _cot_engine, _es_engine
     global _db, _data_dir, _html_dir, _cert_manager, _wifi_ssid_scanner
     _droneid_engine = droneid
     _gps_engine = gps
     _alert_engine = alert
     _cot_engine = cot
+    _es_engine = es_engine
     _db = db
     _data_dir = data_dir
     _html_dir = html_dir
@@ -533,14 +537,21 @@ def _coerce_settings(raw: Dict[str, str]) -> Dict[str, Any]:
         'https_enabled', 'cot_enabled',
         'alert_audio_enabled', 'alert_visual_enabled', 'alert_script_enabled',
         'tile_cache_enabled',
+        'es_enabled', 'es_verify_tls', 'es_dashboards_verify_tls',
     }
-    int_keys = {'port', 'cot_port', 'retention_days'}
+    int_keys = {'port', 'cot_port', 'retention_days',
+                'es_shards', 'es_replicas', 'es_bulk_size', 'es_flush_interval'}
     float_keys = {'gps_static_lat', 'gps_static_lon', 'gps_static_alt'}
+    # Sensitive fields: show '(set)' if non-empty, '' if empty — never reveal value.
+    sensitive_keys = {
+        'auth_token',
+        'es_password', 'es_api_key',
+        'es_dashboards_password', 'es_dashboards_api_key',
+    }
 
     result: Dict[str, Any] = {}
     for k, v in raw.items():
-        if k == 'auth_token':
-            # Never reveal the actual token value.
+        if k in sensitive_keys:
             result[k] = '(set)' if v else ''
         elif k in bool_keys:
             result[k] = v.lower() in ('1', 'true', 'yes')
@@ -1899,6 +1910,12 @@ _SETTINGS_WRITABLE = frozenset({
     'display_units',
     'vendor_codes_url',
     'wifi_ssid_enabled', 'wifi_ssid_agent_url', 'wifi_ssid_agent_interface', 'wifi_ssid_poll_interval',
+    'es_enabled', 'es_backend_type', 'es_url', 'es_auth_method',
+    'es_username', 'es_password', 'es_api_key', 'es_verify_tls',
+    'es_agent_name', 'es_dashboards_url', 'es_dashboards_auth_method',
+    'es_dashboards_username', 'es_dashboards_password', 'es_dashboards_api_key',
+    'es_dashboards_verify_tls', 'es_index_prefix', 'es_shards', 'es_replicas',
+    'es_ilm_policy', 'es_bulk_size', 'es_flush_interval',
 })
 
 
@@ -1997,6 +2014,26 @@ def api_settings_put(req: RequestHandler):
                 poll_interval=int(_db.get_setting('wifi_ssid_poll_interval', '20')),
                 agent_interface=_db.get_setting('wifi_ssid_agent_interface', '') or '',
             )
+
+    # Apply Elasticsearch engine settings live if any es_* key changed.
+    if _es_engine and any(k.startswith('es_') for k in data):
+        _es_engine.configure(
+            enabled=_db.get_setting('es_enabled', 'false').lower() == 'true',
+            backend_type=_db.get_setting('es_backend_type', 'elasticsearch'),
+            url=_db.get_setting('es_url', ''),
+            auth_method=_db.get_setting('es_auth_method', 'none'),
+            username=_db.get_setting('es_username', ''),
+            password=_db.get_setting('es_password', ''),
+            api_key=_db.get_setting('es_api_key', ''),
+            verify_tls=_db.get_setting('es_verify_tls', 'true').lower() == 'true',
+            agent_name=_db.get_setting('es_agent_name', ''),
+            index_prefix=_db.get_setting('es_index_prefix', 'sparrow-droneid'),
+            shards=int(_db.get_setting('es_shards', '2')),
+            replicas=int(_db.get_setting('es_replicas', '0')),
+            ilm_policy=_db.get_setting('es_ilm_policy', ''),
+            bulk_size=int(_db.get_setting('es_bulk_size', '100')),
+            flush_interval=int(_db.get_setting('es_flush_interval', '5')),
+        )
 
     # Re-read and return the updated settings
     raw = _db.get_all_settings()
@@ -2276,3 +2313,363 @@ def api_cert_delete(req: RequestHandler, name: str):
         return
 
     req._send_ok({'deleted': True, 'name': name})
+
+
+# ---------------------------------------------------------------------------
+# Elasticsearch / OpenSearch Integration
+# ---------------------------------------------------------------------------
+
+@router.route('GET', '/api/v1/es/status', spec={
+    'summary': 'Get Elasticsearch engine status',
+    'tags': ['Elasticsearch'],
+    'responses': {
+        '200': response_inline(
+            {'enabled': {'type': 'boolean'}, 'connected': {'type': 'boolean'},
+             'healthy': {'type': 'boolean'}, 'backend_type': {'type': 'string'},
+             'docs_indexed': {'type': 'integer'}, 'docs_failed': {'type': 'integer'},
+             'docs_dropped': {'type': 'integer'}, 'docs_in_buffer': {'type': 'integer'},
+             'held_batches': {'type': 'integer'}, 'last_flush_time': {'type': 'string'},
+             'last_error': {'type': 'string'}, 'last_error_time': {'type': 'string'}},
+            'Elasticsearch engine status',
+        ),
+        '503': {'description': 'Elasticsearch engine not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
+def api_es_status(req: RequestHandler):
+    if _es_engine is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Elasticsearch engine not available')
+        return
+    req._send_ok(_es_engine.get_status())
+
+
+@router.route('POST', '/api/v1/es/test_cluster', spec={
+    'summary': 'Test Elasticsearch cluster connectivity',
+    'tags': ['Elasticsearch'],
+    'responses': {
+        '200': response_inline(
+            {'ok': {'type': 'boolean'}, 'error': {'type': 'string'}},
+            'Cluster connectivity test result',
+        ),
+        '503': {'description': 'Elasticsearch engine not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
+def api_es_test_cluster(req: RequestHandler):
+    if _db is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
+        return
+
+    # Try the running engine first; fall back to ad-hoc client
+    result = None
+    if _es_engine:
+        result = _es_engine.test_connection()
+    if result is None or (not result.get('ok') and 'not running' in result.get('error', '')):
+        url = _db.get_setting('es_url', '')
+        if not url:
+            req._send_ok({'ok': False, 'error': 'Cluster URL not configured'})
+            return
+        from .elasticsearch_engine import _create_search_client
+        client = None
+        try:
+            client = _create_search_client(
+                backend_type=_db.get_setting('es_backend_type', 'elasticsearch'),
+                url=url,
+                auth_method=_db.get_setting('es_auth_method', 'none'),
+                username=_db.get_setting('es_username', ''),
+                password=_db.get_setting('es_password', ''),
+                api_key=_db.get_setting('es_api_key', ''),
+                verify_tls=_db.get_setting('es_verify_tls', 'true').lower() == 'true',
+            )
+            info = client.cluster_info()
+            if not info:
+                result = {'ok': False, 'error': 'No response — check URL scheme (http vs https)'}
+            else:
+                version = info.get('version', {})
+                version_number = version.get('number', '') if isinstance(version, dict) else ''
+                if not version_number:
+                    result = {'ok': False, 'error': 'Response missing version — is this an Elasticsearch / OpenSearch cluster?'}
+                else:
+                    result = {
+                        'ok': True,
+                        'cluster_name': info.get('cluster_name') or info.get('name', ''),
+                        'version': version_number,
+                        'tagline': info.get('tagline', ''),
+                    }
+        except Exception as exc:
+            error_msg = str(exc)
+            if 'SSL' in error_msg or 'TLS' in error_msg or 'CERTIFICATE' in error_msg.upper():
+                error_msg += ' — try disabling TLS verification or switching to http://'
+            elif 'ConnectionError' in error_msg or 'Connection refused' in error_msg:
+                error_msg += ' — check URL and port'
+            result = {'ok': False, 'error': error_msg}
+        finally:
+            if client:
+                client.close()
+    req._send_ok(result)
+
+
+@router.route('GET', '/api/v1/es/ilm_policies', spec={
+    'summary': 'List available ILM/ISM lifecycle policies',
+    'tags': ['Elasticsearch'],
+    'responses': {
+        '200': response_inline(
+            {'policies': {'type': 'object', 'description': 'Map of policy name to policy body'}},
+            'Available lifecycle policies',
+        ),
+        '503': {'description': 'Elasticsearch engine not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
+def api_es_ilm_policies(req: RequestHandler):
+    if _es_engine is None or _db is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Elasticsearch engine not available')
+        return
+    # Try the running engine's client first; if not running, create an ad-hoc
+    # temporary client from saved settings so policies can be queried before
+    # the user has enabled/saved the engine.
+    policies = _es_engine.get_lifecycle_policies()
+    if not policies and _db.get_setting('es_url', ''):
+        from .elasticsearch_engine import ElasticsearchEngine
+        policies = ElasticsearchEngine.query_lifecycle_policies(
+            backend_type=_db.get_setting('es_backend_type', 'elasticsearch'),
+            url=_db.get_setting('es_url', ''),
+            auth_method=_db.get_setting('es_auth_method', 'none'),
+            username=_db.get_setting('es_username', ''),
+            password=_db.get_setting('es_password', ''),
+            api_key=_db.get_setting('es_api_key', ''),
+            verify_tls=_db.get_setting('es_verify_tls', 'true').lower() == 'true',
+        )
+    req._send_ok({'policies': policies})
+
+
+@router.route('POST', '/api/v1/es/ilm_policies', spec={
+    'summary': 'Create a default ILM/ISM lifecycle policy',
+    'tags': ['Elasticsearch'],
+    'requestBody': json_body_inline(
+        {'name': {'type': 'string', 'description': 'Policy name to create'},
+         'hot_days': {'type': 'integer', 'description': 'Hot phase rollover age in days (default 7)'},
+         'warm_days': {'type': 'integer', 'description': 'Warm phase min age in days (default 30)'},
+         'delete_days': {'type': 'integer', 'description': 'Delete after this many days (default 90)'}},
+        description='Policy creation parameters',
+    ),
+    'responses': {
+        '200': response_inline(
+            {'ok': {'type': 'boolean'}, 'error': {'type': 'string'}},
+            'Policy creation result',
+        ),
+        '400': {'description': 'Missing policy name', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+        '503': {'description': 'Elasticsearch engine not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
+def api_es_create_ilm_policy(req: RequestHandler):
+    if _db is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
+        return
+    body = req.json_data or {}
+    name = (body.get('name') or '').strip()
+    if not name:
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'Policy name is required')
+        return
+    hot_days = int(body.get('hot_days', 7))
+    warm_days = int(body.get('warm_days', 30))
+    delete_days = int(body.get('delete_days', 90))
+
+    # Try the running engine first; fall back to ad-hoc client from saved settings
+    result = None
+    if _es_engine:
+        result = _es_engine.create_lifecycle_policy(name, hot_days, warm_days, delete_days)
+    if result is None or (not result.get('ok') and 'not running' in result.get('error', '')):
+        url = _db.get_setting('es_url', '')
+        if not url:
+            req._send_ok({'ok': False, 'error': 'Cluster URL not configured'})
+            return
+        from .elasticsearch_engine import (
+            _create_search_client, build_default_ilm_policy,
+            build_default_ism_policy,
+        )
+        backend_type = _db.get_setting('es_backend_type', 'elasticsearch')
+        client = None
+        try:
+            client = _create_search_client(
+                backend_type=backend_type,
+                url=url,
+                auth_method=_db.get_setting('es_auth_method', 'none'),
+                username=_db.get_setting('es_username', ''),
+                password=_db.get_setting('es_password', ''),
+                api_key=_db.get_setting('es_api_key', ''),
+                verify_tls=_db.get_setting('es_verify_tls', 'true').lower() == 'true',
+            )
+            if backend_type == 'opensearch':
+                prefix = _db.get_setting('es_index_prefix', 'sparrow-droneid')
+                policy_body = build_default_ism_policy(prefix, hot_days, warm_days, delete_days)
+            else:
+                policy_body = build_default_ilm_policy(hot_days, warm_days, delete_days)
+            client.put_lifecycle_policy(name, policy_body)
+            result = {'ok': True}
+        except Exception as e:
+            result = {'ok': False, 'error': str(e)}
+        finally:
+            if client:
+                client.close()
+    req._send_ok(result)
+
+
+@router.route('POST', '/api/v1/es/test_dashboards', spec={
+    'summary': 'Test Kibana / OpenSearch Dashboards connectivity',
+    'tags': ['Elasticsearch'],
+    'responses': {
+        '200': response_inline(
+            {'ok': {'type': 'boolean'}, 'error': {'type': 'string'},
+             'status_code': {'type': 'integer'}},
+            'Dashboards connectivity test result',
+        ),
+        '503': {'description': 'Database not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
+def api_es_test_dashboards(req: RequestHandler):
+    if _db is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
+        return
+
+    dashboards_url = _db.get_setting('es_dashboards_url', '').strip()
+    if not dashboards_url:
+        req._send_ok({'ok': False, 'error': 'Dashboards URL not configured', 'status_code': 0})
+        return
+
+    auth_method = _db.get_setting('es_dashboards_auth_method', 'none')
+    username = _db.get_setting('es_dashboards_username', '')
+    password = _db.get_setting('es_dashboards_password', '')
+    api_key = _db.get_setting('es_dashboards_api_key', '')
+    verify_tls = _db.get_setting('es_dashboards_verify_tls', 'true').lower() == 'true'
+
+    headers = {'kbn-xsrf': 'true'}
+    req_auth = None
+    if auth_method == 'basic' and username:
+        req_auth = (username, password)
+    elif auth_method == 'apikey' and api_key:
+        headers['Authorization'] = f'ApiKey {api_key}'
+
+    if not verify_tls:
+        from .elasticsearch_engine import _suppress_urllib3_warnings
+        _suppress_urllib3_warnings()
+
+    try:
+        resp = _requests.get(
+            f"{dashboards_url.rstrip('/')}/api/status",
+            headers=headers,
+            auth=req_auth,
+            verify=verify_tls,
+            timeout=10,
+        )
+        if resp.status_code >= 400:
+            req._send_ok({'ok': False, 'error': f'HTTP {resp.status_code}', 'status_code': resp.status_code})
+            return
+        # Validate the response is actually Kibana/OSD (not a random HTTP server)
+        try:
+            data = resp.json()
+        except Exception:
+            data = {}
+        # Kibana/OSD /api/status returns {"name":..., "version":{"number":...}, "status":...}
+        version_info = data.get('version', {})
+        version_number = version_info.get('number', '') if isinstance(version_info, dict) else ''
+        status_info = data.get('status', {})
+        if version_number:
+            req._send_ok({'ok': True, 'version': version_number, 'status_code': resp.status_code})
+        elif data.get('name') or status_info:
+            # Looks like a dashboard service but version format differs
+            req._send_ok({'ok': True, 'version': '', 'status_code': resp.status_code})
+        else:
+            req._send_ok({'ok': False, 'error': 'Response does not look like Kibana / OpenSearch Dashboards', 'status_code': resp.status_code})
+    except Exception as e:
+        error_msg = str(e)
+        if 'SSL' in error_msg or 'TLS' in error_msg or 'CERTIFICATE' in error_msg.upper():
+            error_msg += ' — try disabling TLS verification or switching to http://'
+        elif 'ConnectionError' in error_msg or 'Connection refused' in error_msg:
+            error_msg += ' — check URL and port'
+        req._send_ok({'ok': False, 'error': error_msg, 'status_code': 0})
+
+
+@router.route('POST', '/api/v1/es/push_dashboards', spec={
+    'summary': 'Push saved-object dashboards to Kibana / OpenSearch Dashboards',
+    'tags': ['Elasticsearch'],
+    'requestBody': json_body_inline(
+        {'overwrite': {'type': 'boolean', 'description': 'Overwrite existing objects (default true)'}},
+        description='Push options',
+    ),
+    'responses': {
+        '200': response_inline(
+            {'success': {'type': 'boolean'}, 'errors': {'type': 'array', 'items': {'type': 'object'}}},
+            'Dashboard push result',
+        ),
+        '400': {'description': 'Dashboards URL not configured or NDJSON file not found', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+        '503': {'description': 'Elasticsearch engine not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
+def api_es_push_dashboards(req: RequestHandler):
+    if _es_engine is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Elasticsearch engine not available')
+        return
+    if _db is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
+        return
+
+    body = req.json_data or {}
+    overwrite = bool(body.get('overwrite', True))
+
+    dashboards_url = _db.get_setting('es_dashboards_url', '').strip()
+    if not dashboards_url:
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'Dashboards URL (es_dashboards_url) is not configured')
+        return
+
+    # Resolve the NDJSON file based on backend type
+    backend_type = _db.get_setting('es_backend_type', 'elasticsearch')
+    if backend_type == 'opensearch':
+        ndjson_filename = 'osd_dashboards.ndjson'
+    else:
+        ndjson_filename = 'kibana_dashboards.ndjson'
+
+    # NDJSON files are shipped static data, located relative to the source
+    # tree (not the runtime _data_dir which holds the database/tile cache).
+    ndjson_path = os.path.normpath(os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        '..', '..', 'data', ndjson_filename,
+    ))
+
+    if not os.path.isfile(ndjson_path):
+        req._send_error(400, ErrorCode.VALIDATION_ERROR,
+                        f'Dashboard NDJSON file not found: {ndjson_path}')
+        return
+
+    try:
+        with open(ndjson_path, 'rb') as fh:
+            ndjson_bytes = fh.read()
+    except OSError as e:
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Failed to read dashboard file: {e}')
+        return
+
+    # Build dashboards auth dict
+    dashboards_auth = {
+        'method': _db.get_setting('es_dashboards_auth_method', 'none'),
+        'username': _db.get_setting('es_dashboards_username', ''),
+        'password': _db.get_setting('es_dashboards_password', ''),
+        'api_key': _db.get_setting('es_dashboards_api_key', ''),
+    }
+    dashboards_verify_tls = _db.get_setting('es_dashboards_verify_tls', 'true').lower() == 'true'
+
+    try:
+        result = _es_engine.push_dashboards(
+            dashboards_url=dashboards_url,
+            dashboards_auth=dashboards_auth,
+            dashboards_verify_tls=dashboards_verify_tls,
+            ndjson_bytes=ndjson_bytes,
+            overwrite=overwrite,
+        )
+    except RuntimeError as e:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, str(e))
+        return
+    except Exception as e:
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Dashboard push failed: {e}')
+        return
+
+    req._send_ok({
+        'success': result.get('success', False),
+        'errors': result.get('errors', []),
+    })

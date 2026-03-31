@@ -291,11 +291,25 @@
   <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-gear me-2"></i>Settings</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        <h5 class="modal-title"><i class="bi bi-gear-fill me-2"></i>Settings</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="px-3 pt-2 pb-0 border-bottom settings-tab-bar">
+        <ul class="nav nav-tabs" id="settingsTabs" role="tablist">
+          <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="generalTab-tab" data-bs-toggle="tab"
+                    data-bs-target="#generalTabPane" type="button" role="tab"
+                    aria-controls="generalTabPane" aria-selected="true">General</button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link" id="elasticsearchTab-tab" data-bs-toggle="tab"
+                    data-bs-target="#elasticsearchTabPane" type="button" role="tab"
+                    aria-controls="elasticsearchTabPane" aria-selected="false">Elasticsearch</button>
+          </li>
+        </ul>
       </div>
       <div class="modal-body" id="settingsTabContent">
-        <!-- card grid rendered here by settings.js -->
+        <!-- tab panes rendered here by settings.js -->
       </div>
       <div class="modal-footer">
         <span class="text-muted small me-auto">

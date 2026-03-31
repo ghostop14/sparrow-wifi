@@ -234,6 +234,32 @@ const Api = (() => {
     return get('/wifi-ssid/status');
   }
 
+  // ---- Elasticsearch ----
+
+  function testEsCluster() {
+    return post('/es/test_cluster');
+  }
+
+  function testEsDashboards() {
+    return post('/es/test_dashboards');
+  }
+
+  function getEsStatus() {
+    return get('/es/status');
+  }
+
+  function getEsIlmPolicies() {
+    return get('/es/ilm_policies');
+  }
+
+  function createEsIlmPolicy(name, hotDays = 7, warmDays = 30, deleteDays = 90) {
+    return post('/es/ilm_policies', { name, hot_days: hotDays, warm_days: warmDays, delete_days: deleteDays });
+  }
+
+  function pushEsDashboards(overwrite = true) {
+    return post('/es/push_dashboards', { overwrite });
+  }
+
   // ---- Certificates ----
 
   function getCerts() {
@@ -305,6 +331,12 @@ const Api = (() => {
     getWifiSsidPatterns,
     putWifiSsidPatterns,
     getWifiSsidStatus,
+    testEsCluster,
+    testEsDashboards,
+    getEsStatus,
+    getEsIlmPolicies,
+    createEsIlmPolicy,
+    pushEsDashboards,
     getCerts,
     getCertDetail,
     generateSelfSigned,

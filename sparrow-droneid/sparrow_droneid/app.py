@@ -27,6 +27,7 @@ from backend.droneid_engine import DroneIDEngine, CaptureManager, check_prerequi
 from backend.gps_engine import GPSEngine
 from backend.alert_engine import AlertEngine
 from backend.cot_engine import CotEngine
+from backend.elasticsearch_engine import ElasticsearchEngine, _parse_iso_utc
 from backend.cert_manager import CertManager
 from backend.wifi_ssid_scanner import WifiSsidScanner
 from backend.api_handler import (
@@ -57,6 +58,7 @@ class SparrowDroneID:
         self.droneid_engine = None
         self.alert_engine = None
         self.cot_engine = None
+        self.es_engine = None
         self.cert_manager = None
         self.wifi_ssid_scanner = None
 
@@ -188,13 +190,64 @@ class SparrowDroneID:
                 port=int(db.get_setting('cot_port', '6969')),
             )
 
-        # Wire detection callback: alert engine + CoT engine
+        # Elasticsearch engine
+        self.es_engine = ElasticsearchEngine()
+        es_enabled = db.get_setting('es_enabled', 'false').lower() == 'true'
+        if es_enabled:
+            self.es_engine.configure(
+                enabled=True,
+                backend_type=db.get_setting('es_backend_type', 'elasticsearch'),
+                url=db.get_setting('es_url', ''),
+                auth_method=db.get_setting('es_auth_method', 'none'),
+                username=db.get_setting('es_username', ''),
+                password=db.get_setting('es_password', ''),
+                api_key=db.get_setting('es_api_key', ''),
+                verify_tls=db.get_setting('es_verify_tls', 'true').lower() == 'true',
+                agent_name=db.get_setting('es_agent_name', ''),
+                index_prefix=db.get_setting('es_index_prefix', 'sparrow-droneid'),
+                shards=int(db.get_setting('es_shards', '2')),
+                replicas=int(db.get_setting('es_replicas', '0')),
+                ilm_policy=db.get_setting('es_ilm_policy', ''),
+                bulk_size=int(db.get_setting('es_bulk_size', '100')),
+                flush_interval=int(db.get_setting('es_flush_interval', '5')),
+            )
+
+        # Wire detection callback: alert engine + CoT engine + Elasticsearch engine
         def on_detection(device):
             self.alert_engine.evaluate(device)
             if self.cot_engine.enabled:
                 self.cot_engine.send_event(device)
+            if self.es_engine and self.es_engine._enabled:
+                rx_lat, rx_lon, rx_alt = self.gps_engine.get_receiver_position()
+                key = device.get_key()
+                rssi_hist = self.droneid_engine._rssi_history.get(key, [])
+                from backend.models import rssi_trend as calc_rssi_trend
+                trend = calc_rssi_trend(rssi_hist)
+                vendor = self.alert_engine.resolve_vendor(
+                    serial=device.serial_number,
+                    mac=device.mac_address,
+                    protocol=device.protocol,
+                )
+                first = _parse_iso_utc(device.first_seen)
+                last = _parse_iso_utc(device.last_seen)
+                time_in_area_s = max(0, int((last - first).total_seconds()))
+                self.es_engine.add_detection(
+                    device, rx_lat, rx_lon, rx_alt,
+                    rssi_trend_value=trend,
+                    vendor=vendor,
+                    time_in_area_s=time_in_area_s,
+                )
 
         self.droneid_engine.on_detection = on_detection
+
+        # Wire alert callback for Elasticsearch alert indexing
+        def on_alert(alert_event, device):
+            if self.es_engine and self.es_engine._enabled:
+                rx_lat, rx_lon, rx_alt = self.gps_engine.get_receiver_position()
+                self.es_engine.add_alert(
+                    alert_event, device, rx_lat, rx_lon, rx_alt)
+
+        self.alert_engine.on_alert = on_alert
 
         # WiFi SSID scanner — needs to go through _track_device so the
         # drone appears in the active drones dict, DB, and API responses.
@@ -335,6 +388,7 @@ class SparrowDroneID:
             html_dir=self.html_dir,
             cert_manager=self.cert_manager,
             wifi_ssid_scanner=self.wifi_ssid_scanner,
+            es_engine=self.es_engine,
         )
 
         # Bind address
@@ -396,6 +450,8 @@ class SparrowDroneID:
 
         self.gps_engine.stop()
         self.cot_engine.stop()
+        if self.es_engine:
+            self.es_engine.stop()
         if self.wifi_ssid_scanner:
             self.wifi_ssid_scanner.stop()
         self._httpd.server_close()

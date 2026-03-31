@@ -849,6 +849,33 @@ html, body {
   border-color: var(--border-color);
 }
 
+/* ---- Settings modal tab bar ---- */
+.settings-tab-bar {
+  background: var(--bg-secondary);
+  border-color: var(--border-color) !important;
+  flex-shrink: 0;
+}
+
+#settingsTabs .nav-link {
+  color: var(--text-secondary);
+  border-color: transparent;
+  background: transparent;
+  padding: 0.5rem 1rem;
+  font-size: 13px;
+  transition: color 0.15s;
+}
+
+#settingsTabs .nav-link:hover {
+  color: var(--text-primary);
+  border-color: transparent transparent var(--border-color) transparent;
+}
+
+#settingsTabs .nav-link.active {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border-color: var(--border-color) var(--border-color) var(--bg-secondary) var(--border-color);
+}
+
 /* ---- Altitude class badges ---- */
 .alt-badge {
   font-size: 10px;
