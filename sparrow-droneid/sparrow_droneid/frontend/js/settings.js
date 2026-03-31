@@ -1258,9 +1258,17 @@ const SettingsManager = (() => {
       btn.innerHTML = '<i class="bi bi-cloud-upload me-1"></i>Create Dashboards';
     });
 
-    // ILM policies: load when ES tab is shown
+    // ILM policies: load when ES tab is shown; update footer hint
     document.getElementById('elasticsearchTab-tab')?.addEventListener('shown.bs.tab', () => {
       _loadIlmPolicies();
+      const hint = document.getElementById('settingsFooterHint');
+      if (hint) hint.innerHTML = '<i class="bi bi-info-circle me-1"></i>Elasticsearch settings apply immediately — no restart needed';
+    });
+
+    // Restore footer hint when General tab is shown
+    document.getElementById('generalTab-tab')?.addEventListener('shown.bs.tab', () => {
+      const hint = document.getElementById('settingsFooterHint');
+      if (hint) hint.innerHTML = '<i class="bi bi-info-circle me-1"></i>Some changes (port, HTTPS) require a restart';
     });
 
     // ILM policies: manual refresh button
