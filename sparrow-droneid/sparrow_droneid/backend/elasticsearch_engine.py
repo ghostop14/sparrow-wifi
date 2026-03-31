@@ -58,6 +58,7 @@ _MAX_HELD_BATCHES = 50
 _MAX_BACKOFF_S = 60.0
 _INITIAL_BACKOFF_S = 1.0
 _HEALTH_PROBE_INTERVAL_S = 30.0
+_HEARTBEAT_INTERVAL_S = 60.0
 
 # BVLOS threshold (meters) — FAA advisory: 400 m visual line-of-sight
 _BVLOS_THRESHOLD_M = 400.0
@@ -674,6 +675,61 @@ class DocumentBuilder:
         return doc
 
     @staticmethod
+    def build_heartbeat(receiver_lat: float,
+                        receiver_lon: float,
+                        receiver_alt: float,
+                        observer_name: str,
+                        observer_hostname: str,
+                        heartbeat_data: Dict[str, Any],
+                        ) -> Dict[str, Any]:
+        """Build an ECS heartbeat/metric document.
+
+        *heartbeat_data* is a dict from the app layer containing live
+        sensor state: active_drones, monitoring, interface, uptime_s, etc.
+        """
+        now_iso = _utc_now_iso()
+        has_receiver_pos = receiver_lat != 0.0 or receiver_lon != 0.0
+
+        doc: Dict[str, Any] = {
+            "@timestamp": now_iso,
+            "ecs": {"version": ECS_VERSION},
+            "event": {
+                "kind": "metric",
+                "category": ["host"],
+                "type": ["info"],
+                "module": "sparrow-droneid",
+                "dataset": "sparrow_droneid.heartbeat",
+                "action": "sensor-heartbeat",
+                "created": now_iso,
+            },
+            "observer": {
+                "type": "sensor",
+                "vendor": "Sparrow",
+                "product": "DroneID",
+                "name": observer_name,
+                "hostname": observer_hostname,
+            },
+            "droneid": {
+                "heartbeat": {
+                    "active_drones": heartbeat_data.get("active_drones", 0),
+                    "monitoring": heartbeat_data.get("monitoring", False),
+                    "interface": heartbeat_data.get("interface", ""),
+                    "uptime_s": heartbeat_data.get("uptime_s", 0),
+                    "frame_count": heartbeat_data.get("frame_count", 0),
+                    "gps_fix": heartbeat_data.get("gps_fix", False),
+                },
+            },
+        }
+
+        if has_receiver_pos:
+            doc["observer"]["geo"] = {
+                "location": {"lat": receiver_lat, "lon": receiver_lon},
+                "altitude": receiver_alt,
+            }
+
+        return doc
+
+    @staticmethod
     def compute_doc_id(serial_number: str, observer_name: str,
                        timestamp_str: str) -> str:
         """Deterministic ``_id`` for retry idempotency.
@@ -935,6 +991,16 @@ def build_index_template(prefix: str, shards: int, replicas: int,
                                     "acknowledged_at": {"type": "date"},
                                 },
                             },
+                            "heartbeat": {
+                                "properties": {
+                                    "active_drones": {"type": "integer"},
+                                    "monitoring": {"type": "boolean"},
+                                    "interface": {"type": "keyword"},
+                                    "uptime_s": {"type": "long"},
+                                    "frame_count": {"type": "long"},
+                                    "gps_fix": {"type": "boolean"},
+                                },
+                            },
                         },
                     },
                 },
@@ -1122,10 +1188,17 @@ class ElasticsearchEngine:
         self._healthy: bool = False
         self._backoff: float = _INITIAL_BACKOFF_S
         self._last_health_probe: float = 0.0
+        self._last_heartbeat: float = 0.0
 
         self._flush_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._config_lock = threading.Lock()
+
+        # Optional callback that returns heartbeat data dict.
+        # Signature: get_heartbeat_data() -> dict with keys:
+        #   active_drones, monitoring, interface, uptime_s, frame_count, gps_fix,
+        #   receiver_lat, receiver_lon, receiver_alt
+        self.get_heartbeat_data = None
 
     # ─── Configuration / Lifecycle ────────────────────────────────────────
 
@@ -1397,6 +1470,9 @@ class ElasticsearchEngine:
                 self._backoff = min(self._backoff * 2, _MAX_BACKOFF_S)
                 return  # Can't flush without bootstrap
 
+        # ── Periodic heartbeat ──
+        self._maybe_emit_heartbeat()
+
         # ── Flush buffer ──
         batch = self._buffer.swap()
         if not batch and not self._held_batches:
@@ -1471,6 +1547,37 @@ class ElasticsearchEngine:
             self._healthy = alive
         except Exception:
             self._healthy = False
+
+    def _maybe_emit_heartbeat(self) -> None:
+        """Emit a sensor heartbeat document every 60 seconds."""
+        now = monotonic()
+        if now - self._last_heartbeat < _HEARTBEAT_INTERVAL_S:
+            return
+        self._last_heartbeat = now
+
+        if not self.get_heartbeat_data:
+            return
+        try:
+            data = self.get_heartbeat_data()
+            doc = DocumentBuilder.build_heartbeat(
+                receiver_lat=data.get("receiver_lat", 0.0),
+                receiver_lon=data.get("receiver_lon", 0.0),
+                receiver_alt=data.get("receiver_alt", 0.0),
+                observer_name=self._agent_name or self._hostname,
+                observer_hostname=self._hostname,
+                heartbeat_data=data,
+            )
+            # Heartbeat _id: observer + minute-bucket (one per sensor per minute)
+            ts = _utc_now_iso()
+            doc_id = DocumentBuilder.compute_doc_id(
+                "heartbeat", self._agent_name or self._hostname, ts)
+            self._buffer.append({
+                "_index": self._index_prefix,
+                "_id": doc_id,
+                "_source": doc,
+            })
+        except Exception as exc:
+            logger.debug("ES heartbeat error: %s", exc)
 
     # ─── Bootstrap ────────────────────────────────────────────────────────
 

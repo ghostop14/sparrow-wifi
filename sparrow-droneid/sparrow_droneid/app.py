@@ -249,6 +249,25 @@ class SparrowDroneID:
 
         self.alert_engine.on_alert = on_alert
 
+        # Heartbeat callback for ES engine
+        def get_heartbeat_data():
+            rx_lat, rx_lon, rx_alt = self.gps_engine.get_receiver_position()
+            status = self.droneid_engine.get_status()
+            active = self.droneid_engine.get_active_drones()
+            return {
+                "receiver_lat": rx_lat,
+                "receiver_lon": rx_lon,
+                "receiver_alt": rx_alt,
+                "active_drones": len(active),
+                "monitoring": status.get("monitoring", False),
+                "interface": status.get("interface", ""),
+                "uptime_s": status.get("duration_seconds", 0),
+                "frame_count": status.get("frame_count", 0),
+                "gps_fix": self.gps_engine.fix,
+            }
+
+        self.es_engine.get_heartbeat_data = get_heartbeat_data
+
         # WiFi SSID scanner — needs to go through _track_device so the
         # drone appears in the active drones dict, DB, and API responses.
         def on_ssid_detection(device):
