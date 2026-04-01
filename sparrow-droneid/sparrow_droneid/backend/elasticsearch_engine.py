@@ -348,9 +348,16 @@ class OpenSearchClient(SearchClient):
             resp = self._client.transport.perform_request(
                 "GET", "/_plugins/_ism/policies",
             )
+            # opensearch-py may return the body directly or wrap it
+            if hasattr(resp, 'body'):
+                resp = resp.body
+            elif isinstance(resp, str):
+                import json as _json
+                resp = _json.loads(resp)
             policies = resp.get("policies", [])
-            return {p["policy_id"]: p.get("policy", {}) for p in policies}
-        except Exception:
+            return {p.get("_id", p.get("policy_id", "unknown")): p.get("policy", {}) for p in policies}
+        except Exception as exc:
+            logger.debug("OpenSearch ISM policy query failed: %s", exc)
             return {}
 
     def push_dashboards(self, url: str, auth: Dict, verify_tls: bool,
