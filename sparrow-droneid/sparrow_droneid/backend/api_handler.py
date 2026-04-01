@@ -2604,9 +2604,6 @@ def api_es_test_dashboards(req: RequestHandler):
     },
 })
 def api_es_push_dashboards(req: RequestHandler):
-    if _es_engine is None:
-        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Elasticsearch engine not available')
-        return
     if _db is None:
         req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
         return
@@ -2654,11 +2651,14 @@ def api_es_push_dashboards(req: RequestHandler):
     }
     dashboards_verify_tls = _db.get_setting('es_dashboards_verify_tls', 'true').lower() == 'true'
 
+    # Dashboard push is a direct HTTP POST to Kibana/OSD — does not need
+    # the ES engine or cluster client to be running.
+    from .elasticsearch_engine import _push_dashboards_http
     try:
-        result = _es_engine.push_dashboards(
-            dashboards_url=dashboards_url,
-            dashboards_auth=dashboards_auth,
-            dashboards_verify_tls=dashboards_verify_tls,
+        result = _push_dashboards_http(
+            url=dashboards_url,
+            auth=dashboards_auth,
+            verify_tls=dashboards_verify_tls,
             ndjson_bytes=ndjson_bytes,
             overwrite=overwrite,
         )
