@@ -903,13 +903,16 @@ class BulkBuffer:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def build_index_template(prefix: str, shards: int, replicas: int,
-                         ilm_policy: str) -> Dict:
+                         ilm_policy: str,
+                         backend_type: str = "elasticsearch") -> Dict:
     """Return a composable index template body for the ECS + droneid mapping."""
     settings: Dict[str, Any] = {
         "number_of_shards": shards,
         "number_of_replicas": replicas,
     }
-    if ilm_policy:
+    # ILM settings only apply to Elasticsearch. OpenSearch ISM attaches
+    # policies via ism_template in the policy body, not index settings.
+    if ilm_policy and backend_type != "opensearch":
         settings["index.lifecycle.name"] = ilm_policy
         settings["index.lifecycle.rollover_alias"] = prefix
 
@@ -1642,6 +1645,7 @@ class ElasticsearchEngine:
                 shards=self._shards,
                 replicas=self._replicas,
                 ilm_policy=self._ilm_policy,
+                backend_type=self._backend_type,
             )
             self._client.put_index_template(name=prefix, body=template)
             logger.debug("ES index template '%s' applied", prefix)
