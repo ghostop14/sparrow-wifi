@@ -2540,7 +2540,7 @@ def api_es_test_dashboards(req: RequestHandler):
     api_key = _db.get_setting('es_dashboards_api_key', '')
     verify_tls = _db.get_setting('es_dashboards_verify_tls', 'true').lower() == 'true'
 
-    headers = {'kbn-xsrf': 'true'}
+    headers = {'kbn-xsrf': 'true', 'osd-xsrf': 'true'}
     req_auth = None
     if auth_method == 'basic' and username:
         req_auth = (username, password)

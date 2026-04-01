@@ -393,7 +393,7 @@ def _push_dashboards_http(url: str, auth: Dict, verify_tls: bool,
     if overwrite:
         endpoint += "?overwrite=true"
 
-    headers = {"kbn-xsrf": "true"}  # Required by both Kibana and OSD
+    headers = {"kbn-xsrf": "true", "osd-xsrf": "true"}  # Kibana needs kbn-xsrf, OSD needs osd-xsrf
     if auth.get("method") == "basic":
         req_auth = (auth.get("username", ""), auth.get("password", ""))
     else:
