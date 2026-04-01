@@ -536,7 +536,9 @@ def _coerce_settings(raw: Dict[str, str]) -> Dict[str, Any]:
     bool_keys = {
         'https_enabled', 'cot_enabled',
         'alert_audio_enabled', 'alert_visual_enabled', 'alert_script_enabled',
+        'alert_slack_enabled',
         'tile_cache_enabled',
+        'wifi_ssid_enabled',
         'es_enabled', 'es_verify_tls', 'es_dashboards_verify_tls',
     }
     int_keys = {'port', 'cot_port', 'retention_days',
