@@ -91,11 +91,13 @@ def set_engines(droneid: DroneIDEngine, gps: GPSEngine, alert: AlertEngine,
 _TILE_UPSTREAM = {
     'osm':            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
     'esri_satellite': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    'esri_labels':    'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
 }
 
 _TILE_CONTENT_TYPE = {
     'osm':            'image/png',
     'esri_satellite': 'image/jpeg',
+    'esri_labels':    'image/png',
 }
 
 
@@ -1341,7 +1343,7 @@ def api_cot_config(req: RequestHandler):
     'summary': 'Proxy a map tile (with optional disk cache)',
     'tags': ['Tiles'],
     'parameters': [
-        path_param('source', 'string', 'Tile source identifier (osm or esri_satellite)'),
+        path_param('source', 'string', 'Tile source identifier (osm, esri_satellite, or esri_labels)'),
         path_param('z', 'string', 'Zoom level'),
         path_param('x', 'string', 'Tile X coordinate'),
         path_param('y', 'string', 'Tile Y coordinate (may include .png/.jpg suffix)'),
@@ -1484,7 +1486,7 @@ def api_data_purge(req: RequestHandler):
     'summary': 'Delete cached map tiles',
     'tags': ['Data'],
     'requestBody': json_body_inline(
-        {'source': {'type': 'string', 'description': 'Tile source to purge (omit for all sources)', 'enum': ['osm', 'esri_satellite']}},
+        {'source': {'type': 'string', 'description': 'Tile source to purge (omit for all sources)', 'enum': ['osm', 'esri_satellite', 'esri_labels']}},
         description='Optional source filter',
     ),
     'responses': {

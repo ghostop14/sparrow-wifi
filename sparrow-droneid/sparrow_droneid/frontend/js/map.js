@@ -56,10 +56,16 @@ const MapManager = (() => {
       className: 'dark-tiles',
     });
 
-    _satelliteLayer = L.tileLayer(tileUrl('esri_satellite'), {
+    // Satellite view: imagery + transparent street/place labels overlay
+    const satImagery = L.tileLayer(tileUrl('esri_satellite'), {
       attribution: '&copy; Esri &mdash; Source: Esri, USGS',
       maxZoom: 19,
     });
+    const satLabels = L.tileLayer(tileUrl('esri_labels'), {
+      maxZoom: 19,
+      pane: 'overlayPane',   // render above imagery
+    });
+    _satelliteLayer = L.layerGroup([satImagery, satLabels]);
 
     // Pick initial OSM layer based on current theme
     _currentTheme = document.documentElement.getAttribute('data-bs-theme') || 'dark';
