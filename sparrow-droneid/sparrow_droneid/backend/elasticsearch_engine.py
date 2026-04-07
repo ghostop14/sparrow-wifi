@@ -1330,6 +1330,13 @@ class ElasticsearchEngine:
             self._status.record_error(f"not_configured: {validation_error}")
             return
 
+        # Suppress noisy tracebacks from the underlying HTTP libraries.
+        # Connection errors are expected when the cluster is temporarily
+        # unreachable; this engine already logs concise status messages
+        # and handles retry/backoff itself.
+        for lib_logger_name in ("opensearch", "elasticsearch", "urllib3.connectionpool"):
+            logging.getLogger(lib_logger_name).setLevel(logging.ERROR)
+
         # Create client
         try:
             self._client = _create_search_client(
