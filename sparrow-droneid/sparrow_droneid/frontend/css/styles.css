@@ -969,3 +969,68 @@ html, body {
   color: #78350f;
   border-bottom-color: #f59e0b;
 }
+
+/* ---- Map tool controls (ruler, compass) ---- */
+.leaflet-control-measure,
+.leaflet-control-compass-toggle {
+  width: 30px;
+  height: 30px;
+  line-height: 30px;
+  text-align: center;
+  cursor: pointer;
+  font-size: 15px;
+  border-radius: 4px;
+}
+.leaflet-control-measure.active {
+  background: var(--accent-blue) !important;
+  color: #fff !important;
+  border-color: var(--accent-blue) !important;
+}
+
+/* ---- Measurement readout bar ---- */
+.measure-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: rgba(15,23,42,0.88);
+  border-top: 1px solid var(--border-color);
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  backdrop-filter: blur(4px);
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+}
+[data-bs-theme="light"] .measure-bar {
+  background: rgba(241,245,249,0.92);
+  border-top-color: var(--border-color);
+}
+.measure-bar .measure-label { color: var(--text-secondary); }
+.measure-bar .measure-value { color: var(--accent-blue); font-weight: 600; }
+.measure-bar .measure-hint  { color: var(--text-muted); font-size: 11px; margin-left: auto; }
+
+/* ---- Compass rose ---- */
+.compass-container {
+  position: absolute;
+  bottom: 100px;
+  right: 10px;
+  z-index: 999;
+  pointer-events: none;
+}
+.compass-rose {
+  width: 72px;
+  height: 72px;
+  filter: drop-shadow(0 1px 3px rgba(0,0,0,0.5));
+}
+.compass-rose text {
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  font-weight: 700;
+}
+[data-bs-theme="light"] .compass-rose {
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.25));
+}

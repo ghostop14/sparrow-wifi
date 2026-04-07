@@ -173,6 +173,7 @@ const App = (() => {
       btn.textContent = next === 'imperial' ? 'ft' : 'm';
       // Refresh all unit-aware displays
       TableManager.refreshUnits();
+      MapManager.refreshMeasureUnits();
       // Force a drone re-render if we have data (popups will update on next poll)
     });
   }

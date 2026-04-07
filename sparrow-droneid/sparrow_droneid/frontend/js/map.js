@@ -82,8 +82,37 @@ const MapManager = (() => {
     // Refresh range ring colors when switching between Map and Satellite
     _map.on('baselayerchange', () => _refreshRangeRings());
 
-    // Click on map deselects
+    // Ruler control (lower-right)
+    const MeasureControl = L.Control.extend({
+      options: { position: 'bottomright' },
+      onAdd() {
+        const btn = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-measure');
+        btn.innerHTML = '<a href="#" title="Measure distance" aria-label="Measure distance" aria-pressed="false" role="button"><i class="bi bi-rulers"></i></a>';
+        btn.querySelector('a').style.cssText = 'display:flex;align-items:center;justify-content:center;width:30px;height:30px;text-decoration:none;';
+        L.DomEvent.disableClickPropagation(btn);
+        btn.addEventListener('click', (e) => { e.preventDefault(); toggleMeasure(); });
+        return btn;
+      },
+    });
+    new MeasureControl().addTo(_map);
+
+    // Compass toggle control (lower-right, above ruler)
+    const CompassControl = L.Control.extend({
+      options: { position: 'bottomright' },
+      onAdd() {
+        const btn = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-compass-toggle');
+        btn.innerHTML = '<a href="#" title="Toggle compass" aria-label="Toggle compass" aria-pressed="false" role="button"><i class="bi bi-compass"></i></a>';
+        btn.querySelector('a').style.cssText = 'display:flex;align-items:center;justify-content:center;width:30px;height:30px;text-decoration:none;';
+        L.DomEvent.disableClickPropagation(btn);
+        btn.addEventListener('click', (e) => { e.preventDefault(); toggleCompass(); });
+        return btn;
+      },
+    });
+    new CompassControl().addTo(_map);
+
+    // Click on map deselects (skip when ruler is active)
     _map.on('click', () => {
+      if (_measureActive) return;
       if (_selectedSerial) {
         clearTrack();
         _selectedSerial = null;
@@ -213,6 +242,202 @@ const MapManager = (() => {
     const lat2 = Math.asin(Math.sin(lat1)*Math.cos(d) + Math.cos(lat1)*Math.sin(d)*Math.cos(b));
     const lon2 = lon1 + Math.atan2(Math.sin(b)*Math.sin(d)*Math.cos(lat1), Math.cos(d)-Math.sin(lat1)*Math.sin(lat2));
     return [lat2 * 180/Math.PI, lon2 * 180/Math.PI];
+  }
+
+  // ---- Ruler measurement tool ----
+
+  let _measureActive = false;
+  let _measureStart = null;    // L.marker
+  let _measureEnd = null;      // L.marker
+  let _measureLine = null;     // L.polyline
+  let _measureBar = null;      // DOM element
+
+  function _formatMeasurement(meters) {
+    const imperial = Utils.getUnits && Utils.getUnits() === 'imperial';
+    if (imperial) {
+      const feet = meters * 3.28084;
+      if (feet < 1320) return `${Math.round(feet)} ft`;          // < 0.25 mi
+      return `${(meters / 1609.34).toFixed(2)} mi`;
+    }
+    if (meters < 400) return `${Math.round(meters)} m`;
+    return `${(meters / 1000).toFixed(2)} km`;
+  }
+
+  function _bearingBetween(lat1, lon1, lat2, lon2) {
+    const toRad = d => d * Math.PI / 180;
+    const toDeg = r => r * 180 / Math.PI;
+    const dLon = toRad(lon2 - lon1);
+    const y = Math.sin(dLon) * Math.cos(toRad(lat2));
+    const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+              Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
+    return (toDeg(Math.atan2(y, x)) + 360) % 360;
+  }
+
+  function _bearingCardinal(deg) {
+    const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE',
+                  'S','SSW','SW','WSW','W','WNW','NW','NNW'];
+    return dirs[Math.round(deg / 22.5) % 16];
+  }
+
+  function _haversineDist(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const toRad = d => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  function _updateMeasureDisplay() {
+    if (!_measureStart || !_measureEnd || !_measureBar) return;
+    const s = _measureStart.getLatLng();
+    const e = _measureEnd.getLatLng();
+    const dist = _haversineDist(s.lat, s.lng, e.lat, e.lng);
+    const brg = _bearingBetween(s.lat, s.lng, e.lat, e.lng);
+    const card = _bearingCardinal(brg);
+
+    _measureBar.innerHTML =
+      `<span class="measure-label">Distance:</span> <span class="measure-value">${_formatMeasurement(dist)}</span>` +
+      `<span class="measure-label">Bearing:</span> <span class="measure-value">${Math.round(brg)}&deg; ${card}</span>` +
+      `<span class="measure-hint">Left-click: start &nbsp; Right-click: end</span>`;
+
+    if (_measureLine) _map.removeLayer(_measureLine);
+    _measureLine = L.polyline([s, e], {
+      color: '#3B82F6', weight: 2, dashArray: '6 4', opacity: 0.9, interactive: false,
+    }).addTo(_map);
+  }
+
+  function _measurePin(color) {
+    return L.divIcon({
+      className: '',
+      html: `<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><polygon points="8,1 15,15 1,15" fill="${color}" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/></svg>`,
+      iconSize: [16, 16],
+      iconAnchor: [8, 8],
+    });
+  }
+
+  function _onMeasureLeftClick(e) {
+    if (!_measureActive) return;
+    if (_measureStart) _map.removeLayer(_measureStart);
+    _measureStart = L.marker(e.latlng, { icon: _measurePin('#22C55E'), interactive: false }).addTo(_map);
+    if (_measureEnd) _updateMeasureDisplay();
+    else {
+      _measureBar.innerHTML =
+        `<span class="measure-label">Start placed.</span>` +
+        `<span class="measure-hint">Right-click to place end marker</span>`;
+    }
+  }
+
+  function _onMeasureRightClick(e) {
+    if (!_measureActive) return;
+    e.originalEvent.preventDefault();
+    if (_measureEnd) _map.removeLayer(_measureEnd);
+    _measureEnd = L.marker(e.latlng, { icon: _measurePin('#EF4444'), interactive: false }).addTo(_map);
+    if (_measureStart) _updateMeasureDisplay();
+    else {
+      _measureBar.innerHTML =
+        `<span class="measure-label">End placed.</span>` +
+        `<span class="measure-hint">Left-click to place start marker</span>`;
+    }
+  }
+
+  function _clearMeasure() {
+    if (_measureStart) { _map.removeLayer(_measureStart); _measureStart = null; }
+    if (_measureEnd)   { _map.removeLayer(_measureEnd);   _measureEnd = null; }
+    if (_measureLine)  { _map.removeLayer(_measureLine);  _measureLine = null; }
+    if (_measureBar)   { _measureBar.remove(); _measureBar = null; }
+  }
+
+  function _onMeasureKey(e) {
+    if (e.key === 'Escape' && _measureActive) toggleMeasure();
+  }
+
+  /** Re-render the measurement readout with current unit setting. */
+  function refreshMeasureUnits() {
+    if (_measureActive && _measureStart && _measureEnd) _updateMeasureDisplay();
+  }
+
+  function toggleMeasure() {
+    _measureActive = !_measureActive;
+    const btn = document.querySelector('.leaflet-control-measure');
+    if (btn) {
+      btn.classList.toggle('active', _measureActive);
+      const a = btn.querySelector('a');
+      if (a) a.setAttribute('aria-pressed', _measureActive);
+    }
+
+    if (_measureActive) {
+      _map.getContainer().style.cursor = 'crosshair';
+      // Create the readout bar inside the map container
+      _measureBar = document.createElement('div');
+      _measureBar.className = 'measure-bar';
+      _measureBar.innerHTML =
+        `<span class="measure-label">Measure mode</span>` +
+        `<span class="measure-hint">Left-click: start &nbsp; Right-click: end &nbsp; Esc: cancel</span>`;
+      _map.getContainer().appendChild(_measureBar);
+      _map.on('click', _onMeasureLeftClick);
+      _map.on('contextmenu', _onMeasureRightClick);
+      document.addEventListener('keydown', _onMeasureKey);
+    } else {
+      _map.getContainer().style.cursor = '';
+      _map.off('click', _onMeasureLeftClick);
+      _map.off('contextmenu', _onMeasureRightClick);
+      document.removeEventListener('keydown', _onMeasureKey);
+      _clearMeasure();
+    }
+    return _measureActive;
+  }
+
+  // ---- Compass rose ----
+
+  let _compassVisible = false;
+  let _compassEl = null;
+
+  const _compassSVG = `<svg class="compass-rose" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+    <!-- Outer ring -->
+    <circle cx="60" cy="60" r="54" fill="rgba(15,23,42,0.75)" stroke="rgba(148,163,184,0.5)" stroke-width="1"/>
+    <!-- Tick marks: 16 divisions (every 22.5 deg) -->
+    ${[...Array(16)].map((_, i) => {
+      const angle = i * 22.5;
+      const isCardinal = i % 4 === 0;
+      const r1 = isCardinal ? 38 : 43;
+      const r2 = 50;
+      const rad = (angle - 90) * Math.PI / 180;
+      const x1 = 60 + r1 * Math.cos(rad), y1 = 60 + r1 * Math.sin(rad);
+      const x2 = 60 + r2 * Math.cos(rad), y2 = 60 + r2 * Math.sin(rad);
+      const w = isCardinal ? 1.8 : 0.8;
+      const col = isCardinal ? 'rgba(241,245,249,0.95)' : 'rgba(148,163,184,0.6)';
+      return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="${w}"/>`;
+    }).join('')}
+    <!-- Cardinal labels -->
+    <text x="60" y="24" text-anchor="middle" fill="#EF4444" font-size="13">N</text>
+    <text x="60" y="103" text-anchor="middle" fill="rgba(241,245,249,0.85)" font-size="11">S</text>
+    <text x="99" y="64" text-anchor="middle" fill="rgba(241,245,249,0.85)" font-size="11">E</text>
+    <text x="21" y="64" text-anchor="middle" fill="rgba(241,245,249,0.85)" font-size="11">W</text>
+    <!-- Center dot -->
+    <circle cx="60" cy="60" r="2.5" fill="rgba(241,245,249,0.6)"/>
+    <!-- North pointer -->
+    <polygon points="60,16 56,36 64,36" fill="#EF4444"/>
+  </svg>`;
+
+  function toggleCompass() {
+    _compassVisible = !_compassVisible;
+    const btn = document.querySelector('.leaflet-control-compass-toggle');
+    if (btn) {
+      btn.classList.toggle('active', _compassVisible);
+      const a = btn.querySelector('a');
+      if (a) a.setAttribute('aria-pressed', _compassVisible);
+    }
+
+    if (_compassVisible) {
+      _compassEl = document.createElement('div');
+      _compassEl.className = 'compass-container';
+      _compassEl.innerHTML = _compassSVG;
+      _map.getContainer().appendChild(_compassEl);
+    } else {
+      if (_compassEl) { _compassEl.remove(); _compassEl = null; }
+    }
+    return _compassVisible;
   }
 
   // ---- Drone marker ----
@@ -467,6 +692,11 @@ const MapManager = (() => {
         marker.bindPopup(buildPopupContent(drone), { maxWidth: 300, minWidth: 220 });
         marker.on('click', (e) => {
           L.DomEvent.stopPropagation(e);
+          // In measure mode, treat drone clicks as pin placement
+          if (_measureActive) {
+            _onMeasureLeftClick(e);
+            return;
+          }
           selectDrone(serial, drone);
           // Notify app (outside selectDrone to avoid circular callbacks)
           if (_onDroneClick) _onDroneClick(serial);
@@ -554,6 +784,9 @@ const MapManager = (() => {
   // Fix #10: filter records to only those at or before currentTimeMs for tracks
   function renderReplaySnapshot(records, receiverLat, receiverLon, currentTimeMs) {
     if (!_map) return;
+
+    // Exit measure mode if active — replay is a different operational context
+    if (_measureActive) toggleMeasure();
 
     // Clear all existing drone markers
     Object.keys(_droneMarkers).forEach(s => removeDroneMarker(s));
@@ -675,6 +908,9 @@ const MapManager = (() => {
     init,
     setReceiverPosition,
     toggleRangeRings,
+    toggleMeasure,
+    toggleCompass,
+    refreshMeasureUnits,
     updateDrones,
     selectDrone,
     showTrack,
