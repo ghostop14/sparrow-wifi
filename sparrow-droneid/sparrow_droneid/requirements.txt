@@ -5,9 +5,6 @@
 # Core dependencies are kept minimal. Most functionality uses the Python
 # standard library (http.server, sqlite3, ssl, struct, socket, subprocess).
 
-# gpsd client for receiver position
-gps3>=0.33.3
-
 # HTTP client for map tile proxy/caching and future export integrations
 requests>=2.28.0
 
