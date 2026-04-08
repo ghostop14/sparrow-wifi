@@ -970,9 +970,10 @@ html, body {
   border-bottom-color: #f59e0b;
 }
 
-/* ---- Map tool controls (ruler, compass) ---- */
+/* ---- Map tool controls (ruler, compass, tracks) ---- */
 .leaflet-control-measure,
-.leaflet-control-compass-toggle {
+.leaflet-control-compass-toggle,
+.leaflet-control-tracks-toggle {
   width: 30px;
   height: 30px;
   line-height: 30px;
@@ -981,11 +982,49 @@ html, body {
   font-size: 15px;
   border-radius: 4px;
 }
-.leaflet-control-measure.active {
+.leaflet-control-measure.active,
+.leaflet-control-tracks-toggle.active {
   background: var(--accent-blue) !important;
   color: #fff !important;
   border-color: var(--accent-blue) !important;
 }
+
+/* ---- Coordinate bar (go-to input + cursor position, bottom-left) ---- */
+.map-coordbar.leaflet-control {
+  margin-bottom: 2px;
+  margin-left: 2px;
+}
+.map-coordbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-family: 'Inter', 'Segoe UI', system-ui, monospace;
+  background: rgba(15,23,42,0.82);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  white-space: nowrap;
+  backdrop-filter: blur(4px);
+}
+[data-bs-theme="light"] .map-coordbar {
+  background: rgba(241,245,249,0.9);
+}
+.map-coordbar .goto-input {
+  width: 150px;
+  padding: 1px 5px;
+  font-size: 12px;
+  font-family: inherit;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-primary);
+  outline: none;
+}
+.map-coordbar .goto-input::placeholder { color: var(--text-muted); }
+.map-coordbar .goto-input:focus { border-color: var(--accent-blue); }
+.map-coordbar .cursorpos-label { color: var(--text-muted); margin-right: 2px; }
+.map-coordbar .cursorpos-value { color: var(--text-primary); }
 
 /* ---- Measurement readout bar ---- */
 .measure-bar {

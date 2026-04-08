@@ -18,6 +18,9 @@ const App = (() => {
   const POLL_INTERVAL_MS  = 2000;
   const ALERT_POLL_MS     = 5000;
   const STATUS_POLL_MS    = 5000;
+  const TRACK_POLL_MS     = 10000;  // all-tracks refresh interval
+  let _trackPollTimer = null;
+  let _allTracksEnabled = false;
 
   // ---- Init ----
   async function init() {
@@ -37,6 +40,17 @@ const App = (() => {
 
     // Init sub-modules
     MapManager.init(_onDroneMapClick);
+
+    // Wire all-tracks toggle callback
+    MapManager.onAllTracksToggle = (visible) => {
+      _allTracksEnabled = visible;
+      if (visible) {
+        _pollAllTracks();
+        _trackPollTimer = setInterval(_pollAllTracks, TRACK_POLL_MS);
+      } else {
+        if (_trackPollTimer) { clearInterval(_trackPollTimer); _trackPollTimer = null; }
+      }
+    };
 
     TableManager.init((serial, drone) => {
       _selectedSerial = serial;
@@ -353,6 +367,29 @@ const App = (() => {
     } catch (e) { /* polling — ignore transient errors */ }
   }
 
+  async function _pollAllTracks() {
+    if (_inReplay || !_allTracksEnabled) return;
+    try {
+      const resp = await Api.getDrones();
+      const drones = resp.drones || [];
+      const serials = drones
+        .filter(d => d.drone_lat && d.drone_lon)
+        .map(d => d.serial_number);
+      if (serials.length === 0) { MapManager.clearAllTracks(); return; }
+
+      const tracksBySerial = {};
+      const results = await Promise.all(
+        serials.map(s => Api.getDroneDetail(s, 10).catch(() => null))
+      );
+      results.forEach((r, i) => {
+        if (r && r.track && r.track.length > 1) {
+          tracksBySerial[serials[i]] = r.track;
+        }
+      });
+      MapManager.showAllTracks(tracksBySerial);
+    } catch (e) { /* ignore */ }
+  }
+
   async function _pollAlerts() {
     if (_inReplay) return;
     try {
@@ -376,6 +413,7 @@ const App = (() => {
     if (_pollTimer)       { clearInterval(_pollTimer);       _pollTimer = null; }
     if (_alertPollTimer)  { clearInterval(_alertPollTimer);  _alertPollTimer = null; }
     if (_statusPollTimer) { clearInterval(_statusPollTimer); _statusPollTimer = null; }
+    if (_trackPollTimer)  { clearInterval(_trackPollTimer);  _trackPollTimer = null; }
   }
 
   // ---- Map drone click callback ----

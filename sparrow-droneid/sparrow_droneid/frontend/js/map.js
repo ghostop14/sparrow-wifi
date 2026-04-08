@@ -14,6 +14,8 @@ const MapManager = (() => {
   let _selectedSerial = null;
   let _trackPolyline = null;
   let _onDroneClick = null;     // callback(serial)
+  let _allTracksVisible = false;
+  let _allTrackPolylines = {};  // serial -> L.polyline
   let _osmLightLayer = null;
   let _osmDarkLayer = null;
   let _osmLayer = null;       // currently active OSM layer (light or dark)
@@ -109,6 +111,52 @@ const MapManager = (() => {
       },
     });
     new CompassControl().addTo(_map);
+
+    // Flight tracks toggle control (lower-right, above compass)
+    const TracksControl = L.Control.extend({
+      options: { position: 'bottomright' },
+      onAdd() {
+        const btn = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-tracks-toggle');
+        btn.innerHTML = '<a href="#" title="Toggle all flight tracks" aria-label="Toggle all flight tracks" aria-pressed="false" role="button"><i class="bi bi-bezier2"></i></a>';
+        btn.querySelector('a').style.cssText = 'display:flex;align-items:center;justify-content:center;width:30px;height:30px;text-decoration:none;';
+        L.DomEvent.disableClickPropagation(btn);
+        btn.addEventListener('click', (e) => { e.preventDefault(); toggleAllTracks(); });
+        return btn;
+      },
+    });
+    new TracksControl().addTo(_map);
+
+    // Go-to input + cursor position (single row, lower-left)
+    let _cursorValueEl = null;
+    const CoordBarControl = L.Control.extend({
+      options: { position: 'bottomleft' },
+      onAdd() {
+        const bar = L.DomUtil.create('div', 'leaflet-control map-coordbar');
+        bar.innerHTML =
+          '<input type="text" class="goto-input" placeholder="33.12345, -117.56789" title="Enter lat,lon and press Enter to snap map" />' +
+          '<span class="cursorpos-label">Cursor</span> <span class="cursorpos-value">off map</span>';
+        L.DomEvent.disableClickPropagation(bar);
+        const input = bar.querySelector('.goto-input');
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            _handleGoTo(input.value.trim());
+            input.value = '';
+            input.blur();
+          }
+        });
+        _cursorValueEl = bar.querySelector('.cursorpos-value');
+        return bar;
+      },
+    });
+    new CoordBarControl().addTo(_map);
+
+    _map.on('mousemove', (e) => {
+      if (_cursorValueEl) _cursorValueEl.textContent = `${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}`;
+    });
+    _map.on('mouseout', () => {
+      if (_cursorValueEl) _cursorValueEl.textContent = 'off map';
+    });
 
     // Click on map deselects (skip when ruler is active)
     _map.on('click', () => {
@@ -419,6 +467,16 @@ const MapManager = (() => {
     <!-- North pointer -->
     <polygon points="60,16 56,36 64,36" fill="#EF4444"/>
   </svg>`;
+
+  // ---- Go-to-coordinates ----
+  function _handleGoTo(text) {
+    if (!_map || !text) return;
+    // Accept "lat, lon" or "lat lon"
+    const parts = text.split(/[,\s]+/).map(Number);
+    if (parts.length >= 2 && isFinite(parts[0]) && isFinite(parts[1])) {
+      _map.setView([parts[0], parts[1]], _map.getZoom());
+    }
+  }
 
   function toggleCompass() {
     _compassVisible = !_compassVisible;
@@ -780,6 +838,65 @@ const MapManager = (() => {
     }
   }
 
+  // ---- All-tracks toggle ----
+  let _onAllTracksToggle = null;  // callback(visible) set by app.js
+
+  function toggleAllTracks() {
+    _allTracksVisible = !_allTracksVisible;
+    const btn = document.querySelector('.leaflet-control-tracks-toggle');
+    if (btn) {
+      btn.classList.toggle('active', _allTracksVisible);
+      const a = btn.querySelector('a');
+      if (a) a.setAttribute('aria-pressed', _allTracksVisible);
+    }
+    if (_allTracksVisible) {
+      if (_onAllTracksToggle) _onAllTracksToggle(true);
+    } else {
+      clearAllTracks();
+      if (_onAllTracksToggle) _onAllTracksToggle(false);
+    }
+    return _allTracksVisible;
+  }
+
+  function showAllTracks(tracksBySerial) {
+    if (!_map) return;
+    // Remove polylines for serials no longer present
+    Object.keys(_allTrackPolylines).forEach(serial => {
+      if (!tracksBySerial[serial]) {
+        _allTrackPolylines[serial].remove();
+        delete _allTrackPolylines[serial];
+      }
+    });
+    // Add/update polylines per serial
+    Object.entries(tracksBySerial).forEach(([serial, trackPoints]) => {
+      const latlngs = trackPoints
+        .filter(p => p.drone_lat && p.drone_lon)
+        .map(p => [p.drone_lat, p.drone_lon]);
+      if (latlngs.length < 2) {
+        if (_allTrackPolylines[serial]) {
+          _allTrackPolylines[serial].remove();
+          delete _allTrackPolylines[serial];
+        }
+        return;
+      }
+      if (_allTrackPolylines[serial]) {
+        _allTrackPolylines[serial].setLatLngs(latlngs);
+      } else {
+        _allTrackPolylines[serial] = L.polyline(latlngs, {
+          color: '#F59E0B',
+          weight: 2,
+          opacity: 0.7,
+          dashArray: null,
+        }).addTo(_map);
+      }
+    });
+  }
+
+  function clearAllTracks() {
+    Object.values(_allTrackPolylines).forEach(p => p.remove());
+    _allTrackPolylines = {};
+  }
+
   // ---- Replay mode: render snapshot ----
   // Fix #10: filter records to only those at or before currentTimeMs for tracks
   function renderReplaySnapshot(records, receiverLat, receiverLon, currentTimeMs) {
@@ -861,6 +978,7 @@ const MapManager = (() => {
   function clearAll() {
     Object.keys(_droneMarkers).forEach(s => removeDroneMarker(s));
     clearTrack();
+    clearAllTracks();
   }
 
   // ---- Fit bounds to drones ----
@@ -915,6 +1033,11 @@ const MapManager = (() => {
     selectDrone,
     showTrack,
     clearTrack,
+    toggleAllTracks,
+    showAllTracks,
+    clearAllTracks,
+    get allTracksVisible() { return _allTracksVisible; },
+    set onAllTracksToggle(fn) { _onAllTracksToggle = fn; },
     clearAll,
     fitToDrones,
     renderReplaySnapshot,
