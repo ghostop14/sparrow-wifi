@@ -59,6 +59,9 @@ _start_time: datetime = datetime.now(timezone.utc)
 # Persistent HTTP session for tile proxy upstream fetches
 _tile_session: _requests.Session = _requests.Session()
 _tile_session.headers.update({'User-Agent': 'SparrowDroneID/1.0'})
+_tile_adapter = _requests.adapters.HTTPAdapter(pool_maxsize=20, pool_connections=4)
+_tile_session.mount('https://', _tile_adapter)
+_tile_session.mount('http://', _tile_adapter)
 
 # OpenAPI spec cache (built lazily on first request)
 _openapi_cache: Optional[bytes] = None

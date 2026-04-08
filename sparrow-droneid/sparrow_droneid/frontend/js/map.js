@@ -591,13 +591,48 @@ const MapManager = (() => {
 
   function makeOperatorIcon() {
     const html = `<div style="
-      width:14px;height:14px;
+      display:flex;align-items:center;justify-content:center;
+      width:22px;height:22px;
       background:#14B8A6;
       border-radius:50%;
       border:2px solid rgba(0,0,0,0.4);
-      box-shadow:0 0 4px #14B8A688;
-    "></div>`;
-    return L.divIcon({ className: '', html, iconSize: [14,14], iconAnchor: [7,7] });
+      box-shadow:0 0 6px #14B8A688;
+      color:#fff;font-size:12px;
+    "><i class="bi bi-controller"></i></div>`;
+    return L.divIcon({ className: '', html, iconSize: [22,22], iconAnchor: [11,11] });
+  }
+
+  function buildOperatorPopup(drone) {
+    const opLat = drone.operator_lat?.toFixed(5) ?? '—';
+    const opLon = drone.operator_lon?.toFixed(5) ?? '—';
+    const opId = drone.operator_id || '—';
+    const serial = drone.serial_number || drone.mac_address || '?';
+
+    const rows = [
+      _popupRow('Drone', serial),
+      _popupRow('Operator ID', opId),
+      _popupRow('Position', `${opLat}, ${opLon}`),
+      _popupRow('Alt', Utils.formatAlt(drone.operator_alt)),
+      _popupRow('Pilot dist', _bvlosStr(drone)),
+    ].filter(Boolean).join('');
+
+    return `
+      <div class="drone-popup">
+        <div class="drone-popup-title" style="color:#14B8A6;"><i class="bi bi-controller me-1"></i>Operator</div>
+        <div class="drone-popup-grid">${rows}</div>
+        <button class="btn-popup-detail" onclick="MapManager._operatorDetailClick('${drone.serial_number}')">
+          <i class="bi bi-bezier2 me-1"></i>Show Flight Track
+        </button>
+      </div>`;
+  }
+
+  function _operatorDetailClick(serial) {
+    // Select the associated drone — shows track + detail sidebar
+    const entry = _droneMarkers[serial];
+    if (entry) {
+      selectDrone(serial, null);
+      if (_onDroneClick) _onDroneClick(serial);
+    }
   }
 
   function _popupRow(label, value) {
@@ -727,8 +762,14 @@ const MapManager = (() => {
           const opLatLng = [drone.operator_lat, drone.operator_lon];
           if (entry.operatorMarker) {
             entry.operatorMarker.setLatLng(opLatLng);
+            entry.operatorMarker.getPopup()?.setContent(buildOperatorPopup(drone));
           } else {
             entry.operatorMarker = L.marker(opLatLng, { icon: makeOperatorIcon(), zIndexOffset: 100 }).addTo(_map);
+            entry.operatorMarker.bindPopup(buildOperatorPopup(drone), { maxWidth: 260, minWidth: 180 });
+            entry.operatorMarker.on('click', (e) => {
+              L.DomEvent.stopPropagation(e);
+              if (_measureActive) { _onMeasureLeftClick(e); return; }
+            });
           }
           if (entry.line) {
             entry.line.setLatLngs([latLng, opLatLng]);
@@ -766,6 +807,11 @@ const MapManager = (() => {
         if (drone.operator_lat && drone.operator_lon) {
           const opLatLng = [drone.operator_lat, drone.operator_lon];
           operatorMarker = L.marker(opLatLng, { icon: makeOperatorIcon(), zIndexOffset: 100 }).addTo(_map);
+          operatorMarker.bindPopup(buildOperatorPopup(drone), { maxWidth: 260, minWidth: 180 });
+          operatorMarker.on('click', (e) => {
+            L.DomEvent.stopPropagation(e);
+            if (_measureActive) { _onMeasureLeftClick(e); return; }
+          });
           line = L.polyline([latLng, opLatLng], {
             color: '#14B8A6', weight: 1.5, dashArray: '5 4', opacity: 0.7
           }).addTo(_map);
@@ -952,6 +998,7 @@ const MapManager = (() => {
       if (rec.operator_lat && rec.operator_lon) {
         const opLatLng = [rec.operator_lat, rec.operator_lon];
         operatorMarker = L.marker(opLatLng, { icon: makeOperatorIcon(), zIndexOffset: 100 }).addTo(_map);
+        operatorMarker.bindPopup(buildOperatorPopup(fakeDrone), { maxWidth: 260, minWidth: 180 });
         line = L.polyline([latLng, opLatLng], { color: '#14B8A6', weight: 1.5, dashArray: '5 4', opacity: 0.7 }).addTo(_map);
       }
 
@@ -996,19 +1043,25 @@ const MapManager = (() => {
     const newOsm = theme === 'dark' ? _osmDarkLayer : _osmLightLayer;
     if (newOsm === _osmLayer) return;
 
-    // Only swap if the user is currently viewing the OSM layer
-    const wasActive = _map.hasLayer(_osmLayer);
-    if (wasActive) {
+    // Swap OSM layers on the map (if OSM is currently showing)
+    const osmWasActive = _map.hasLayer(_osmLayer);
+    if (osmWasActive) {
       _map.removeLayer(_osmLayer);
-      newOsm.addTo(_map);
+    }
+    _osmLayer = newOsm;
+    if (osmWasActive) {
+      _osmLayer.addTo(_map);
     }
 
-    // Rebuild layer control with the new OSM layer
+    // Rebuild layer control so the correct OSM variant is wired up.
+    // Leaflet needs the currently-visible base layer added first so its
+    // radio button is checked.
     if (_layerControl) _map.removeControl(_layerControl);
-    _osmLayer = newOsm;
+    const bases = osmWasActive
+      ? { 'Map': _osmLayer, 'Satellite': _satelliteLayer }
+      : { 'Satellite': _satelliteLayer, 'Map': _osmLayer };
     _layerControl = L.control.layers(
-      { 'Map': _osmLayer, 'Satellite': _satelliteLayer },
-      {},
+      bases, {},
       { position: 'topright', collapsed: true }
     ).addTo(_map);
 
@@ -1044,6 +1097,7 @@ const MapManager = (() => {
     setTheme,
     invalidateSizeDelayed,
     _popupDetailClick,
+    _operatorDetailClick,
     getMap: () => _map,
   };
 })();
