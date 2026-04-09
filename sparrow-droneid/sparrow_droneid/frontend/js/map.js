@@ -209,7 +209,8 @@ const MapManager = (() => {
   }
 
   function _buildReceiverPopup(lat, lon, gpsFix, receiver) {
-    const name = localStorage.getItem('sparrow_operator_name') || 'Receiver';
+    const hostname = receiver?.hostname || '';
+    const name = 'Receiver' + (hostname ? ': ' + hostname : '');
     const source = receiver?.source || 'unknown';
     const fixStr = gpsFix ? 'Yes' : 'No';
     const rows = [

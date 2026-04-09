@@ -12,6 +12,7 @@ Provides a multithreaded HTTP server with:
 import ipaddress
 import json
 import mimetypes
+import socket as _socket
 import os
 import re
 import shutil
@@ -818,6 +819,7 @@ def api_drones(req: RequestHandler):
         'speed': gps.get('speed', 0.0),
         'gps_fix': gps.get('fix', False),
         'source': gps.get('mode', 'none'),
+        'hostname': _socket.gethostname(),
     }
 
     # Compute counts by age band
