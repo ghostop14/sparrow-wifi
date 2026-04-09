@@ -1069,8 +1069,8 @@ html, body {
 /* ---- Compass rose ---- */
 .compass-container {
   position: absolute;
-  bottom: 100px;
-  right: 10px;
+  bottom: 10px;
+  right: 50px;
   z-index: 999;
   pointer-events: none;
 }

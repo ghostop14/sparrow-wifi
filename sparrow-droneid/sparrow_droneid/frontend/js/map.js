@@ -136,21 +136,7 @@ const MapManager = (() => {
       _refreshRangeRings();
     });
 
-    // Ruler control (lower-right)
-    const MeasureControl = L.Control.extend({
-      options: { position: 'bottomright' },
-      onAdd() {
-        const btn = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-measure');
-        btn.innerHTML = '<a href="#" title="Measure distance" aria-label="Measure distance" aria-pressed="false" role="button"><i class="bi bi-rulers"></i></a>';
-        btn.querySelector('a').style.cssText = 'display:flex;align-items:center;justify-content:center;width:30px;height:30px;text-decoration:none;';
-        L.DomEvent.disableClickPropagation(btn);
-        btn.addEventListener('click', (e) => { e.preventDefault(); toggleMeasure(); });
-        return btn;
-      },
-    });
-    new MeasureControl().addTo(_map);
-
-    // Compass toggle control (lower-right, above ruler)
+    // Compass toggle control (lower-right, bottom of stack)
     const CompassControl = L.Control.extend({
       options: { position: 'bottomright' },
       onAdd() {
@@ -164,7 +150,21 @@ const MapManager = (() => {
     });
     new CompassControl().addTo(_map);
 
-    // Flight tracks toggle control (lower-right, above compass)
+    // Ruler control (lower-right, above compass)
+    const MeasureControl = L.Control.extend({
+      options: { position: 'bottomright' },
+      onAdd() {
+        const btn = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-measure');
+        btn.innerHTML = '<a href="#" title="Measure distance" aria-label="Measure distance" aria-pressed="false" role="button"><i class="bi bi-rulers"></i></a>';
+        btn.querySelector('a').style.cssText = 'display:flex;align-items:center;justify-content:center;width:30px;height:30px;text-decoration:none;';
+        L.DomEvent.disableClickPropagation(btn);
+        btn.addEventListener('click', (e) => { e.preventDefault(); toggleMeasure(); });
+        return btn;
+      },
+    });
+    new MeasureControl().addTo(_map);
+
+    // Flight tracks toggle control (lower-right, above ruler)
     const TracksControl = L.Control.extend({
       options: { position: 'bottomright' },
       onAdd() {
