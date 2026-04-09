@@ -22,6 +22,7 @@ const MapManager = (() => {
   let _satelliteLayer = null;
   let _layerControl = null;
   let _currentTheme = 'dark';
+  let _satelliteActive = false;
 
   // Default center (Washington DC area) — will update from receiver position
   const DEFAULT_CENTER = [38.8977, -77.0365];
@@ -32,6 +33,54 @@ const MapManager = (() => {
   function tileUrl(source) {
     return `/api/v1/tiles/${source}/{z}/{x}/{y}.png`;
   }
+
+  // ---- Clipboard (works over plain HTTP via execCommand fallback) ----
+  function _copyToClipboard(text) {
+    function fallback() {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      _showCopyFeedback(ok);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text)
+        .then(() => _showCopyFeedback(true))
+        .catch(() => fallback());
+    } else {
+      fallback();
+    }
+  }
+
+  function _showCopyFeedback(ok) {
+    if (!_copyBtn) return;
+    const icon = _copyBtn.querySelector('i');
+    if (ok) {
+      icon.className = 'bi bi-check-lg';
+      _copyBtn.classList.add('copied');
+      setTimeout(() => {
+        icon.className = 'bi bi-clipboard';
+        _copyBtn.classList.remove('copied');
+        // Auto-unpin after feedback so cursor tracking resumes
+        _unpinCoords();
+      }, 1500);
+    }
+  }
+
+  function _unpinCoords() {
+    if (!_pinnedCoords) return;
+    _pinnedCoords = null;
+    if (_cursorValueEl) _cursorValueEl.classList.remove('pinned');
+    if (_copyBtn) _copyBtn.style.display = 'none';
+  }
+
+  let _copyBtn = null;
+  let _pinnedCoords = null;
+  let _cursorValueEl = null;
 
   // ---- Init ----
   function init(onDroneClickCb) {
@@ -81,8 +130,11 @@ const MapManager = (() => {
       { position: 'topright', collapsed: true }
     ).addTo(_map);
 
-    // Refresh range ring colors when switching between Map and Satellite
-    _map.on('baselayerchange', () => _refreshRangeRings());
+    // Track active base layer and refresh range ring colors on switch
+    _map.on('baselayerchange', (e) => {
+      _satelliteActive = (e.layer === _satelliteLayer);
+      _refreshRangeRings();
+    });
 
     // Ruler control (lower-right)
     const MeasureControl = L.Control.extend({
@@ -127,14 +179,17 @@ const MapManager = (() => {
     new TracksControl().addTo(_map);
 
     // Go-to input + cursor position (single row, lower-left)
-    let _cursorValueEl = null;
     const CoordBarControl = L.Control.extend({
       options: { position: 'bottomleft' },
       onAdd() {
         const bar = L.DomUtil.create('div', 'leaflet-control map-coordbar');
         bar.innerHTML =
           '<input type="text" class="goto-input" placeholder="33.12345, -117.56789" title="Enter lat,lon and press Enter to snap map" />' +
-          '<span class="cursorpos-label">Cursor</span> <span class="cursorpos-value">off map</span>';
+          '<span class="cursorpos-label">Cursor</span> ' +
+          '<span class="cursorpos-value" title="Click map to pin coordinates">off map</span>' +
+          '<button class="coordbar-copy-btn" title="Copy coordinates" aria-label="Copy coordinates" style="display:none">' +
+            '<i class="bi bi-clipboard"></i>' +
+          '</button>';
         L.DomEvent.disableClickPropagation(bar);
         const input = bar.querySelector('.goto-input');
         input.addEventListener('keydown', (e) => {
@@ -146,25 +201,55 @@ const MapManager = (() => {
           }
         });
         _cursorValueEl = bar.querySelector('.cursorpos-value');
+        _copyBtn = bar.querySelector('.coordbar-copy-btn');
+        _copyBtn.addEventListener('click', () => {
+          if (_pinnedCoords) _copyToClipboard(_pinnedCoords);
+        });
         return bar;
       },
     });
     new CoordBarControl().addTo(_map);
 
     _map.on('mousemove', (e) => {
+      if (_pinnedCoords) return;
       if (_cursorValueEl) _cursorValueEl.textContent = `${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}`;
     });
     _map.on('mouseout', () => {
+      if (_pinnedCoords) return;
       if (_cursorValueEl) _cursorValueEl.textContent = 'off map';
     });
 
-    // Click on map deselects (skip when ruler is active)
-    _map.on('click', () => {
+    // Track popup dismissals so a click that closes a popup doesn't pin coords.
+    // Leaflet fires popupclose (via preclick) before our click handler runs.
+    let _dismissingPopup = false;
+    _map.on('popupclose', () => {
+      _dismissingPopup = true;
+      requestAnimationFrame(() => { _dismissingPopup = false; });
+    });
+
+    // Click on map: pin/unpin coordinates, deselect drone
+    _map.on('click', (e) => {
       if (_measureActive) return;
+
+      // A popup (receiver/operator/drone) was just closed by this click — skip
+      if (_dismissingPopup) return;
+
+      // Dismiss selection first — don't pin coordinates on a dismissal click
       if (_selectedSerial) {
         clearTrack();
         _selectedSerial = null;
         if (_onDroneClick) _onDroneClick(null);
+        return;
+      }
+
+      // Pin/unpin coordinates (only when nothing was selected)
+      if (_pinnedCoords) {
+        _unpinCoords();
+      } else {
+        _pinnedCoords = `${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}`;
+        _cursorValueEl.textContent = _pinnedCoords;
+        _cursorValueEl.classList.add('pinned');
+        _copyBtn.style.display = '';
       }
     });
 
@@ -240,7 +325,7 @@ const MapManager = (() => {
   };
 
   function _getRingStyle() {
-    if (_map && _map.hasLayer(_satelliteLayer)) return _ringStyles.satellite;
+    if (_satelliteActive) return _ringStyles.satellite;
     return _currentTheme === 'dark' ? _ringStyles.dark : _ringStyles.light;
   }
 
@@ -1066,27 +1151,29 @@ const MapManager = (() => {
     const newOsm = theme === 'dark' ? _osmDarkLayer : _osmLightLayer;
     if (newOsm === _osmLayer) return;
 
-    // Swap OSM layers on the map (if OSM is currently showing)
-    const osmWasActive = _map.hasLayer(_osmLayer);
-    if (osmWasActive) {
+    // Remove old OSM layer if it's showing, swap to new theme variant
+    if (_map.hasLayer(_osmLayer)) {
       _map.removeLayer(_osmLayer);
     }
     _osmLayer = newOsm;
-    if (osmWasActive) {
-      _osmLayer.addTo(_map);
-    }
 
-    // Rebuild layer control so the correct OSM variant is wired up.
-    // Leaflet needs the currently-visible base layer added first so its
-    // radio button is checked.
+    // Rebuild layer control with the new OSM variant
     if (_layerControl) _map.removeControl(_layerControl);
-    const bases = osmWasActive
-      ? { 'Map': _osmLayer, 'Satellite': _satelliteLayer }
-      : { 'Satellite': _satelliteLayer, 'Map': _osmLayer };
+    const bases = _satelliteActive
+      ? { 'Satellite': _satelliteLayer, 'Map': _osmLayer }
+      : { 'Map': _osmLayer, 'Satellite': _satelliteLayer };
     _layerControl = L.control.layers(
       bases, {},
       { position: 'topright', collapsed: true }
     ).addTo(_map);
+
+    // Restore the correct base layer — Leaflet's control rebuild can lose
+    // track of LayerGroup base layers (satellite), so set it explicitly.
+    if (_satelliteActive) {
+      if (!_map.hasLayer(_satelliteLayer)) _satelliteLayer.addTo(_map);
+    } else {
+      _osmLayer.addTo(_map);
+    }
 
     // Refresh range ring colors for the new theme
     _refreshRangeRings();

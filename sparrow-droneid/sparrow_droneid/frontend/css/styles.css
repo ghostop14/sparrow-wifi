@@ -1024,7 +1024,20 @@ html, body {
 .map-coordbar .goto-input::placeholder { color: var(--text-muted); }
 .map-coordbar .goto-input:focus { border-color: var(--accent-blue); }
 .map-coordbar .cursorpos-label { color: var(--text-muted); margin-right: 2px; }
-.map-coordbar .cursorpos-value { color: var(--text-primary); }
+.map-coordbar .cursorpos-value { color: var(--text-primary); cursor: default; }
+.map-coordbar .cursorpos-value.pinned { color: var(--accent-blue); }
+.map-coordbar .coordbar-copy-btn {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.map-coordbar .coordbar-copy-btn:hover { color: var(--accent-blue); }
+.map-coordbar .coordbar-copy-btn.copied { color: #22C55E; }
 
 /* ---- Measurement readout bar ---- */
 .measure-bar {
