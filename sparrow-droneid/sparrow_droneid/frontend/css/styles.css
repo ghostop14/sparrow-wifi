@@ -981,12 +981,28 @@ html, body {
   cursor: pointer;
   font-size: 15px;
   border-radius: 4px;
+  color: var(--text-secondary);
+  transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+.leaflet-control-measure:hover,
+.leaflet-control-compass-toggle:hover,
+.leaflet-control-tracks-toggle:hover {
+  color: var(--text-primary);
+  background: rgba(59,130,246,0.12);
+  border-color: rgba(59,130,246,0.4);
 }
 .leaflet-control-measure.active,
+.leaflet-control-compass-toggle.active,
 .leaflet-control-tracks-toggle.active {
   background: var(--accent-blue) !important;
   color: #fff !important;
   border-color: var(--accent-blue) !important;
+}
+.leaflet-control-measure.active:hover,
+.leaflet-control-compass-toggle.active:hover,
+.leaflet-control-tracks-toggle.active:hover {
+  background: #60a0f8 !important;
+  border-color: #60a0f8 !important;
 }
 
 /* ---- Coordinate bar (go-to input + cursor position, bottom-left) ---- */
