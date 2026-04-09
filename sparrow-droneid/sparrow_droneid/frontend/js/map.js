@@ -172,14 +172,16 @@ const MapManager = (() => {
   }
 
   // ---- Receiver position ----
-  function setReceiverPosition(lat, lon, gpsFix) {
+  function setReceiverPosition(lat, lon, gpsFix, receiver) {
     if (!_map) return;
     if (!lat || !lon) return;
 
     const latLng = [lat, lon];
+    const popupHtml = _buildReceiverPopup(lat, lon, gpsFix, receiver);
 
     if (_receiverMarker) {
       _receiverMarker.setLatLng(latLng);
+      _receiverMarker.getPopup()?.setContent(popupHtml);
     } else {
       const icon = L.divIcon({
         className: '',
@@ -194,7 +196,7 @@ const MapManager = (() => {
         iconAnchor: [8, 8],
       });
       _receiverMarker = L.marker(latLng, { icon, zIndexOffset: 500, title: 'Receiver' }).addTo(_map);
-      _receiverMarker.bindPopup('<b>Receiver</b><br>GPS fix: ' + (gpsFix ? 'Yes' : 'No'));
+      _receiverMarker.bindPopup(popupHtml, { maxWidth: 280, minWidth: 180 });
     }
 
     // Auto-center map on first valid receiver position (GPS fix or static coords)
@@ -204,6 +206,26 @@ const MapManager = (() => {
     }
 
     updateRangeRings(lat, lon);
+  }
+
+  function _buildReceiverPopup(lat, lon, gpsFix, receiver) {
+    const name = localStorage.getItem('sparrow_operator_name') || 'Receiver';
+    const source = receiver?.source || 'unknown';
+    const fixStr = gpsFix ? 'Yes' : 'No';
+    const rows = [
+      _popupRow('GPS fix', fixStr),
+      _popupRow('Source', source),
+      _popupRow('Latitude', lat.toFixed(5)),
+      _popupRow('Longitude', lon.toFixed(5)),
+      _popupRow('Alt MSL', Utils.formatAlt(receiver?.alt)),
+      _popupRow('Speed', receiver?.speed ? Utils.formatSpeed(receiver.speed) : null),
+    ].filter(Boolean).join('');
+
+    return `
+      <div class="drone-popup">
+        <div class="drone-popup-title" style="color:#2563EB;"><i class="bi bi-broadcast me-1"></i>${name}</div>
+        <div class="drone-popup-grid">${rows}</div>
+      </div>`;
   }
 
   // ---- Range rings ----
@@ -731,7 +753,7 @@ const MapManager = (() => {
 
     // Update receiver
     if (receiver && receiver.lat && receiver.lon) {
-      setReceiverPosition(receiver.lat, receiver.lon, receiver.gps_fix);
+      setReceiverPosition(receiver.lat, receiver.lon, receiver.gps_fix, receiver);
     }
 
     const activeSerialsSet = new Set(drones.map(d => d.serial_number));

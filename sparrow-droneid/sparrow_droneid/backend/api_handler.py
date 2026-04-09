@@ -815,6 +815,7 @@ def api_drones(req: RequestHandler):
         'lat': gps.get('latitude', 0.0),
         'lon': gps.get('longitude', 0.0),
         'alt': gps.get('altitude', 0.0),
+        'speed': gps.get('speed', 0.0),
         'gps_fix': gps.get('fix', False),
         'source': gps.get('mode', 'none'),
     }
