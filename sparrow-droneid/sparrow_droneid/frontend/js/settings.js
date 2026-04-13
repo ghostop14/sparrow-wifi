@@ -368,6 +368,20 @@ const SettingsManager = (() => {
               <hr class="my-2">
 
               <div class="mb-3">
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="s_alert_friendly" ${_checked(s.alert_friendly_enabled !== false)}>
+                  <label class="form-check-label" for="s_alert_friendly">Alert on Friendly drones</label>
+                </div>
+                <small class="text-muted">
+                  Disable during ongoing operations (e.g. SAR) to suppress new-drone,
+                  altitude, speed, and signal-lost alerts for drones tagged Friendly.
+                  Reduces alert fatigue from repeated launches of known assets.
+                </small>
+              </div>
+
+              <hr class="my-2">
+
+              <div class="mb-3">
                 <label class="form-label">Slack</label>
                 <div class="form-check form-switch">
                   <input class="form-check-input" type="checkbox" id="s_alert_slack" ${_checked(s.alert_slack_enabled)}>
@@ -1735,6 +1749,7 @@ const SettingsManager = (() => {
     boolField ('s_alert_visual',     'alert_visual_enabled');
     boolField ('s_alert_script',     'alert_script_enabled');
     strField  ('s_alert_script_path','alert_script_path');
+    boolField ('s_alert_friendly',   'alert_friendly_enabled');
     boolField ('s_alert_slack',      'alert_slack_enabled');
     strField  ('s_slack_webhook',    'alert_slack_webhook_url');
     strField  ('s_slack_name',       'alert_slack_display_name');

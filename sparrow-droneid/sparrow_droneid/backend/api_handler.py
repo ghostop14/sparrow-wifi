@@ -557,7 +557,7 @@ def _coerce_settings(raw: Dict[str, str]) -> Dict[str, Any]:
     bool_keys = {
         'https_enabled', 'cot_enabled',
         'alert_audio_enabled', 'alert_visual_enabled', 'alert_script_enabled',
-        'alert_slack_enabled',
+        'alert_slack_enabled', 'alert_friendly_enabled',
         'tile_cache_enabled',
         'wifi_ssid_enabled',
         'es_enabled', 'es_verify_tls', 'es_dashboards_verify_tls',
@@ -2024,6 +2024,7 @@ _SETTINGS_WRITABLE = frozenset({
     'cot_enabled', 'cot_address', 'cot_port',
     'alert_audio_enabled', 'alert_visual_enabled',
     'alert_script_enabled', 'alert_script_path',
+    'alert_friendly_enabled',
     'alert_slack_enabled', 'alert_slack_webhook_url', 'alert_slack_display_name',
     'tile_cache_enabled',
     'monitor_interface',
@@ -2117,6 +2118,12 @@ def api_settings_put(req: RequestHandler):
                 static_lon=float(_require_db().get_setting_str('gps_static_lon', '0.0')),
                 static_alt=float(_require_db().get_setting_str('gps_static_alt', '0.0')),
             )
+
+    # Apply alert settings live if any alert_* key changed. Without this the
+    # alert engine keeps its boot-time snapshot of _friendly_alerts_enabled
+    # et al., so suppression toggles wouldn't take effect until next restart.
+    if _alert_engine and any(k.startswith('alert_') for k in data):
+        _alert_engine.reload_config()
 
     # Apply CoT settings live if any CoT-related key changed.
     if any(k in data for k in ('cot_enabled', 'cot_address', 'cot_port')):

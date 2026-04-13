@@ -360,8 +360,14 @@ const App = (() => {
       // Re-fetch track for selected drone if still visible
       if (_selectedSerial) {
         const still = drones.find(d => d.serial_number === _selectedSerial);
-        if (still && !_selectedTrack) {
-          _fetchTrackAndShowDetail(_selectedSerial);
+        if (still) {
+          if (!_selectedTrack) {
+            _fetchTrackAndShowDetail(_selectedSerial);
+          } else {
+            // Keep the detail sidebar fresh as new BLE/WiFi packets update the
+            // drone state (e.g., GPS lock populating lat/lon after first detection).
+            TableManager.showDetailSidebar(still, _selectedTrack);
+          }
         }
       }
     } catch (e) { /* polling — ignore transient errors */ }

@@ -265,6 +265,27 @@ const Utils = (() => {
     div.addEventListener('hidden.bs.toast', () => div.remove());
   }
 
+  // ---- HTML / attribute escaping ----
+  //
+  // Remote-ID string fields (serial, operator_id, self_id_text, MAC, vendor)
+  // originate from RF-decoded payloads — any hostile actor can broadcast a
+  // crafted message. Treat every such string as untrusted when interpolating
+  // into innerHTML or inline event handler attributes.
+
+  const _HTML_ESCAPES = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+    '`': '&#96;',
+  };
+
+  function escapeHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/[&<>"'`]/g, ch => _HTML_ESCAPES[ch]);
+  }
+
   // ---- Short serial display ----
 
   function shortSerial(serial) {
@@ -308,5 +329,6 @@ const Utils = (() => {
     toast,
     shortSerial,
     altBadge,
+    escapeHtml,
   };
 })();

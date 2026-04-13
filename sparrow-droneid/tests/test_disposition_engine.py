@@ -155,6 +155,117 @@ class TestKeyMigration(unittest.TestCase):
         # DB migration event must have been written
         db.migrate_disposition_key.assert_called_once_with('SERIAL-BLE-001', '11:22:33:44:55:66')
 
+    def test_set_disposition_by_serial_resolves_to_ble_mac_key(self):
+        """When the user tags a BLE drone by serial (as the frontend does),
+        the backend must resolve the serial to the MAC-keyed _active_drones
+        entry and store the disposition there so subsequent BLE ads pick it
+        up via _dispositions.get(mac)."""
+        engine, db = _make_engine()
+        ble_device = _make_device(serial='BLE-SERIAL-X', mac='AA:BB:CC:11:22:33')
+        with engine._lock:
+            ble_device.first_seen = '2026-04-01T10:00:00Z'
+            engine._active_drones['AA:BB:CC:11:22:33'] = ble_device
+
+        engine.set_disposition('BLE-SERIAL-X', 'threat', changed_by='op')
+
+        with engine._lock:
+            # Stored under the MAC (real dict key), not the serial
+            self.assertEqual(engine._dispositions.get('AA:BB:CC:11:22:33'), 'threat')
+            self.assertNotIn('BLE-SERIAL-X', engine._dispositions)
+            # Live entry's disposition is stamped immediately
+            self.assertEqual(
+                engine._active_drones['AA:BB:CC:11:22:33'].disposition, 'threat')
+
+        # DB event is written under the resolved key
+        db.add_disposition_event.assert_called_once_with(
+            'AA:BB:CC:11:22:33', 'threat', changed_by='op')
+
+    def test_set_disposition_by_mac_resolves_to_wifi_serial_key(self):
+        """Inverse: tagging a WiFi drone (serial-keyed) by MAC should resolve
+        to the serial key."""
+        engine, db = _make_engine()
+        wifi_device = _make_device(serial='WIFI-SERIAL-Y', mac='DD:EE:FF:44:55:66')
+        with engine._lock:
+            wifi_device.first_seen = '2026-04-01T10:00:00Z'
+            engine._active_drones['WIFI-SERIAL-Y'] = wifi_device
+
+        engine.set_disposition('DD:EE:FF:44:55:66', 'friendly')
+
+        with engine._lock:
+            self.assertEqual(engine._dispositions.get('WIFI-SERIAL-Y'), 'friendly')
+            self.assertNotIn('DD:EE:FF:44:55:66', engine._dispositions)
+
+    def test_recover_disposition_from_legacy_serial_key(self):
+        """A disposition stored under the drone's serial on a prior session must
+        be picked up when the drone reappears MAC-keyed via BLE. Simulates the
+        state of a DB populated before the set_disposition resolver fix."""
+        engine, db = _make_engine(dispositions={'LEGACY-SERIAL-A': 'threat'})
+
+        # BLE drone arrives (MAC-keyed) carrying the matching serial
+        ble_device = _make_device(serial='LEGACY-SERIAL-A', mac='AB:CD:EF:01:02:03')
+        engine._track_ble_device(ble_device)
+
+        with engine._lock:
+            # Cache has been migrated forward to the MAC key
+            self.assertEqual(engine._dispositions.get('AB:CD:EF:01:02:03'), 'threat')
+            self.assertNotIn('LEGACY-SERIAL-A', engine._dispositions)
+            # Live entry carries the recovered tag
+            entry = engine._active_drones.get('AB:CD:EF:01:02:03')
+            self.assertIsNotNone(entry)
+            self.assertEqual(entry.disposition, 'threat')
+
+        # DB migration event was written so the recovery is persistent
+        db.migrate_disposition_key.assert_called_with(
+            'LEGACY-SERIAL-A', 'AB:CD:EF:01:02:03')
+
+    def test_recover_disposition_from_legacy_mac_key_for_wifi(self):
+        """Inverse: a legacy MAC-keyed tag migrates to the serial key when a
+        WiFi drone arrives. Covers the scenario where BLE-tagged data exists
+        from a prior session but the same physical drone now emits over WiFi."""
+        engine, db = _make_engine(dispositions={'11:22:33:44:55:66': 'friendly'})
+
+        wifi_device = _make_device(serial='WIFI-SER-42', mac='11:22:33:44:55:66')
+        engine._track_device(wifi_device)
+
+        with engine._lock:
+            self.assertEqual(engine._dispositions.get('WIFI-SER-42'), 'friendly')
+            self.assertNotIn('11:22:33:44:55:66', engine._dispositions)
+            self.assertEqual(
+                engine._active_drones['WIFI-SER-42'].disposition, 'friendly')
+
+        db.migrate_disposition_key.assert_called_with(
+            '11:22:33:44:55:66', 'WIFI-SER-42')
+
+    def test_recover_disposition_no_match_returns_unknown(self):
+        """When no legacy key matches, disposition remains 'unknown' and no
+        DB migration is scheduled."""
+        engine, db = _make_engine(dispositions={'SOMEONE-ELSE': 'threat'})
+
+        device = _make_device(serial='NO-MATCH', mac='00:11:22:33:44:55')
+        engine._track_device(device)
+
+        with engine._lock:
+            self.assertEqual(engine._active_drones['NO-MATCH'].disposition, 'unknown')
+            # The unrelated legacy entry stays put
+            self.assertEqual(engine._dispositions.get('SOMEONE-ELSE'), 'threat')
+
+        db.migrate_disposition_key.assert_not_called()
+
+    def test_get_active_drones_exposes_drone_key(self):
+        """The drone list must include a 'drone_key' field matching the
+        internal _active_drones key so the frontend can round-trip it."""
+        engine, db = _make_engine()
+        ble_device = _make_device(serial='BLE-SERIAL-Z', mac='99:88:77:66:55:44')
+        with engine._lock:
+            ble_device.first_seen = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+            ble_device.last_seen = ble_device.first_seen
+            engine._active_drones['99:88:77:66:55:44'] = ble_device
+
+        drones = engine.get_active_drones(max_age=0)
+        self.assertEqual(len(drones), 1)
+        self.assertEqual(drones[0]['drone_key'], '99:88:77:66:55:44')
+        self.assertEqual(drones[0]['serial_number'], 'BLE-SERIAL-Z')
+
 
 class TestDroneStateTimezone(unittest.TestCase):
     """Regression tests: drone_state() must not raise TypeError mixing

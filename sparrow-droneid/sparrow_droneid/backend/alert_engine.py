@@ -106,6 +106,10 @@ class AlertEngine:
         self._script_enabled: bool = _bool('alert_script_enabled', False)
         self._script_path: str     = self._db.get_setting('alert_script_path', '') or ''
 
+        # When False, drones tagged Friendly do not fire alerts. Default True
+        # so nothing changes until the operator opts into the suppression.
+        self._friendly_alerts_enabled: bool = _bool('alert_friendly_enabled', True)
+
         # Slack webhook notifications
         self._slack_enabled: bool    = _bool('alert_slack_enabled', False)
         self._slack_webhook_url: str = self._db.get_setting('alert_slack_webhook_url', '') or ''
@@ -180,6 +184,7 @@ class AlertEngine:
             'visual_enabled': self._visual_enabled,
             'script_enabled': self._script_enabled,
             'script_path':    self._script_path,
+            'friendly_alerts_enabled': self._friendly_alerts_enabled,
             'slack_enabled':      self._slack_enabled,
             'slack_webhook_url':  self._slack_webhook_url,
             'slack_display_name': self._slack_display_name,
@@ -197,6 +202,8 @@ class AlertEngine:
             self._db.set_setting('alert_script_enabled', str(config['script_enabled']).lower())
         if 'script_path' in config:
             self._db.set_setting('alert_script_path', config['script_path'])
+        if 'friendly_alerts_enabled' in config:
+            self._db.set_setting('alert_friendly_enabled', str(config['friendly_alerts_enabled']).lower())
         if 'slack_enabled' in config:
             self._db.set_setting('alert_slack_enabled', str(config['slack_enabled']).lower())
         if 'slack_webhook_url' in config:
@@ -221,6 +228,19 @@ class AlertEngine:
         else:
             key = device.get_key()
         if not key:
+            return
+
+        # Friendly-drone suppression. When the operator tags a drone Friendly
+        # and disables friendly alerts, skip all rule evaluation so repeat
+        # launches (e.g. SAR sorties) don't flood the alert panel. We still
+        # register the key as known so re-enabling alerts later doesn't fire
+        # a stale new_drone alert.
+        if device.disposition == 'friendly' and not self._friendly_alerts_enabled:
+            with self._lock:
+                self._known_serials.add(key)
+                self._pending_new.pop(key, None)
+                self._alerted_lost.discard(key)
+                self._alerted_violations.pop(key, None)
             return
 
         for rule in self._rules:
@@ -320,6 +340,12 @@ class AlertEngine:
         now = datetime.now(timezone.utc)
 
         for key, device in active_drones.items():
+            if device.disposition == 'friendly' and not self._friendly_alerts_enabled:
+                # Signal-lost is a nuisance for SAR/friendly ops; the operator
+                # already knows the drone is theirs. Clear any stale state.
+                with self._lock:
+                    self._alerted_lost.discard(key)
+                continue
             try:
                 last_seen = datetime.fromisoformat(
                     device.last_seen.replace('Z', '+00:00')

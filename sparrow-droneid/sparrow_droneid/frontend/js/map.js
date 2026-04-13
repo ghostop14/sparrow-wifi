@@ -35,7 +35,11 @@ const MapManager = (() => {
   }
 
   // ---- Clipboard (works over plain HTTP via execCommand fallback) ----
-  function _copyToClipboard(text) {
+  //
+  // toastMsg: if set, shows a Utils toast on success instead of animating the
+  // coord-bar copy button. Used by popup/context-menu copy actions that don't
+  // have a visible button to animate.
+  function _copyToClipboard(text, toastMsg) {
     function fallback() {
       const ta = document.createElement('textarea');
       ta.value = text;
@@ -45,18 +49,24 @@ const MapManager = (() => {
       ta.select();
       const ok = document.execCommand('copy');
       document.body.removeChild(ta);
-      _showCopyFeedback(ok);
+      _showCopyFeedback(ok, toastMsg);
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text)
-        .then(() => _showCopyFeedback(true))
+        .then(() => _showCopyFeedback(true, toastMsg))
         .catch(() => fallback());
     } else {
       fallback();
     }
   }
 
-  function _showCopyFeedback(ok) {
+  function _showCopyFeedback(ok, toastMsg) {
+    if (toastMsg) {
+      if (typeof Utils !== 'undefined' && Utils.toast) {
+        Utils.toast(ok ? toastMsg : 'Copy failed', ok ? 'success' : 'danger');
+      }
+      return;
+    }
     if (!_copyBtn) return;
     const icon = _copyBtn.querySelector('i');
     if (ok) {
@@ -225,6 +235,34 @@ const MapManager = (() => {
     _map.on('popupclose', () => {
       _dismissingPopup = true;
       requestAnimationFrame(() => { _dismissingPopup = false; });
+    });
+
+    // Delegated click handler for popup buttons. Leaflet recreates popup DOM
+    // on open/close, and inline onclick handlers would require HTML-escaping
+    // drone-sourced strings into a JS string literal — an XSS vector.
+    // Using data-action + delegation keeps all drone-controlled data inside
+    // safe attribute context.
+    document.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-action]');
+      if (!btn) return;
+      const action = btn.dataset.action;
+      const key = btn.dataset.droneKey || '';
+      if (!key) return;
+
+      if (action === 'drone-detail') {
+        if (_onDroneClick) _onDroneClick(key);
+      } else if (action === 'operator-detail') {
+        // Same behavior as drone-detail: open detail sidebar for the parent
+        // drone. Kept as a distinct action so future operator-only UX (e.g.
+        // a pilot-centric view) can diverge without re-wiring HTML.
+        if (_onDroneClick) _onDroneClick(key);
+      } else if (action === 'copy-latlon') {
+        const txt = btn.dataset.value || '';
+        if (txt) _copyToClipboard(txt, 'Coordinates copied');
+      } else if (action === 'copy-text') {
+        const txt = btn.dataset.value || '';
+        if (txt) _copyToClipboard(txt, 'Copied to clipboard');
+      }
     });
 
     // Click on map: pin/unpin coordinates, deselect drone
@@ -722,24 +760,30 @@ const MapManager = (() => {
   }
 
   function buildOperatorPopup(drone) {
+    const esc = Utils.escapeHtml;
     const opLat = drone.operator_lat?.toFixed(5) ?? '—';
     const opLon = drone.operator_lon?.toFixed(5) ?? '—';
     const opId = drone.operator_id || '—';
     const serial = drone.serial_number || drone.mac_address || '?';
+    const disp = drone.disposition || 'unknown';
+    const dispHtml = `<span class="disposition-${esc(disp)}" style="font-weight:600;">${esc(disp.charAt(0).toUpperCase() + disp.slice(1))}</span>`;
 
     const rows = [
-      _popupRow('Drone', serial),
-      _popupRow('Operator ID', opId),
-      _popupRow('Position', `${opLat}, ${opLon}`),
-      _popupRow('Alt', Utils.formatAlt(drone.operator_alt)),
-      _popupRow('Pilot dist', _bvlosStr(drone)),
+      _popupRow('Drone', esc(serial)),
+      _popupRow('Operator ID', esc(opId)),
+      _popupRow('Disposition', dispHtml),
+      _popupRow('Position', esc(`${opLat}, ${opLon}`)),
+      _popupRow('Alt', esc(Utils.formatAlt(drone.operator_alt))),
+      _popupRow('Pilot dist', esc(_bvlosStr(drone))),
     ].filter(Boolean).join('');
+
+    const selectKey = drone.serial_number || drone.drone_key || drone.mac_address || '';
 
     return `
       <div class="drone-popup">
         <div class="drone-popup-title" style="color:#14B8A6;"><i class="bi bi-controller me-1"></i>Operator</div>
         <div class="drone-popup-grid">${rows}</div>
-        <button class="btn-popup-detail" onclick="MapManager._operatorDetailClick('${drone.serial_number}')">
+        <button class="btn-popup-detail" data-action="operator-detail" data-drone-key="${esc(selectKey)}">
           <i class="bi bi-bezier2 me-1"></i>Show Flight Track
         </button>
       </div>`;
@@ -791,49 +835,60 @@ const MapManager = (() => {
 
   function buildPopupContent(drone) {
     const d = drone.derived || {};
+    const esc = Utils.escapeHtml;
 
-    // Identity block
+    // Identity block. All RemoteID-sourced strings must pass through esc()
+    // to prevent XSS via crafted serial/operator/self-id payloads.
     const uaType = (drone.ua_type_name && drone.ua_type_name !== 'None / Not Declared') ? drone.ua_type_name : '';
     const typeStr = [drone.vendor, uaType].filter(Boolean).join(' ') || (drone.protocol === 'wifi_ssid' ? 'WiFi SSID Detection' : '—');
+    const disp = drone.disposition || 'unknown';
+    const dispHtml = `<span class="disposition-${esc(disp)}" style="font-weight:600;">${esc(disp.charAt(0).toUpperCase() + disp.slice(1))}</span>`;
     const idRows = [
-      _popupRow('Serial', drone.serial_number || '—'),
-      _popupRow('Type', typeStr),
-      _popupRow('Operator', drone.operator_id),
+      _popupRow('Serial', esc(drone.serial_number || '—')),
+      _popupRow('Type', esc(typeStr)),
+      _popupRow('Operator', esc(drone.operator_id)),
+      _popupRow('Disposition', dispHtml),
     ].filter(Boolean).join('');
 
     // Kinematics block
     const kinRows = [
-      _popupRow('Alt AGL', Utils.formatAlt(drone.drone_height_agl)),
-      _popupRow('Alt MSL', Utils.formatAlt(drone.drone_alt_geo)),
-      _popupRow('Speed', _headingStr(drone)),
-      _popupRow('V/S', _vspdStr(drone)),
-      _popupRow('From Rx', Utils.formatBearing(d.bearing_deg, d.bearing_cardinal)
-        + (d.range_m != null ? ' @ ' + Utils.formatRange(d.range_m) : '')),
+      _popupRow('Alt AGL', esc(Utils.formatAlt(drone.drone_height_agl))),
+      _popupRow('Alt MSL', esc(Utils.formatAlt(drone.drone_alt_geo))),
+      _popupRow('Speed', esc(_headingStr(drone))),
+      _popupRow('V/S', esc(_vspdStr(drone))),
+      _popupRow('From Rx', esc(Utils.formatBearing(d.bearing_deg, d.bearing_cardinal)
+        + (d.range_m != null ? ' @ ' + Utils.formatRange(d.range_m) : ''))),
     ].filter(Boolean).join('');
 
     // Operator block
     const opDist = _bvlosStr(drone);
     const opRows = [
-      _popupRow('Pilot dist', opDist),
+      _popupRow('Pilot dist', esc(opDist)),
     ].filter(Boolean).join('');
 
     // Self-ID
     const selfId = drone.self_id_text
-      ? `<div style="font-size:11px;color:var(--text-secondary);border-top:1px solid var(--border-color);padding-top:4px;margin-top:4px;">"${drone.self_id_text}"</div>`
+      ? `<div style="font-size:11px;color:var(--text-secondary);border-top:1px solid var(--border-color);padding-top:4px;margin-top:4px;">"${esc(drone.self_id_text)}"</div>`
       : '';
 
     // Signal line
-    const sigRow = _popupRow('Signal', `${Utils.formatRssi(drone.rssi)} · ${drone.protocol || '?'} · ${Utils.relativeTime(drone.last_seen)}`);
+    const sigRow = _popupRow('Signal', esc(`${Utils.formatRssi(drone.rssi)} · ${drone.protocol || '?'} · ${Utils.relativeTime(drone.last_seen)}`));
+
+    // Selection key: prefer serial_number because the app's selection state
+    // and poll matching (drones.find(d => d.serial_number === ...)) uses it.
+    // Fall back to drone_key (MAC) for BLE drones without a serial.
+    const selectKey = drone.serial_number || drone.drone_key || drone.mac_address || '';
+    const title = esc(drone.serial_number || drone.mac_address || '?');
 
     return `
       <div class="drone-popup">
-        <div class="drone-popup-title">${drone.serial_number || drone.mac_address || '?'}</div>
+        <div class="drone-popup-title">${title}</div>
         <div class="drone-popup-grid">${idRows}</div>
         <div class="drone-popup-grid" style="border-top:1px solid var(--border-color);padding-top:3px;margin-top:3px;">${kinRows}</div>
         ${opRows ? `<div class="drone-popup-grid" style="border-top:1px solid var(--border-color);padding-top:3px;margin-top:3px;">${opRows}</div>` : ''}
         ${selfId}
         <div class="drone-popup-grid" style="border-top:1px solid var(--border-color);padding-top:3px;margin-top:3px;opacity:0.7;font-size:10px;">${sigRow}</div>
-        <button class="btn-popup-detail" onclick="MapManager._popupDetailClick('${drone.serial_number}')">
+        <button class="btn-popup-detail" data-action="drone-detail" data-drone-key="${esc(selectKey)}">
           <i class="bi bi-info-circle me-1"></i>Full Details
         </button>
       </div>`;
@@ -893,6 +948,7 @@ const MapManager = (() => {
               L.DomEvent.stopPropagation(e);
               if (_measureActive) { _onMeasureLeftClick(e); return; }
             });
+            _bindOperatorContextMenu(entry.operatorMarker, serial);
           }
           if (entry.line) {
             entry.line.setLatLngs([latLng, opLatLng]);
@@ -934,7 +990,7 @@ const MapManager = (() => {
           const freshDrone = entry && entry.drone;
           if (!freshDrone) return;
           ContextMenu.show(ev.originalEvent.clientX, ev.originalEvent.clientY,
-            buildDispositionMenu(freshDrone, _tagDroneFromMap));
+            _buildDroneMenu(freshDrone));
         });
 
         let operatorMarker = null;
@@ -948,6 +1004,7 @@ const MapManager = (() => {
             L.DomEvent.stopPropagation(e);
             if (_measureActive) { _onMeasureLeftClick(e); return; }
           });
+          _bindOperatorContextMenu(operatorMarker, serial);
           line = L.polyline([latLng, opLatLng], {
             color: lineColor, weight: 1.5, dashArray: '5 4', opacity: 0.7
           }).addTo(_map);
@@ -1213,9 +1270,101 @@ const MapManager = (() => {
     }, ms || 100);
   }
 
+  // ---- Context menu builders for drone / operator markers ----
+
+  // Operator (controller) context menu. SIGINT/EW operators need fast access
+  // to the controller's coordinates for calling in a QRF or countermeasures.
+  // Keep the top-level actions one click away; push disposition tagging into
+  // a submenu so the common case (grab coords) stays fast.
+  function _buildOperatorMenu(drone, selectKey) {
+    const items = [];
+    const hasPos = drone.operator_lat && drone.operator_lon;
+
+    if (hasPos) {
+      const latStr = drone.operator_lat.toFixed(6);
+      const lonStr = drone.operator_lon.toFixed(6);
+      const pair = `${latStr}, ${lonStr}`;
+      items.push({
+        label: 'Copy coordinates',
+        onClick: () => _copyToClipboard(pair, 'Controller coordinates copied'),
+      });
+      items.push({
+        label: `Copy lat (${latStr})`,
+        onClick: () => _copyToClipboard(latStr, 'Latitude copied'),
+      });
+      items.push({
+        label: `Copy lon (${lonStr})`,
+        onClick: () => _copyToClipboard(lonStr, 'Longitude copied'),
+      });
+      if (drone.operator_alt != null && drone.operator_alt !== 0) {
+        items.push({
+          label: `Copy alt (${drone.operator_alt.toFixed(1)} m)`,
+          onClick: () => _copyToClipboard(String(drone.operator_alt), 'Altitude copied'),
+        });
+      }
+    }
+
+    if (drone.operator_id) {
+      items.push({
+        label: 'Copy operator ID',
+        onClick: () => _copyToClipboard(drone.operator_id, 'Operator ID copied'),
+      });
+    }
+
+    items.push({ separator: true });
+
+    items.push({
+      label: 'Show drone details',
+      onClick: () => {
+        if (_onDroneClick && selectKey) _onDroneClick(selectKey);
+      },
+    });
+
+    items.push({ separator: true });
+
+    // Disposition is a property of the physical drone; tagging from the
+    // controller marker updates the same record the drone marker would.
+    buildDispositionMenu(drone, _tagDroneFromMap).forEach(i => items.push(i));
+
+    return items;
+  }
+
+  // Drone context menu. Adds coordinate copy actions alongside disposition.
+  function _buildDroneMenu(drone) {
+    const items = [];
+    if (drone.drone_lat && drone.drone_lon) {
+      const latStr = drone.drone_lat.toFixed(6);
+      const lonStr = drone.drone_lon.toFixed(6);
+      const pair = `${latStr}, ${lonStr}`;
+      items.push({
+        label: 'Copy coordinates',
+        onClick: () => _copyToClipboard(pair, 'Drone coordinates copied'),
+      });
+      items.push({ separator: true });
+    }
+    buildDispositionMenu(drone, _tagDroneFromMap).forEach(i => items.push(i));
+    return items;
+  }
+
+  // Attach the operator contextmenu to a marker. Reads the fresh drone
+  // state from _droneMarkers[serial] at click time so the menu always
+  // reflects current coordinates/disposition/operator_id.
+  function _bindOperatorContextMenu(marker, serial) {
+    marker.on('contextmenu', (ev) => {
+      L.DomEvent.stopPropagation(ev);
+      ev.originalEvent.preventDefault();
+      const entry = _droneMarkers[serial];
+      const freshDrone = entry && entry.drone;
+      if (!freshDrone) return;
+      const selectKey = freshDrone.serial_number || freshDrone.drone_key || freshDrone.mac_address || '';
+      ContextMenu.show(ev.originalEvent.clientX, ev.originalEvent.clientY,
+        _buildOperatorMenu(freshDrone, selectKey));
+    });
+  }
+
   // ---- Disposition tagging from map context menu ----
   function _tagDroneFromMap(drone, disposition) {
-    const key = drone.serial_number || drone.registration_id || drone.mac_address;
+    const key = drone.drone_key || drone.serial_number || drone.registration_id || drone.mac_address;
     if (!key) return;
     Api.putDisposition(key, disposition).catch(() => {});
     drone.disposition = disposition;

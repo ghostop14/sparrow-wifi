@@ -1097,6 +1097,7 @@ class DroneIDEngine:
 
         # Update active drones dict; collect migration info to act on outside lock
         migration = None
+        disp_migration = None
         with self._lock:
             if key in self._active_drones:
                 existing = self._active_drones[key]
@@ -1123,7 +1124,7 @@ class DroneIDEngine:
                     device.first_seen = now
 
             device.last_seen = now
-            device.disposition = self._dispositions.get(key, 'unknown')
+            device.disposition, disp_migration = self._recover_disposition(device, key)
             self._active_drones[key] = device
 
             # RSSI history
@@ -1142,6 +1143,16 @@ class DroneIDEngine:
                 _logging.getLogger(__name__).warning(
                     'migrate_disposition_key %s→%s failed; in-memory state already updated',
                     migration[0], migration[1])
+
+        # Persist legacy-keyed disposition recovery to DB outside the lock
+        if disp_migration:
+            try:
+                self._db.migrate_disposition_key(disp_migration[0], disp_migration[1])
+            except Exception:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    'disposition recovery %s→%s failed; in-memory state already updated',
+                    disp_migration[0], disp_migration[1])
 
         # Persist to database
         rx_lat, rx_lon, rx_alt = self._gps.get_receiver_position()
@@ -1171,6 +1182,7 @@ class DroneIDEngine:
         key = device.mac_address  # always use MAC for BLE
         is_new = False
         migration = None
+        disp_migration = None
 
         with self._lock:
             if key in self._active_drones:
@@ -1212,7 +1224,7 @@ class DroneIDEngine:
                 is_new = True
 
             device.last_seen = now
-            device.disposition = self._dispositions.get(key, 'unknown')
+            device.disposition, disp_migration = self._recover_disposition(device, key)
             self._active_drones[key] = device
 
             # RSSI history
@@ -1231,6 +1243,16 @@ class DroneIDEngine:
                 _logging.getLogger(__name__).warning(
                     'migrate_disposition_key %s→%s failed; in-memory state already updated',
                     migration[0], migration[1])
+
+        # Persist legacy-keyed disposition recovery to DB outside the lock
+        if disp_migration:
+            try:
+                self._db.migrate_disposition_key(disp_migration[0], disp_migration[1])
+            except Exception:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    'disposition recovery %s→%s failed; in-memory state already updated',
+                    disp_migration[0], disp_migration[1])
 
         # Throttle DB writes and alert callbacks to avoid flooding.
         # The in-memory state (above) is always up-to-date for API queries.
@@ -1466,6 +1488,10 @@ class DroneIDEngine:
                 d = device.to_dict(rx_lat, rx_lon, rx_alt)
                 # Add RSSI trend
                 d['rssi_trend'] = calc_rssi_trend(self._rssi_history.get(key, []))
+                # Expose the internal tracking key so the frontend can round-trip it
+                # back for disposition/detail calls (BLE entries are MAC-keyed,
+                # WiFi entries are serial-keyed; this normalizes the difference).
+                d['drone_key'] = key
                 result.append(d)
 
         return result
@@ -1475,12 +1501,14 @@ class DroneIDEngine:
         rx_lat, rx_lon, rx_alt = self._gps.get_receiver_position()
 
         with self._lock:
-            device = self._active_drones.get(serial)
+            resolved = self._resolve_active_key(serial)
+            device = self._active_drones.get(resolved)
 
         drone_dict = None
         if device:
             drone_dict = device.to_dict(rx_lat, rx_lon, rx_alt)
-            drone_dict['rssi_trend'] = calc_rssi_trend(self._rssi_history.get(serial, []))
+            drone_dict['rssi_trend'] = calc_rssi_trend(self._rssi_history.get(resolved, []))
+            drone_dict['drone_key'] = resolved
         else:
             # Try from DB; attach current disposition (detections table has none)
             row = self._db.get_drone_by_serial(serial)
@@ -1488,6 +1516,7 @@ class DroneIDEngine:
                 drone_dict = row
                 with self._lock:
                     drone_dict['disposition'] = self._dispositions.get(serial, 'unknown')
+                drone_dict['drone_key'] = serial
 
         track = self._db.get_drone_track(serial, track_minutes)
         return drone_dict, track
@@ -1606,6 +1635,65 @@ class DroneIDEngine:
         with self._lock:
             self._dispositions = loaded
 
+    def _recover_disposition(self, device: DroneIDDevice, active_key: str):
+        """Look up cached disposition for a device, migrating from legacy keys.
+
+        Must be called under self._lock.
+
+        The disposition cache (_dispositions) may contain entries keyed by a
+        different identity than the current _active_drones key — for example
+        when an old session stored the tag under the serial but the device
+        is now MAC-keyed (BLE), or vice versa. This helper checks the active
+        key first, then falls back to the device's serial / registration /
+        MAC, and migrates the cache forward under the active key when a
+        fallback hits.
+
+        Returns (disposition_str, migration_tuple_or_None). Caller is
+        responsible for writing migration to DB outside the lock when the
+        tuple is not None.
+        """
+        # Fast path: cache already keyed correctly
+        disp = self._dispositions.get(active_key)
+        if disp:
+            return disp, None
+
+        # Try fallback identities from the device itself
+        fallback_keys = []
+        for cand in (device.serial_number, device.registration_id, device.mac_address):
+            if cand and cand != active_key and cand not in fallback_keys:
+                fallback_keys.append(cand)
+
+        for old_key in fallback_keys:
+            old_disp = self._dispositions.get(old_key)
+            if old_disp:
+                # Migrate the cache entry forward to the active key
+                self._dispositions[active_key] = old_disp
+                self._dispositions.pop(old_key, None)
+                return old_disp, (old_key, active_key)
+
+        return 'unknown', None
+
+    def _resolve_active_key(self, passed_key: str) -> str:
+        """Resolve a caller-provided key to the actual _active_drones dict key.
+
+        BLE drones are keyed by MAC while WiFi drones are keyed by serial
+        (see get_key()).  External callers (frontend tagging, API consumers)
+        may pass either the serial or the MAC.  Search _active_drones for
+        an entry whose dict key, MAC, or serial matches; return the real
+        dict key if found, else return passed_key unchanged.  Must be called
+        under self._lock.
+        """
+        if not passed_key:
+            return passed_key
+        if passed_key in self._active_drones:
+            return passed_key
+        for k, existing in self._active_drones.items():
+            if (existing.mac_address and existing.mac_address == passed_key) \
+                    or (existing.serial_number and existing.serial_number == passed_key) \
+                    or (existing.registration_id and existing.registration_id == passed_key):
+                return k
+        return passed_key
+
     def _maybe_migrate_key(self, new_device: DroneIDDevice, new_key: str):
         """If a prior entry shares the same MAC but a different key, migrate its disposition.
 
@@ -1640,14 +1728,16 @@ class DroneIDEngine:
 
     def set_disposition(self, drone_key: str, disposition: str, changed_by: str = '') -> None:
         """Tag a drone with a disposition. Persists to DB and updates in-memory state."""
-        self._db.add_disposition_event(drone_key, disposition, changed_by=changed_by)
+        with self._lock:
+            resolved = self._resolve_active_key(drone_key)
+        self._db.add_disposition_event(resolved, disposition, changed_by=changed_by)
         with self._lock:
             if disposition == 'unknown':
-                self._dispositions.pop(drone_key, None)
+                self._dispositions.pop(resolved, None)
             else:
-                self._dispositions[drone_key] = disposition
-            if drone_key in self._active_drones:
-                self._active_drones[drone_key].disposition = disposition
+                self._dispositions[resolved] = disposition
+            if resolved in self._active_drones:
+                self._active_drones[resolved].disposition = disposition
 
     def get_disposition(self, drone_key: str) -> str:
         with self._lock:

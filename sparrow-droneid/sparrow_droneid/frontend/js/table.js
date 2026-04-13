@@ -254,27 +254,30 @@ const TableManager = (() => {
       <span class="disposition-${disp}" style="font-size:12px;font-weight:600;">${disp.charAt(0).toUpperCase() + disp.slice(1)}</span>
     </div>`;
 
+    // All RemoteID-sourced string fields pass through _esc() — a hostile
+    // drone can embed HTML/JS in serial_number, self_id_text, operator_id,
+    // ua_type_name, id_type_name, or protocol and the detail sidebar
+    // interpolates into innerHTML.
     let html = `
       <div class="detail-state-bar ${state}"></div>
-      <div class="detail-serial">${drone.serial_number || '—'}</div>
+      <div class="detail-serial">${_esc(drone.serial_number) || '—'}</div>
       ${dispBadge}`;
 
-    // Fix #14: use CSS var instead of hardcoded #94A3B8
     if (drone.self_id_text) {
-      html += `<div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;font-style:italic;">"${drone.self_id_text}"</div>`;
+      html += `<div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;font-style:italic;">"${_esc(drone.self_id_text)}"</div>`;
     }
 
     const idRows = [];
-    if (drone.vendor) idRows.push(['Manufacturer', drone.vendor]);
+    if (drone.vendor) idRows.push(['Manufacturer', _esc(drone.vendor)]);
     const uaType = (drone.ua_type_name && drone.ua_type_name !== 'None / Not Declared') ? drone.ua_type_name : '';
-    if (uaType) idRows.push(['UA Type', uaType]);
+    if (uaType) idRows.push(['UA Type', _esc(uaType)]);
     if (drone.id_type_name && drone.id_type_name !== 'None / Not Declared') {
-      idRows.push(['ID Type', drone.id_type_name]);
+      idRows.push(['ID Type', _esc(drone.id_type_name)]);
     }
     const protoNames = { astm_nan: 'WiFi NAN', astm_beacon: 'WiFi Beacon', astm_ble: 'Bluetooth', dji_proprietary: 'WiFi (DJI)', wifi_ssid: 'WiFi SSID Detection' };
-    idRows.push(['Protocol', protoNames[drone.protocol] || drone.protocol || '—']);
-    idRows.push(['MAC', drone.mac_address || '—']);
-    if (drone.operator_id) idRows.push(['Operator ID', drone.operator_id]);
+    idRows.push(['Protocol', _esc(protoNames[drone.protocol] || drone.protocol || '—')]);
+    idRows.push(['MAC', _esc(drone.mac_address || '—')]);
+    if (drone.operator_id) idRows.push(['Operator ID', _esc(drone.operator_id)]);
     html += section('Identity', idRows);
 
     html += section('Position', [
@@ -330,6 +333,8 @@ const TableManager = (() => {
     return html;
   }
 
+  let _detailShownSerial = null;
+
   function showDetailSidebar(drone, track) {
     const sidebar = document.getElementById('detailSidebar');
     const body = document.getElementById('detailBody');
@@ -337,13 +342,18 @@ const TableManager = (() => {
 
     if (!drone) {
       sidebar.classList.remove('open');
+      _detailShownSerial = null;
       return;
     }
 
+    const isSameDrone = _detailShownSerial === drone.serial_number;
+    const prevScroll = isSameDrone ? body.scrollTop : 0;
+
     title.textContent = Utils.shortSerial(drone.serial_number);
     body.innerHTML = buildDetailHtml(drone, track);
-    body.scrollTop = 0;
+    body.scrollTop = prevScroll;
     sidebar.classList.add('open');
+    _detailShownSerial = drone.serial_number;
 
     // Attach track button handler
     const trackBtn = document.getElementById('btnDetailShowTrack');
@@ -366,7 +376,7 @@ const TableManager = (() => {
 
   // ---- Disposition tagging ----
   function _tagDrone(drone, disposition) {
-    const key = drone.serial_number || drone.registration_id || drone.mac_address;
+    const key = drone.drone_key || drone.serial_number || drone.registration_id || drone.mac_address;
     if (!key) return;
     Api.putDisposition(key, disposition).catch(() => {});
     // Optimistically update local state so the UI refreshes immediately
