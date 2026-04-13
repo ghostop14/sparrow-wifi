@@ -10,7 +10,11 @@ import logging
 import re
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def _utcnow_iso_z() -> str:
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 from typing import Callable, List, Optional, Tuple
 
 import requests as _requests
@@ -381,7 +385,7 @@ class WifiSsidScanner:
     def _build_device(self, ssid: str, mac: str, signal: int,
                       channel: int, label: str) -> Optional[DroneIDDevice]:
         """Build a DroneIDDevice from a WiFi scan match."""
-        now = datetime.utcnow().isoformat() + 'Z'
+        now = _utcnow_iso_z()
 
         # Place the drone at the receiver's position (no own GPS available)
         rx_lat, rx_lon, rx_alt = 0.0, 0.0, 0.0

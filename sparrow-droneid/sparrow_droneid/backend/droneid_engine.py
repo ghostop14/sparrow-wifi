@@ -14,8 +14,13 @@ import subprocess
 import shutil
 import threading
 import os
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def _utcnow_iso_z() -> str:
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 from time import sleep
+from typing import Dict
 
 from .models import (
     DroneIDDevice, WifiInterface, Protocol, UAType,
@@ -840,6 +845,10 @@ class DroneIDEngine:
         self._rssi_history = {}    # key -> list of RSSI values
         self._lock = threading.Lock()
 
+        # Disposition cache — populated from DB at startup; only non-unknown entries
+        self._dispositions: Dict[str, str] = {}
+        self._load_dispositions()
+
         # Monitoring state
         self._monitoring = False
         self._interface = ""
@@ -880,7 +889,7 @@ class DroneIDEngine:
         self._channel = channel
         self._capture_proc = CaptureManager.start_capture(self._interface)
         self._monitoring = True
-        self._started_at = datetime.utcnow()
+        self._started_at = datetime.now(timezone.utc)
         self._frame_count = 0
         self._droneid_frame_count = 0
         self._capture_errors = 0
@@ -1083,10 +1092,11 @@ class DroneIDEngine:
         The caller is responsible for setting device.rssi / device.mac_address
         before calling this method.
         """
-        now = datetime.utcnow().isoformat() + 'Z'
+        now = _utcnow_iso_z()
         key = device.get_key()
 
-        # Update active drones dict
+        # Update active drones dict; collect migration info to act on outside lock
+        migration = None
         with self._lock:
             if key in self._active_drones:
                 existing = self._active_drones[key]
@@ -1107,9 +1117,13 @@ class DroneIDEngine:
                 if device.ua_type == 0 and existing.ua_type != 0:
                     device.ua_type = existing.ua_type
             else:
-                device.first_seen = now
+                # Check if a prior MAC-keyed entry should migrate to this serial-keyed entry
+                migration = self._maybe_migrate_key(device, key)
+                if not device.first_seen:
+                    device.first_seen = now
 
             device.last_seen = now
+            device.disposition = self._dispositions.get(key, 'unknown')
             self._active_drones[key] = device
 
             # RSSI history
@@ -1118,6 +1132,16 @@ class DroneIDEngine:
             self._rssi_history[key].append(device.rssi)
             if len(self._rssi_history[key]) > 10:
                 self._rssi_history[key] = self._rssi_history[key][-10:]
+
+        # Persist disposition migration to DB outside the lock
+        if migration:
+            try:
+                self._db.migrate_disposition_key(migration[0], migration[1])
+            except Exception:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    'migrate_disposition_key %s→%s failed; in-memory state already updated',
+                    migration[0], migration[1])
 
         # Persist to database
         rx_lat, rx_lon, rx_alt = self._gps.get_receiver_position()
@@ -1143,9 +1167,10 @@ class DroneIDEngine:
         """
         import time as _time
         now_ts = _time.monotonic()
-        now = datetime.utcnow().isoformat() + 'Z'
+        now = _utcnow_iso_z()
         key = device.mac_address  # always use MAC for BLE
         is_new = False
+        migration = None
 
         with self._lock:
             if key in self._active_drones:
@@ -1180,10 +1205,14 @@ class DroneIDEngine:
                 if not device.protocol and existing.protocol:
                     device.protocol = existing.protocol
             else:
-                device.first_seen = now
+                # Check if a prior serial-keyed entry should migrate to this MAC key
+                migration = self._maybe_migrate_key(device, key)
+                if not device.first_seen:
+                    device.first_seen = now
                 is_new = True
 
             device.last_seen = now
+            device.disposition = self._dispositions.get(key, 'unknown')
             self._active_drones[key] = device
 
             # RSSI history
@@ -1192,6 +1221,16 @@ class DroneIDEngine:
             self._rssi_history[key].append(device.rssi)
             if len(self._rssi_history[key]) > 10:
                 self._rssi_history[key] = self._rssi_history[key][-10:]
+
+        # Persist disposition migration to DB outside the lock
+        if migration:
+            try:
+                self._db.migrate_disposition_key(migration[0], migration[1])
+            except Exception:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    'migrate_disposition_key %s→%s failed; in-memory state already updated',
+                    migration[0], migration[1])
 
         # Throttle DB writes and alert callbacks to avoid flooding.
         # The in-memory state (above) is always up-to-date for API queries.
@@ -1321,7 +1360,7 @@ class DroneIDEngine:
         rather than waiting for a full discover() batch.
         """
         try:
-            from bleak import BleakScanner
+            from bleak import BleakScanner  # pyright: ignore[reportMissingImports]
         except ImportError:
             logging.warning(
                 "DroneID BLE: bleak not installed — BLE Remote ID scanning disabled. "
@@ -1409,14 +1448,14 @@ class DroneIDEngine:
     def get_active_drones(self, max_age=180):
         """Get list of currently tracked drones with derived fields."""
         rx_lat, rx_lon, rx_alt = self._gps.get_receiver_position()
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         result = []
 
         with self._lock:
             for key, device in list(self._active_drones.items()):
                 # Check age
                 try:
-                    last = datetime.fromisoformat(device.last_seen.replace('Z', ''))
+                    last = datetime.fromisoformat(device.last_seen.replace('Z', '+00:00'))
                     age = (now - last).total_seconds()
                 except (ValueError, AttributeError):
                     age = 9999
@@ -1443,10 +1482,12 @@ class DroneIDEngine:
             drone_dict = device.to_dict(rx_lat, rx_lon, rx_alt)
             drone_dict['rssi_trend'] = calc_rssi_trend(self._rssi_history.get(serial, []))
         else:
-            # Try from DB
+            # Try from DB; attach current disposition (detections table has none)
             row = self._db.get_drone_by_serial(serial)
             if row:
                 drone_dict = row
+                with self._lock:
+                    drone_dict['disposition'] = self._dispositions.get(serial, 'unknown')
 
         track = self._db.get_drone_track(serial, track_minutes)
         return drone_dict, track
@@ -1523,13 +1564,13 @@ class DroneIDEngine:
         """Get monitoring status."""
         duration = 0
         if self._started_at and self._monitoring:
-            duration = int((datetime.utcnow() - self._started_at).total_seconds())
+            duration = int((datetime.now(timezone.utc) - self._started_at).total_seconds())
 
         return {
             'monitoring': self._monitoring,
             'interface': self._interface,
             'channel': self._channel,
-            'started_at': self._started_at.isoformat() + 'Z' if self._started_at else None,
+            'started_at': self._started_at.isoformat().replace('+00:00', 'Z') if self._started_at else None,
             'duration_seconds': duration,
             'frame_count': self._frame_count,
             'droneid_frame_count': self._droneid_frame_count,
@@ -1541,12 +1582,12 @@ class DroneIDEngine:
 
     def cleanup_stale(self, max_age=300):
         """Remove drones from active tracking that haven't been seen recently."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         with self._lock:
             stale_keys = []
             for key, device in self._active_drones.items():
                 try:
-                    last = datetime.fromisoformat(device.last_seen.replace('Z', ''))
+                    last = datetime.fromisoformat(device.last_seen.replace('Z', '+00:00'))
                     if (now - last).total_seconds() > max_age:
                         stale_keys.append(key)
                 except (ValueError, AttributeError):
@@ -1554,6 +1595,63 @@ class DroneIDEngine:
             for key in stale_keys:
                 del self._active_drones[key]
                 self._rssi_history.pop(key, None)
+
+
+    def _load_dispositions(self):
+        """Populate disposition cache from DB at startup."""
+        try:
+            loaded = self._db.get_current_dispositions()
+        except Exception:
+            loaded = {}
+        with self._lock:
+            self._dispositions = loaded
+
+    def _maybe_migrate_key(self, new_device: DroneIDDevice, new_key: str):
+        """If a prior entry shares the same MAC but a different key, migrate its disposition.
+
+        Called under self._lock. Updates in-memory state immediately; returns
+        (old_key, new_key) if a disposition DB migration is needed so the caller
+        can execute the DB write outside the lock. Returns None if no migration.
+        """
+        old_key = None
+        for k, existing in self._active_drones.items():
+            if (k != new_key
+                    and existing.mac_address and new_device.mac_address
+                    and existing.mac_address == new_device.mac_address):
+                old_key = k
+                break
+
+        if old_key is None:
+            return None
+
+        # Update in-memory disposition state under the lock
+        old_disp = self._dispositions.get(old_key)
+        migration_needed = bool(old_disp)
+        if migration_needed:
+            self._dispositions[new_key] = self._dispositions.pop(old_key)
+
+        # Transfer carry-over state and remove the old entry
+        old_device = self._active_drones.pop(old_key)
+        self._rssi_history[new_key] = self._rssi_history.pop(old_key, [])
+        # Preserve first_seen from the older entry
+        new_device.first_seen = old_device.first_seen
+
+        return (old_key, new_key) if migration_needed else None
+
+    def set_disposition(self, drone_key: str, disposition: str, changed_by: str = '') -> None:
+        """Tag a drone with a disposition. Persists to DB and updates in-memory state."""
+        self._db.add_disposition_event(drone_key, disposition, changed_by=changed_by)
+        with self._lock:
+            if disposition == 'unknown':
+                self._dispositions.pop(drone_key, None)
+            else:
+                self._dispositions[drone_key] = disposition
+            if drone_key in self._active_drones:
+                self._active_drones[drone_key].disposition = disposition
+
+    def get_disposition(self, drone_key: str) -> str:
+        with self._lock:
+            return self._dispositions.get(drone_key, 'unknown')
 
 
 def check_prerequisites():

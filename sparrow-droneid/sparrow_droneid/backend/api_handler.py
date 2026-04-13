@@ -24,6 +24,7 @@ from typing import Optional, Dict, Any, Tuple, Callable
 from urllib.parse import urlparse, parse_qs, unquote
 
 import requests as _requests
+from requests.adapters import HTTPAdapter as _HTTPAdapter
 
 from .droneid_engine import DroneIDEngine, CaptureManager, check_prerequisites
 from .gps_engine import GPSEngine
@@ -37,6 +38,10 @@ from .wifi_ssid_scanner import WifiSsidScanner
 from .openapi import (qparam, path_param, json_body, json_body_inline,
                       response_ref, response_inline, build_openapi_spec)
 from .errors import ErrorCode
+
+
+def _utcnow_iso_z() -> str:
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +65,7 @@ _start_time: datetime = datetime.now(timezone.utc)
 # Persistent HTTP session for tile proxy upstream fetches
 _tile_session: _requests.Session = _requests.Session()
 _tile_session.headers.update({'User-Agent': 'SparrowDroneID/1.0'})
-_tile_adapter = _requests.adapters.HTTPAdapter(pool_maxsize=20, pool_connections=4)
+_tile_adapter = _HTTPAdapter(pool_maxsize=20, pool_connections=4)
 _tile_session.mount('https://', _tile_adapter)
 _tile_session.mount('http://', _tile_adapter)
 
@@ -68,11 +73,21 @@ _tile_session.mount('http://', _tile_adapter)
 _openapi_cache: Optional[bytes] = None
 
 
+# ---------------------------------------------------------------------------
+# Engine access helpers — assert non-None at request time (set_engines called
+# before the server accepts connections, so these are always set at that point)
+# ---------------------------------------------------------------------------
+
+def _require_db() -> Database:
+    assert _db is not None, "api_handler._db not initialized; set_engines() must run first"
+    return _db
+
+
 def set_engines(droneid: DroneIDEngine, gps: GPSEngine, alert: AlertEngine,
                 cot: CotEngine, db: Database, data_dir: str, html_dir: str,
-                cert_manager: CertManager = None,
-                wifi_ssid_scanner: WifiSsidScanner = None,
-                es_engine: ElasticsearchEngine = None) -> None:
+                cert_manager: Optional[CertManager] = None,
+                wifi_ssid_scanner: Optional[WifiSsidScanner] = None,
+                es_engine: Optional[ElasticsearchEngine] = None) -> None:
     """Called by app.py at startup to wire engine references into this module."""
     global _droneid_engine, _gps_engine, _alert_engine, _cot_engine, _es_engine
     global _db, _data_dir, _html_dir, _cert_manager, _wifi_ssid_scanner
@@ -144,7 +159,7 @@ class APIRouter:
             self.routes[pattern] = {}
         self.routes[pattern][method.upper()] = handler
 
-    def match(self, method: str, path: str) -> Tuple[Optional[Callable], Dict[str, str]]:
+    def match(self, method: str, path: str) -> Tuple[Optional[Callable], Dict[str, Any]]:
         """Match a path against registered routes. Returns (handler, path_params)."""
         for pattern, handlers in self.routes.items():
             regex_pattern = re.sub(r'\{(\w+)\}', r'(?P<\1>[^/]+)', pattern)
@@ -157,11 +172,11 @@ class APIRouter:
                     return None, {'_allowed_methods': list(handlers.keys())}
         return None, {}
 
-    def route(self, method: str, pattern: str, spec: dict = None):
+    def route(self, method: str, pattern: str, spec: Optional[dict] = None):
         """Decorator: @router.route('GET', '/api/v1/foo', spec={...})"""
         def decorator(func: Callable):
             if spec is not None:
-                func._openapi_spec = spec
+                func._openapi_spec = spec  # type: ignore[attr-defined]  # decorator metadata pattern
             self.add_route(method, pattern, func)
             return func
         return decorator
@@ -269,7 +284,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             return True
 
         # --- IP allowlist ---
-        allowed_ips_raw = _db.get_setting('allowed_ips', '') or ''
+        allowed_ips_raw = _require_db().get_setting_str('allowed_ips', '') or ''
         if allowed_ips_raw.strip():
             client_ip = self.get_client_ip()
             if not _ip_is_allowed(client_ip, allowed_ips_raw):
@@ -277,7 +292,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return False
 
         # --- Bearer token ---
-        required_token = _db.get_setting('auth_token', '') or ''
+        required_token = _require_db().get_setting_str('auth_token', '') or ''
         if required_token:
             auth_header = self.headers.get('Authorization', '')
             token = None
@@ -323,12 +338,12 @@ class RequestHandler(BaseHTTPRequestHandler):
         except BrokenPipeError:
             pass  # Client disconnected before response was sent
 
-    def _send_error(self, http_status: int, code: str, message: str, detail: dict = None) -> None:
+    def _send_error(self, http_status: int, code: str, message: str, detail: Optional[dict] = None) -> None:
         """Send standardized OpenAPI error response."""
-        body = {'error': {'code': code, 'message': message}}
+        err: Dict[str, Any] = {'code': code, 'message': message}
         if detail:
-            body['error']['detail'] = detail
-        self._send_json(body, status=http_status)
+            err['detail'] = detail
+        self._send_json({'error': err}, status=http_status)
 
     def _send_ok(self, data: dict, status: int = 200) -> None:
         """Send success response — domain data directly, no wrapper."""
@@ -339,7 +354,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         self._send_json({'errcode': errcode, 'errmsg': errmsg}, status=http_status)
 
     # LEGACY — remove after burn-in period
-    def _ok(self, extra: Dict = None) -> Dict:
+    def _ok(self, extra: Optional[Dict] = None) -> Dict:
         """Build a success response dict, merging in any extra fields."""
         d = {'errcode': 0, 'errmsg': ''}
         if extra:
@@ -347,7 +362,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         return d
 
     def _send_raw(self, data: bytes, content_type: str, status: int = 200,
-                  extra_headers: Dict[str, str] = None) -> None:
+                  extra_headers: Optional[Dict[str, str]] = None) -> None:
         try:
             self.send_response(status)
             self.send_header('Content-Type', content_type)
@@ -594,11 +609,11 @@ def _coerce_settings(raw: Dict[str, str]) -> Dict[str, Any]:
 def api_status(req: RequestHandler):
     engine_status = _droneid_engine.get_status() if _droneid_engine else {}
     gps_dict = _gps_engine.to_dict() if _gps_engine else {}
-    db_stats = _db.get_stats() if _db else {}
+    db_stats = _require_db().get_stats() if _db else {}
     uptime = int((datetime.now(timezone.utc) - _start_time).total_seconds())
     active_count = len(_droneid_engine.get_active_drones()) if _droneid_engine else 0
-    unique_total = _db.get_unique_serial_count() if _db else 0
-    retention = int(_db.get_setting('retention_days', '14') or '14') if _db else 14
+    unique_total = _require_db().get_unique_serial_count() if _db else 0
+    retention = int(_require_db().get_setting_str('retention_days', '14') or '14') if _db else 14
 
     req._send_ok({
         'version': '1.0.0',
@@ -823,11 +838,11 @@ def api_drones(req: RequestHandler):
     }
 
     # Compute counts by age band
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     active_count = aging_count = stale_count = 0
     for d in drones:
         try:
-            last = datetime.fromisoformat(d.get('last_seen', '').replace('Z', ''))
+            last = datetime.fromisoformat(d.get('last_seen', '').replace('Z', '+00:00'))
             age = (now - last).total_seconds()
         except (ValueError, AttributeError):
             age = 9999
@@ -846,7 +861,7 @@ def api_drones(req: RequestHandler):
             'aging': aging_count,
             'stale': stale_count,
         },
-        'timestamp': datetime.utcnow().isoformat() + 'Z',
+        'timestamp': _utcnow_iso_z(),
     })
 
 
@@ -889,6 +904,104 @@ def api_drone_detail(req: RequestHandler, serial: str):
 
 
 # ---------------------------------------------------------------------------
+# Disposition
+# ---------------------------------------------------------------------------
+
+_VALID_DISPOSITIONS = frozenset({'friendly', 'threat', 'unknown'})
+
+
+@router.route('PUT', '/api/v1/drones/{serial}/disposition', spec={
+    'summary': 'Set disposition tag for a drone',
+    'tags': ['Detections'],
+    'parameters': [path_param('serial', 'string', 'Drone key (URL-encoded)')],
+    'requestBody': json_body_inline(
+        {'disposition': {'type': 'string', 'enum': ['friendly', 'threat', 'unknown']},
+         'changed_by': {'type': 'string', 'description': 'Operator identifier'}},
+        required_props=['disposition'],
+        description='Disposition tag',
+    ),
+    'responses': {
+        '200': response_inline(
+            {'drone_key': {'type': 'string'}, 'disposition': {'type': 'string'}},
+            'Updated disposition',
+        ),
+        '400': {'description': 'Invalid disposition value'},
+        '503': {'description': 'Engine not available'},
+    },
+})
+def api_drone_set_disposition(req: RequestHandler, serial: str):
+    if _droneid_engine is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Engine not available')
+        return
+
+    serial = unquote(serial)
+    body = req.json_data or {}
+    disposition = body.get('disposition', '').strip()
+    changed_by = str(body.get('changed_by', ''))
+
+    if disposition not in _VALID_DISPOSITIONS:
+        req._send_error(400, ErrorCode.VALIDATION_ERROR,
+                        f"disposition must be one of: {', '.join(sorted(_VALID_DISPOSITIONS))}")
+        return
+
+    try:
+        _droneid_engine.set_disposition(serial, disposition, changed_by=changed_by)
+    except ValueError as e:
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, str(e))
+        return
+
+    req._send_ok({'drone_key': serial, 'disposition': disposition})
+
+
+@router.route('GET', '/api/v1/dispositions', spec={
+    'summary': 'Get disposition event history across all drones',
+    'tags': ['Detections'],
+    'parameters': [
+        qparam('limit', 'integer', 'Maximum events to return (default 500)', default=500),
+    ],
+    'responses': {
+        '200': response_inline(
+            {'dispositions': {'type': 'array', 'items': {'type': 'object'}}},
+            'Disposition event history',
+        ),
+    },
+})
+def api_dispositions_all(req: RequestHandler):
+    limit = req._qparam_int('limit', 500)
+    try:
+        rows = _require_db().get_disposition_history(limit=limit)
+    except Exception as e:
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
+        return
+    req._send_ok({'dispositions': rows})
+
+
+@router.route('GET', '/api/v1/drones/{serial}/disposition/history', spec={
+    'summary': 'Get disposition event history for a single drone',
+    'tags': ['Detections'],
+    'parameters': [
+        path_param('serial', 'string', 'Drone key (URL-encoded)'),
+        qparam('limit', 'integer', 'Maximum events to return (default 500)', default=500),
+    ],
+    'responses': {
+        '200': response_inline(
+            {'drone_key': {'type': 'string'}, 'history': {'type': 'array', 'items': {'type': 'object'}}},
+            'Per-drone disposition history',
+        ),
+    },
+})
+def api_drone_disposition_history(req: RequestHandler, serial: str):
+    serial = unquote(serial)
+    limit = req._qparam_int('limit', 500)
+    try:
+        rows = _require_db().get_disposition_history(drone_key=serial, limit=limit)
+    except Exception as e:
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
+        return
+    req._send_ok({'drone_key': serial, 'history': rows})
+
+
+# ---------------------------------------------------------------------------
 # History / Replay
 # ---------------------------------------------------------------------------
 
@@ -923,7 +1036,7 @@ def api_history(req: RequestHandler):
     offset = req._qparam_int('offset', 0)
 
     try:
-        records, total = _db.get_history(from_ts, to_ts, serial, limit, offset)
+        records, total = _require_db().get_history(from_ts, to_ts, serial, limit, offset)
     except Exception as e:
         req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
         return
@@ -962,7 +1075,7 @@ def api_history_serials(req: RequestHandler):
         return
 
     try:
-        serials = _db.get_history_serials(from_ts, to_ts)
+        serials = _require_db().get_history_serials(from_ts, to_ts)
     except Exception as e:
         req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
         return
@@ -996,7 +1109,7 @@ def api_history_timeline(req: RequestHandler):
     bucket_seconds = req._qparam_int('bucket_seconds', 10)
 
     try:
-        buckets = _db.get_history_timeline(from_ts, to_ts, bucket_seconds)
+        buckets = _require_db().get_history_timeline(from_ts, to_ts, bucket_seconds)
     except Exception as e:
         req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
         return
@@ -1040,7 +1153,7 @@ def api_export_kml(req: RequestHandler):
 
     try:
         kml_str = generate_kml(
-            _db, from_ts, to_ts,
+            _require_db(), from_ts, to_ts,
             serial=serial,
             receiver_lat=rx_lat,
             receiver_lon=rx_lon,
@@ -1163,7 +1276,7 @@ def api_alerts_log(req: RequestHandler):
         return
 
     try:
-        alerts, total = _db.get_alerts(from_ts, to_ts, limit, offset, state=state)
+        alerts, total = _require_db().get_alerts(from_ts, to_ts, limit, offset, state=state)
     except Exception as e:
         req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
         return
@@ -1204,7 +1317,7 @@ def api_alerts_acknowledge_all(req: RequestHandler):
     operator = str(body.get('operator', '')).strip()
 
     try:
-        count = _db.acknowledge_all_active(operator)
+        count = _require_db().acknowledge_all_active(operator)
     except Exception as e:
         req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
         return
@@ -1244,7 +1357,7 @@ def api_alert_acknowledge(req: RequestHandler, alert_id: str):
     operator = str(body.get('operator', '')).strip()
 
     try:
-        updated = _db.acknowledge_alert(aid, operator)
+        updated = _require_db().acknowledge_alert(aid, operator)
     except Exception as e:
         req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
         return
@@ -1334,9 +1447,9 @@ def api_cot_config(req: RequestHandler):
 
     # Persist to DB so settings survive restart
     if _db:
-        _db.set_setting('cot_enabled', str(enabled).lower())
-        _db.set_setting('cot_address', address)
-        _db.set_setting('cot_port', str(port))
+        _require_db().set_setting('cot_enabled', str(enabled).lower())
+        _require_db().set_setting('cot_address', address)
+        _require_db().set_setting('cot_port', str(port))
 
     req._send_ok({})
 
@@ -1373,7 +1486,7 @@ def api_tiles(req: RequestHandler, source: str, z: str, x: str, y: str):
     # --- Cache lookup ---
     cache_enabled = True
     if _db:
-        cache_enabled = _db.get_setting('tile_cache_enabled', 'true').lower() in ('1', 'true', 'yes')
+        cache_enabled = _require_db().get_setting_str('tile_cache_enabled', 'true').lower() in ('1', 'true', 'yes')
 
     ext = 'jpg' if source == 'esri_satellite' else 'png'
     cache_path: Optional[str] = None
@@ -1441,8 +1554,8 @@ def api_data_stats(req: RequestHandler):
     if _db is None:
         req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
         return
-    stats = _db.get_stats()
-    retention = int(_db.get_setting('retention_days', '14') or '14')
+    stats = _require_db().get_stats()
+    retention = int(_require_db().get_setting_str('retention_days', '14') or '14')
     stats['retention_days'] = retention
     req._send_ok(stats)
 
@@ -1476,8 +1589,8 @@ def api_data_purge(req: RequestHandler):
         return
 
     try:
-        detections_deleted = _db.purge_detections(before_ts)
-        alerts_deleted = _db.purge_alerts(before_ts)
+        detections_deleted = _require_db().purge_detections(before_ts)
+        alerts_deleted = _require_db().purge_alerts(before_ts)
     except Exception as e:
         req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Purge failed: {e}')
         return
@@ -1693,14 +1806,14 @@ def api_vendor_codes_put(req: RequestHandler):
         if not isinstance(sp, dict):
             req._send_error(400, ErrorCode.VALIDATION_ERROR, 'serial_prefixes must be an object')
             return
-        _db.set_setting('vendor_serial_prefixes', json.dumps(sp))
+        _require_db().set_setting('vendor_serial_prefixes', json.dumps(sp))
 
     if 'mac_oui' in body:
         oui = body['mac_oui']
         if not isinstance(oui, dict):
             req._send_error(400, ErrorCode.VALIDATION_ERROR, 'mac_oui must be an object')
             return
-        _db.set_setting('vendor_mac_oui', json.dumps(oui))
+        _require_db().set_setting('vendor_mac_oui', json.dumps(oui))
 
     _alert_engine.reload_vendor_codes()
     codes = _alert_engine.get_vendor_codes()
@@ -1744,7 +1857,7 @@ def api_vendor_codes_update(req: RequestHandler):
         req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Alert engine not available')
         return
 
-    url = _db.get_setting('vendor_codes_url', '').strip()
+    url = _require_db().get_setting_str('vendor_codes_url', '').strip()
     if not url:
         req._send_error(400, ErrorCode.VALIDATION_ERROR, 'vendor_codes_url is not configured')
         return
@@ -1774,8 +1887,8 @@ def api_vendor_codes_update(req: RequestHandler):
     if isinstance(remote_oui, dict):
         merged_oui.update(remote_oui)
 
-    _db.set_setting('vendor_serial_prefixes', json.dumps(merged_serial))
-    _db.set_setting('vendor_mac_oui', json.dumps(merged_oui))
+    _require_db().set_setting('vendor_serial_prefixes', json.dumps(merged_serial))
+    _require_db().set_setting('vendor_mac_oui', json.dumps(merged_oui))
     _alert_engine.reload_vendor_codes()
 
     req._send_ok({
@@ -1864,14 +1977,13 @@ def api_wifi_ssid_patterns_put(req: RequestHandler):
             req._send_error(400, ErrorCode.VALIDATION_ERROR, f'patterns[{i}].pattern is required')
             return
         try:
-            import re as _re
-            _re.compile(pattern_str)
-        except _re.error as exc:
+            re.compile(pattern_str)
+        except re.error as exc:
             req._send_error(400, ErrorCode.VALIDATION_ERROR, f'patterns[{i}].pattern is invalid regex: {exc}')
             return
         validated.append({'pattern': pattern_str, 'label': label})
 
-    _db.set_setting('wifi_ssid_patterns', json.dumps(validated))
+    _require_db().set_setting('wifi_ssid_patterns', json.dumps(validated))
     _wifi_ssid_scanner.reload_patterns()
 
     req._send_ok({'patterns': validated, 'count': len(validated)})
@@ -1944,7 +2056,7 @@ def api_settings_get(req: RequestHandler):
     if _db is None:
         req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
         return
-    raw = _db.get_all_settings()
+    raw = _require_db().get_all_settings()
     coerced = _coerce_settings(raw)
     req._send_ok({'settings': coerced})
 
@@ -1989,7 +2101,7 @@ def api_settings_put(req: RequestHandler):
         else:
             str_value = str(value)
 
-        _db.set_setting(key, str_value)
+        _require_db().set_setting(key, str_value)
 
         if key in _RESTART_REQUIRED_KEYS:
             restart_required = True
@@ -2000,53 +2112,53 @@ def api_settings_put(req: RequestHandler):
     if any(k in data for k in ('gps_mode', 'gps_static_lat', 'gps_static_lon', 'gps_static_alt')):
         if _gps_engine:
             _gps_engine.configure(
-                mode=_db.get_setting('gps_mode', 'none'),
-                static_lat=float(_db.get_setting('gps_static_lat', '0.0')),
-                static_lon=float(_db.get_setting('gps_static_lon', '0.0')),
-                static_alt=float(_db.get_setting('gps_static_alt', '0.0')),
+                mode=_require_db().get_setting_str('gps_mode', 'none'),
+                static_lat=float(_require_db().get_setting_str('gps_static_lat', '0.0')),
+                static_lon=float(_require_db().get_setting_str('gps_static_lon', '0.0')),
+                static_alt=float(_require_db().get_setting_str('gps_static_alt', '0.0')),
             )
 
     # Apply CoT settings live if any CoT-related key changed.
     if any(k in data for k in ('cot_enabled', 'cot_address', 'cot_port')):
         if _cot_engine:
             _cot_engine.configure(
-                enabled=_db.get_setting('cot_enabled', 'false').lower() == 'true',
-                address=_db.get_setting('cot_address', '239.2.3.1'),
-                port=int(_db.get_setting('cot_port', '6969')),
+                enabled=_require_db().get_setting_str('cot_enabled', 'false').lower() == 'true',
+                address=_require_db().get_setting_str('cot_address', '239.2.3.1'),
+                port=int(_require_db().get_setting_str('cot_port', '6969')),
             )
 
     # Apply WiFi SSID scanner settings live if any related key changed.
     if any(k in data for k in ('wifi_ssid_enabled', 'wifi_ssid_agent_url', 'wifi_ssid_agent_interface', 'wifi_ssid_poll_interval')):
         if _wifi_ssid_scanner:
             _wifi_ssid_scanner.configure(
-                enabled=_db.get_setting('wifi_ssid_enabled', 'false').lower() == 'true',
-                agent_url=_db.get_setting('wifi_ssid_agent_url', 'http://127.0.0.1:8020'),
-                poll_interval=int(_db.get_setting('wifi_ssid_poll_interval', '20')),
-                agent_interface=_db.get_setting('wifi_ssid_agent_interface', '') or '',
+                enabled=_require_db().get_setting_str('wifi_ssid_enabled', 'false').lower() == 'true',
+                agent_url=_require_db().get_setting_str('wifi_ssid_agent_url', 'http://127.0.0.1:8020'),
+                poll_interval=int(_require_db().get_setting_str('wifi_ssid_poll_interval', '20')),
+                agent_interface=_require_db().get_setting_str('wifi_ssid_agent_interface', '') or '',
             )
 
     # Apply Elasticsearch engine settings live if any es_* key changed.
     if _es_engine and any(k.startswith('es_') for k in data):
         _es_engine.configure(
-            enabled=_db.get_setting('es_enabled', 'false').lower() == 'true',
-            backend_type=_db.get_setting('es_backend_type', 'elasticsearch'),
-            url=_db.get_setting('es_url', ''),
-            auth_method=_db.get_setting('es_auth_method', 'none'),
-            username=_db.get_setting('es_username', ''),
-            password=_db.get_setting('es_password', ''),
-            api_key=_db.get_setting('es_api_key', ''),
-            verify_tls=_db.get_setting('es_verify_tls', 'true').lower() == 'true',
-            agent_name=_db.get_setting('es_agent_name', ''),
-            index_prefix=_db.get_setting('es_index_prefix', 'sparrow-droneid'),
-            shards=int(_db.get_setting('es_shards', '2')),
-            replicas=int(_db.get_setting('es_replicas', '0')),
-            ilm_policy=_db.get_setting('es_ilm_policy', ''),
-            bulk_size=int(_db.get_setting('es_bulk_size', '100')),
-            flush_interval=int(_db.get_setting('es_flush_interval', '5')),
+            enabled=_require_db().get_setting_str('es_enabled', 'false').lower() == 'true',
+            backend_type=_require_db().get_setting_str('es_backend_type', 'elasticsearch'),
+            url=_require_db().get_setting_str('es_url', ''),
+            auth_method=_require_db().get_setting_str('es_auth_method', 'none'),
+            username=_require_db().get_setting_str('es_username', ''),
+            password=_require_db().get_setting_str('es_password', ''),
+            api_key=_require_db().get_setting_str('es_api_key', ''),
+            verify_tls=_require_db().get_setting_str('es_verify_tls', 'true').lower() == 'true',
+            agent_name=_require_db().get_setting_str('es_agent_name', ''),
+            index_prefix=_require_db().get_setting_str('es_index_prefix', 'sparrow-droneid'),
+            shards=int(_require_db().get_setting_str('es_shards', '2')),
+            replicas=int(_require_db().get_setting_str('es_replicas', '0')),
+            ilm_policy=_require_db().get_setting_str('es_ilm_policy', ''),
+            bulk_size=int(_require_db().get_setting_str('es_bulk_size', '100')),
+            flush_interval=int(_require_db().get_setting_str('es_flush_interval', '5')),
         )
 
     # Re-read and return the updated settings
-    raw = _db.get_all_settings()
+    raw = _require_db().get_all_settings()
     coerced = _coerce_settings(raw)
 
     req._send_ok({
@@ -2373,7 +2485,7 @@ def api_es_test_cluster(req: RequestHandler):
     if _es_engine:
         result = _es_engine.test_connection()
     if result is None or (not result.get('ok') and 'not running' in result.get('error', '')):
-        url = _db.get_setting('es_url', '')
+        url = _require_db().get_setting_str('es_url', '')
         if not url:
             req._send_ok({'ok': False, 'error': 'Cluster URL not configured'})
             return
@@ -2381,13 +2493,13 @@ def api_es_test_cluster(req: RequestHandler):
         client = None
         try:
             client = _create_search_client(
-                backend_type=_db.get_setting('es_backend_type', 'elasticsearch'),
+                backend_type=_require_db().get_setting_str('es_backend_type', 'elasticsearch'),
                 url=url,
-                auth_method=_db.get_setting('es_auth_method', 'none'),
-                username=_db.get_setting('es_username', ''),
-                password=_db.get_setting('es_password', ''),
-                api_key=_db.get_setting('es_api_key', ''),
-                verify_tls=_db.get_setting('es_verify_tls', 'true').lower() == 'true',
+                auth_method=_require_db().get_setting_str('es_auth_method', 'none'),
+                username=_require_db().get_setting_str('es_username', ''),
+                password=_require_db().get_setting_str('es_password', ''),
+                api_key=_require_db().get_setting_str('es_api_key', ''),
+                verify_tls=_require_db().get_setting_str('es_verify_tls', 'true').lower() == 'true',
             )
             info = client.cluster_info()
             if not info:
@@ -2436,16 +2548,16 @@ def api_es_ilm_policies(req: RequestHandler):
     # temporary client from saved settings so policies can be queried before
     # the user has enabled/saved the engine.
     policies = _es_engine.get_lifecycle_policies()
-    if not policies and _db.get_setting('es_url', ''):
+    if not policies and _require_db().get_setting_str('es_url', ''):
         from .elasticsearch_engine import ElasticsearchEngine
         policies = ElasticsearchEngine.query_lifecycle_policies(
-            backend_type=_db.get_setting('es_backend_type', 'elasticsearch'),
-            url=_db.get_setting('es_url', ''),
-            auth_method=_db.get_setting('es_auth_method', 'none'),
-            username=_db.get_setting('es_username', ''),
-            password=_db.get_setting('es_password', ''),
-            api_key=_db.get_setting('es_api_key', ''),
-            verify_tls=_db.get_setting('es_verify_tls', 'true').lower() == 'true',
+            backend_type=_require_db().get_setting_str('es_backend_type', 'elasticsearch'),
+            url=_require_db().get_setting_str('es_url', ''),
+            auth_method=_require_db().get_setting_str('es_auth_method', 'none'),
+            username=_require_db().get_setting_str('es_username', ''),
+            password=_require_db().get_setting_str('es_password', ''),
+            api_key=_require_db().get_setting_str('es_api_key', ''),
+            verify_tls=_require_db().get_setting_str('es_verify_tls', 'true').lower() == 'true',
         )
     req._send_ok({'policies': policies})
 
@@ -2487,7 +2599,7 @@ def api_es_create_ilm_policy(req: RequestHandler):
     if _es_engine:
         result = _es_engine.create_lifecycle_policy(name, hot_days, warm_days, delete_days)
     if result is None or (not result.get('ok') and 'not running' in result.get('error', '')):
-        url = _db.get_setting('es_url', '')
+        url = _require_db().get_setting_str('es_url', '')
         if not url:
             req._send_ok({'ok': False, 'error': 'Cluster URL not configured'})
             return
@@ -2495,20 +2607,20 @@ def api_es_create_ilm_policy(req: RequestHandler):
             _create_search_client, build_default_ilm_policy,
             build_default_ism_policy,
         )
-        backend_type = _db.get_setting('es_backend_type', 'elasticsearch')
+        backend_type = _require_db().get_setting_str('es_backend_type', 'elasticsearch')
         client = None
         try:
             client = _create_search_client(
                 backend_type=backend_type,
                 url=url,
-                auth_method=_db.get_setting('es_auth_method', 'none'),
-                username=_db.get_setting('es_username', ''),
-                password=_db.get_setting('es_password', ''),
-                api_key=_db.get_setting('es_api_key', ''),
-                verify_tls=_db.get_setting('es_verify_tls', 'true').lower() == 'true',
+                auth_method=_require_db().get_setting_str('es_auth_method', 'none'),
+                username=_require_db().get_setting_str('es_username', ''),
+                password=_require_db().get_setting_str('es_password', ''),
+                api_key=_require_db().get_setting_str('es_api_key', ''),
+                verify_tls=_require_db().get_setting_str('es_verify_tls', 'true').lower() == 'true',
             )
             if backend_type == 'opensearch':
-                prefix = _db.get_setting('es_index_prefix', 'sparrow-droneid')
+                prefix = _require_db().get_setting_str('es_index_prefix', 'sparrow-droneid')
                 policy_body = build_default_ism_policy(prefix, hot_days, warm_days, delete_days)
             else:
                 policy_body = build_default_ilm_policy(hot_days, warm_days, delete_days)
@@ -2539,16 +2651,16 @@ def api_es_test_dashboards(req: RequestHandler):
         req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
         return
 
-    dashboards_url = _db.get_setting('es_dashboards_url', '').strip()
+    dashboards_url = _require_db().get_setting_str('es_dashboards_url', '').strip()
     if not dashboards_url:
         req._send_ok({'ok': False, 'error': 'Dashboards URL not configured', 'status_code': 0})
         return
 
-    auth_method = _db.get_setting('es_dashboards_auth_method', 'none')
-    username = _db.get_setting('es_dashboards_username', '')
-    password = _db.get_setting('es_dashboards_password', '')
-    api_key = _db.get_setting('es_dashboards_api_key', '')
-    verify_tls = _db.get_setting('es_dashboards_verify_tls', 'true').lower() == 'true'
+    auth_method = _require_db().get_setting_str('es_dashboards_auth_method', 'none')
+    username = _require_db().get_setting_str('es_dashboards_username', '')
+    password = _require_db().get_setting_str('es_dashboards_password', '')
+    api_key = _require_db().get_setting_str('es_dashboards_api_key', '')
+    verify_tls = _require_db().get_setting_str('es_dashboards_verify_tls', 'true').lower() == 'true'
 
     headers = {'kbn-xsrf': 'true', 'osd-xsrf': 'true'}
     req_auth = None
@@ -2621,13 +2733,13 @@ def api_es_push_dashboards(req: RequestHandler):
     body = req.json_data or {}
     overwrite = bool(body.get('overwrite', True))
 
-    dashboards_url = _db.get_setting('es_dashboards_url', '').strip()
+    dashboards_url = _require_db().get_setting_str('es_dashboards_url', '').strip()
     if not dashboards_url:
         req._send_error(400, ErrorCode.VALIDATION_ERROR, 'Dashboards URL (es_dashboards_url) is not configured')
         return
 
     # Resolve the NDJSON file based on backend type
-    backend_type = _db.get_setting('es_backend_type', 'elasticsearch')
+    backend_type = _require_db().get_setting_str('es_backend_type', 'elasticsearch')
     if backend_type == 'opensearch':
         ndjson_filename = 'osd_dashboards.ndjson'
     else:
@@ -2654,12 +2766,12 @@ def api_es_push_dashboards(req: RequestHandler):
 
     # Build dashboards auth dict
     dashboards_auth = {
-        'method': _db.get_setting('es_dashboards_auth_method', 'none'),
-        'username': _db.get_setting('es_dashboards_username', ''),
-        'password': _db.get_setting('es_dashboards_password', ''),
-        'api_key': _db.get_setting('es_dashboards_api_key', ''),
+        'method': _require_db().get_setting_str('es_dashboards_auth_method', 'none'),
+        'username': _require_db().get_setting_str('es_dashboards_username', ''),
+        'password': _require_db().get_setting_str('es_dashboards_password', ''),
+        'api_key': _require_db().get_setting_str('es_dashboards_api_key', ''),
     }
-    dashboards_verify_tls = _db.get_setting('es_dashboards_verify_tls', 'true').lower() == 'true'
+    dashboards_verify_tls = _require_db().get_setting_str('es_dashboards_verify_tls', 'true').lower() == 'true'
 
     # Dashboard push is a direct HTTP POST to Kibana/OSD — does not need
     # the ES engine or cluster client to be running.

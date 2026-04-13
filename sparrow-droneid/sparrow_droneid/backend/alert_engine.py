@@ -10,7 +10,11 @@ import logging
 import subprocess
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def _utcnow_iso_z() -> str:
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 from typing import Dict, List, Optional, Tuple
 
 import requests as _requests
@@ -313,12 +317,12 @@ class AlertEngine:
             return
 
         timeout = float(lost_rule.params.get('timeout_seconds', 180))
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         for key, device in active_drones.items():
             try:
                 last_seen = datetime.fromisoformat(
-                    device.last_seen.replace('Z', '+00:00').replace('+00:00', '')
+                    device.last_seen.replace('Z', '+00:00')
                 )
             except (ValueError, AttributeError):
                 continue
@@ -385,7 +389,7 @@ class AlertEngine:
     def _fire_alert(self, alert_type: str, device: DroneIDDevice, detail: str) -> None:
         """Create an AlertEvent, persist it, enqueue for frontend, and run script."""
         event = AlertEvent(
-            timestamp=datetime.utcnow().isoformat() + 'Z',
+            timestamp=_utcnow_iso_z(),
             alert_type=alert_type,
             serial_number=device.get_key(),
             detail=detail,

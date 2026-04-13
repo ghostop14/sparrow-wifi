@@ -143,7 +143,7 @@ const TableManager = (() => {
     const rows = sorted.map(drone => _buildRow(drone)).join('');
     tbody.innerHTML = rows;
 
-    // Re-attach click listeners
+    // Re-attach click and context-menu listeners
     tbody.querySelectorAll('tr[data-serial]').forEach(tr => {
       tr.addEventListener('click', () => {
         const serial = tr.dataset.serial;
@@ -151,6 +151,14 @@ const TableManager = (() => {
         // Notify app (outside selectDrone to avoid circular callbacks)
         const drone = _drones.find(d => d.serial_number === serial);
         if (drone && _onSelect) _onSelect(serial, drone);
+      });
+
+      tr.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        const serial = tr.dataset.serial;
+        const drone = _drones.find(d => d.serial_number === serial);
+        if (!drone) return;
+        ContextMenu.show(e.clientX, e.clientY, buildDispositionMenu(drone, _tagDrone));
       });
     });
 
@@ -174,8 +182,13 @@ const TableManager = (() => {
       ? '<i class="bi bi-wifi ua-icon me-1" title="WiFi SSID"></i>SSID'
       : Utils.uaTypeHtml(drone.ua_type);
 
+    const disp = drone.disposition || 'unknown';
+    const dispDot = disp !== 'unknown'
+      ? `<span class="disposition-dot disposition-${disp}" title="${disp}">&#9679;</span>`
+      : '';
+
     return `<tr data-serial="${_esc(drone.serial_number)}" class="${stateClass} ${selected}">
-      <td title="${_esc(drone.serial_number)}">${_esc(Utils.shortSerial(drone.serial_number))}</td>
+      <td title="${_esc(drone.serial_number)}">${dispDot}${_esc(Utils.shortSerial(drone.serial_number))}</td>
       <td>${typeCell}</td>
       <td>${Utils.formatAlt(drone.drone_height_agl)}</td>
       <td>${Utils.formatSpeed(drone.speed)}</td>
@@ -235,9 +248,16 @@ const TableManager = (() => {
           </div>`).join('')}
       </div>`;
 
+    const disp = drone.disposition || 'unknown';
+    const dispBadge = `<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+      <span style="font-size:11px;color:var(--text-secondary);">Disposition:</span>
+      <span class="disposition-${disp}" style="font-size:12px;font-weight:600;">${disp.charAt(0).toUpperCase() + disp.slice(1)}</span>
+    </div>`;
+
     let html = `
       <div class="detail-state-bar ${state}"></div>
-      <div class="detail-serial">${drone.serial_number || '—'}</div>`;
+      <div class="detail-serial">${drone.serial_number || '—'}</div>
+      ${dispBadge}`;
 
     // Fix #14: use CSS var instead of hardcoded #94A3B8
     if (drone.self_id_text) {
@@ -342,6 +362,19 @@ const TableManager = (() => {
   function refreshUnits() {
     _updateColumnHeaders();
     _render();
+  }
+
+  // ---- Disposition tagging ----
+  function _tagDrone(drone, disposition) {
+    const key = drone.serial_number || drone.registration_id || drone.mac_address;
+    if (!key) return;
+    Api.putDisposition(key, disposition).catch(() => {});
+    // Optimistically update local state so the UI refreshes immediately
+    drone.disposition = disposition;
+    _render();
+    if (typeof App !== 'undefined' && App.pollDronesNow) {
+      App.pollDronesNow();
+    }
   }
 
   return {

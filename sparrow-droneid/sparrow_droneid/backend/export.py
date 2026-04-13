@@ -30,7 +30,7 @@ _OPERATOR_COLOUR = "ff00a5ff"   # orange
 
 # --------------- Helpers --------------------------------------------------
 
-def _sub(parent: ET.Element, tag: str, text: str = None) -> ET.Element:
+def _sub(parent: ET.Element, tag: str, text: Optional[str] = None) -> ET.Element:
     """Append a child element, optionally with text content."""
     el = ET.SubElement(parent, tag)
     if text is not None:

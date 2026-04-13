@@ -104,6 +104,20 @@ const Api = (() => {
     return get(`/drones/${encodeURIComponent(serial)}`, { track_minutes: trackMinutes });
   }
 
+  // ---- Disposition ----
+
+  function putDisposition(serial, disposition, changedBy = '') {
+    return put(`/drones/${encodeURIComponent(serial)}/disposition`, { disposition, changed_by: changedBy });
+  }
+
+  function getDispositions(limit = 500) {
+    return get('/dispositions', { limit });
+  }
+
+  function getDispositionHistory(serial, limit = 500) {
+    return get(`/drones/${encodeURIComponent(serial)}/disposition/history`, { limit });
+  }
+
   // ---- History / Replay ----
 
   function getHistory(from, to, serial = null, limit = 10000, offset = 0) {
@@ -306,6 +320,9 @@ const Api = (() => {
     getMonitorStatus,
     getDrones,
     getDroneDetail,
+    putDisposition,
+    getDispositions,
+    getDispositionHistory,
     getHistory,
     getHistorySerials,
     getHistoryTimeline,

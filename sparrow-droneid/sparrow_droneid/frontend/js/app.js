@@ -546,5 +546,6 @@ const App = (() => {
     init,
     startPolling: _startPolling,
     stopPolling: _stopPolling,
+    pollDronesNow: _pollDrones,
   };
 })();

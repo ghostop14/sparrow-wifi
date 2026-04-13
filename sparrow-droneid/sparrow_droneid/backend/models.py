@@ -6,7 +6,7 @@ Enums for ASTM F3411 field values.
 Utility functions for geospatial calculations.
 """
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import IntEnum, Enum
 from math import radians, sin, cos, sqrt, atan2, degrees
 from typing import Optional, Dict, List
@@ -138,12 +138,12 @@ def altitude_class(height_agl: float) -> AltitudeClass:
         return AltitudeClass.ILLEGAL
 
 
-def drone_state(last_seen_str: str, now: datetime = None) -> DroneState:
+def drone_state(last_seen_str: str, now: Optional[datetime] = None) -> DroneState:
     """Determine drone state from last-seen timestamp age."""
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
     try:
-        last_seen = datetime.fromisoformat(last_seen_str.replace('Z', '+00:00').replace('+00:00', ''))
+        last_seen = datetime.fromisoformat(last_seen_str.replace('Z', '+00:00'))
     except (ValueError, AttributeError):
         return DroneState.STALE
     age = (now - last_seen).total_seconds()
@@ -253,6 +253,9 @@ class DroneIDDevice:
     first_seen: str = ""
     last_seen: str = ""
 
+    # Operator disposition tag — set by operator, not from RF frames
+    disposition: str = "unknown"
+
     def get_key(self) -> str:
         """Primary key for tracking: prefer serial, fall back to registration or MAC."""
         if self.serial_number:
@@ -261,8 +264,8 @@ class DroneIDDevice:
             return self.registration_id
         return self.mac_address
 
-    def to_dict(self, receiver_lat: float = None, receiver_lon: float = None,
-                receiver_alt: float = None) -> dict:
+    def to_dict(self, receiver_lat: Optional[float] = None, receiver_lon: Optional[float] = None,
+                receiver_alt: Optional[float] = None) -> dict:
         """Convert to dict with optional derived fields from receiver position."""
         data = asdict(self)
         data['id_type_name'] = IdType(self.id_type).display_name if 0 <= self.id_type <= 4 else "Unknown"
@@ -270,8 +273,8 @@ class DroneIDDevice:
 
         # Time in area
         try:
-            first = datetime.fromisoformat(self.first_seen.replace('Z', ''))
-            last = datetime.fromisoformat(self.last_seen.replace('Z', ''))
+            first = datetime.fromisoformat(self.first_seen.replace('Z', '+00:00'))
+            last = datetime.fromisoformat(self.last_seen.replace('Z', '+00:00'))
             data['time_in_area_seconds'] = int((last - first).total_seconds())
         except (ValueError, AttributeError):
             data['time_in_area_seconds'] = 0

@@ -606,10 +606,19 @@ const MapManager = (() => {
     return _compassVisible;
   }
 
+  // ---- Disposition color helper ----
+  function dispositionColor(drone, fallback) {
+    const disp = drone && drone.disposition;
+    if (disp === 'friendly') return '#16A34A';
+    if (disp === 'threat') return '#DC2626';
+    return fallback;
+  }
+
   // ---- Drone marker ----
   function makeDroneIcon(drone) {
     const state = drone.derived?.state || 'active';
-    const color = state === 'active' ? '#F59E0B' : state === 'aging' ? '#78909C' : '#455A64';
+    const stateColor = state === 'active' ? '#F59E0B' : state === 'aging' ? '#78909C' : '#455A64';
+    const color = dispositionColor(drone, stateColor);
     const dir = drone.direction || 0;
     const opacity = state === 'active' ? 1.0 : state === 'aging' ? 0.6 : 0.35;
 
@@ -660,6 +669,7 @@ const MapManager = (() => {
   function makeWifiDroneIcon(drone) {
     const state = drone.derived?.state || 'active';
     const opacity = state === 'active' ? 1.0 : state === 'aging' ? 0.6 : 0.35;
+    const wifiColor = dispositionColor(drone, '#16a34a');
     const label = Utils.shortSerial(drone.mac_address) || '';
     const ssidText = drone.self_id_text ? drone.self_id_text.replace(/\[.*\]$/, '').trim() : '';
     const labelHtml = (label || ssidText) ? `<div style="
@@ -673,10 +683,10 @@ const MapManager = (() => {
       <div style="position:relative;width:36px;height:36px;opacity:${opacity};">
         <div style="
           width:36px;height:36px;
-          background:#16a34a;
+          background:${wifiColor};
           border-radius:50%;
           border:2px solid rgba(255,255,255,0.8);
-          box-shadow:0 0 6px rgba(22,163,74,0.6);
+          box-shadow:0 0 6px ${wifiColor}88;
           display:flex;align-items:center;justify-content:center;
         ">
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="white" viewBox="0 0 16 16">
@@ -697,14 +707,15 @@ const MapManager = (() => {
     });
   }
 
-  function makeOperatorIcon() {
+  function makeOperatorIcon(drone) {
+    const opColor = dispositionColor(drone, '#14B8A6');
     const html = `<div style="
       display:flex;align-items:center;justify-content:center;
       width:22px;height:22px;
-      background:#14B8A6;
+      background:${opColor};
       border-radius:50%;
       border:2px solid rgba(0,0,0,0.4);
-      box-shadow:0 0 6px #14B8A688;
+      box-shadow:0 0 6px ${opColor}88;
       color:#fff;font-size:12px;
     "><i class="bi bi-controller"></i></div>`;
     return L.divIcon({ className: '', html, iconSize: [22,22], iconAnchor: [11,11] });
@@ -857,9 +868,12 @@ const MapManager = (() => {
       const serial = drone.serial_number;
       const latLng = [drone.drone_lat, drone.drone_lon];
 
+      const lineColor = dispositionColor(drone, '#14B8A6');
+
       if (_droneMarkers[serial]) {
-        // Update existing
+        // Update existing — keep .drone fresh so contextmenu handler uses current state
         const entry = _droneMarkers[serial];
+        entry.drone = drone;
         entry.marker.setLatLng(latLng);
         const icon = drone.protocol === 'wifi_ssid' ? makeWifiDroneIcon(drone) : makeDroneIcon(drone);
         entry.marker.setIcon(icon);
@@ -870,9 +884,10 @@ const MapManager = (() => {
           const opLatLng = [drone.operator_lat, drone.operator_lon];
           if (entry.operatorMarker) {
             entry.operatorMarker.setLatLng(opLatLng);
+            entry.operatorMarker.setIcon(makeOperatorIcon(drone));
             entry.operatorMarker.getPopup()?.setContent(buildOperatorPopup(drone));
           } else {
-            entry.operatorMarker = L.marker(opLatLng, { icon: makeOperatorIcon(), zIndexOffset: 100 }).addTo(_map);
+            entry.operatorMarker = L.marker(opLatLng, { icon: makeOperatorIcon(drone), zIndexOffset: 100 }).addTo(_map);
             entry.operatorMarker.bindPopup(buildOperatorPopup(drone), { maxWidth: 260, minWidth: 180 });
             entry.operatorMarker.on('click', (e) => {
               L.DomEvent.stopPropagation(e);
@@ -881,9 +896,10 @@ const MapManager = (() => {
           }
           if (entry.line) {
             entry.line.setLatLngs([latLng, opLatLng]);
+            entry.line.setStyle({ color: lineColor });
           } else {
             entry.line = L.polyline([latLng, opLatLng], {
-              color: '#14B8A6', weight: 1.5, dashArray: '5 4', opacity: 0.7
+              color: lineColor, weight: 1.5, dashArray: '5 4', opacity: 0.7
             }).addTo(_map);
           }
         }
@@ -909,23 +925,35 @@ const MapManager = (() => {
           if (_onDroneClick) _onDroneClick(serial);
         });
 
+        // Context menu on map marker — stopPropagation so measure tool doesn't fire.
+        // Capture only `serial` (stable key), not `drone` (stale after next poll).
+        marker.on('contextmenu', (ev) => {
+          L.DomEvent.stopPropagation(ev);
+          ev.originalEvent.preventDefault();
+          const entry = _droneMarkers[serial];
+          const freshDrone = entry && entry.drone;
+          if (!freshDrone) return;
+          ContextMenu.show(ev.originalEvent.clientX, ev.originalEvent.clientY,
+            buildDispositionMenu(freshDrone, _tagDroneFromMap));
+        });
+
         let operatorMarker = null;
         let line = null;
 
         if (drone.operator_lat && drone.operator_lon) {
           const opLatLng = [drone.operator_lat, drone.operator_lon];
-          operatorMarker = L.marker(opLatLng, { icon: makeOperatorIcon(), zIndexOffset: 100 }).addTo(_map);
+          operatorMarker = L.marker(opLatLng, { icon: makeOperatorIcon(drone), zIndexOffset: 100 }).addTo(_map);
           operatorMarker.bindPopup(buildOperatorPopup(drone), { maxWidth: 260, minWidth: 180 });
           operatorMarker.on('click', (e) => {
             L.DomEvent.stopPropagation(e);
             if (_measureActive) { _onMeasureLeftClick(e); return; }
           });
           line = L.polyline([latLng, opLatLng], {
-            color: '#14B8A6', weight: 1.5, dashArray: '5 4', opacity: 0.7
+            color: lineColor, weight: 1.5, dashArray: '5 4', opacity: 0.7
           }).addTo(_map);
         }
 
-        _droneMarkers[serial] = { marker, operatorMarker, line, track: null };
+        _droneMarkers[serial] = { marker, operatorMarker, line, track: null, drone };
       }
     });
 
@@ -1105,7 +1133,7 @@ const MapManager = (() => {
 
       if (rec.operator_lat && rec.operator_lon) {
         const opLatLng = [rec.operator_lat, rec.operator_lon];
-        operatorMarker = L.marker(opLatLng, { icon: makeOperatorIcon(), zIndexOffset: 100 }).addTo(_map);
+        operatorMarker = L.marker(opLatLng, { icon: makeOperatorIcon(fakeDrone), zIndexOffset: 100 }).addTo(_map);
         operatorMarker.bindPopup(buildOperatorPopup(fakeDrone), { maxWidth: 260, minWidth: 180 });
         line = L.polyline([latLng, opLatLng], { color: '#14B8A6', weight: 1.5, dashArray: '5 4', opacity: 0.7 }).addTo(_map);
       }
@@ -1183,6 +1211,17 @@ const MapManager = (() => {
     setTimeout(() => {
       if (_map) _map.invalidateSize();
     }, ms || 100);
+  }
+
+  // ---- Disposition tagging from map context menu ----
+  function _tagDroneFromMap(drone, disposition) {
+    const key = drone.serial_number || drone.registration_id || drone.mac_address;
+    if (!key) return;
+    Api.putDisposition(key, disposition).catch(() => {});
+    drone.disposition = disposition;
+    if (typeof App !== 'undefined' && App.pollDronesNow) {
+      App.pollDronesNow();
+    }
   }
 
   return {

@@ -172,7 +172,7 @@ class ElasticsearchClient(SearchClient):
 
     def __init__(self, url: str, auth_method: str, username: str,
                  password: str, api_key: str, verify_tls: bool):
-        from elasticsearch import Elasticsearch, helpers as es_helpers
+        from elasticsearch import Elasticsearch, helpers as es_helpers  # pyright: ignore[reportMissingImports]
         self._helpers = es_helpers
 
         kwargs: Dict[str, Any] = {
@@ -279,7 +279,7 @@ class OpenSearchClient(SearchClient):
 
     def __init__(self, url: str, auth_method: str, username: str,
                  password: str, verify_tls: bool):
-        from opensearchpy import OpenSearch, helpers as os_helpers
+        from opensearchpy import OpenSearch, helpers as os_helpers  # pyright: ignore[reportMissingImports]
         self._helpers = os_helpers
 
         kwargs: Dict[str, Any] = {
@@ -641,6 +641,7 @@ class DocumentBuilder:
                 "first_seen": device.first_seen,
                 "last_seen": device.last_seen,
                 "time_in_area_s": time_in_area_s,
+                "disposition": getattr(device, "disposition", None) or "unknown",
             },
         }
 
@@ -706,6 +707,7 @@ class DocumentBuilder:
                     "detail": alert.detail,
                     "state": "ACTIVE",
                 },
+                "disposition": getattr(device, "disposition", None) or "unknown" if device else "unknown",
             },
         }
 
@@ -1033,6 +1035,7 @@ def build_index_template(prefix: str, shards: int, replicas: int,
                                 },
                             },
                             "state": {"type": "keyword"},
+                            "disposition": {"type": "keyword"},
                             "first_seen": {"type": "date"},
                             "last_seen": {"type": "date"},
                             "time_in_area_s": {"type": "integer"},
@@ -1253,6 +1256,10 @@ class ElasticsearchEngine:
         #   active_drones, monitoring, interface, uptime_s, frame_count, gps_fix,
         #   receiver_lat, receiver_lon, receiver_alt
         self.get_heartbeat_data = None
+
+    def _require_client(self) -> SearchClient:
+        assert self._client is not None, "ElasticsearchEngine._client not initialized"
+        return self._client
 
     # ─── Configuration / Lifecycle ────────────────────────────────────────
 
@@ -1592,7 +1599,7 @@ class ElasticsearchEngine:
         """Execute bulk indexing.  Raises on connection failure."""
         if not actions:
             return 0, []
-        return self._client.bulk(actions)
+        return self._require_client().bulk(actions)
 
     def _maybe_health_probe(self) -> None:
         """Periodic ping to detect cluster recovery."""
@@ -1602,7 +1609,7 @@ class ElasticsearchEngine:
         self._last_health_probe = now
 
         try:
-            alive = self._client.ping()
+            alive = self._require_client().ping()
             if alive and not self._healthy:
                 logger.info("ES cluster is reachable")
             self._healthy = alive
@@ -1645,6 +1652,7 @@ class ElasticsearchEngine:
     def _attempt_bootstrap(self) -> bool:
         """Run the idempotent bootstrap sequence.  Returns True on success."""
         prefix = self._index_prefix
+        client = self._require_client()
         try:
             # 1. Index template
             template = build_index_template(
@@ -1654,19 +1662,19 @@ class ElasticsearchEngine:
                 ilm_policy=self._ilm_policy,
                 backend_type=self._backend_type,
             )
-            self._client.put_index_template(name=prefix, body=template)
+            client.put_index_template(name=prefix, body=template)
             logger.debug("ES index template '%s' applied", prefix)
 
             # 2. Lifecycle policy (create default if none configured)
             if self._ilm_policy:
                 try:
-                    existing = self._client.get_lifecycle_policies()
+                    existing = client.get_lifecycle_policies()
                     if self._ilm_policy not in existing:
                         if self._backend_type == "opensearch":
                             body = build_default_ism_policy(prefix)
                         else:
                             body = build_default_ilm_policy()
-                        self._client.put_lifecycle_policy(
+                        client.put_lifecycle_policy(
                             self._ilm_policy, body)
                         logger.info("ES lifecycle policy '%s' created",
                                      self._ilm_policy)
@@ -1676,9 +1684,9 @@ class ElasticsearchEngine:
 
             # 3. Initial rollover index + write alias
             alias_name = prefix
-            if not self._client.alias_exists(alias_name):
+            if not client.alias_exists(alias_name):
                 first_index = f"{prefix}-000001"
-                created = self._client.create_initial_index(
+                created = client.create_initial_index(
                     first_index, alias_name)
                 if created:
                     logger.info("ES initial index '%s' with alias '%s' created",

@@ -17,7 +17,7 @@ def _openssl_available() -> bool:
     return shutil.which('openssl') is not None
 
 
-def _run_openssl(*args: str, input_text: str = None) -> subprocess.CompletedProcess:
+def _run_openssl(*args: str, input_text: Optional[str] = None) -> subprocess.CompletedProcess:
     """Run an openssl command and return the CompletedProcess.
 
     Raises RuntimeError if openssl is not available or the command fails.

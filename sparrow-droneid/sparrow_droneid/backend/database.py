@@ -7,7 +7,11 @@ Tables: detections, alerts, settings.
 import sqlite3
 import threading
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+
+def _utcnow_iso_z() -> str:
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 from typing import Optional, List, Dict, Tuple
 from contextlib import contextmanager
 
@@ -125,12 +129,28 @@ class Database:
                 except Exception:
                     pass  # Column already exists
 
+            # Disposition audit log — append-only; current value = latest row per key
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS disposition_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    drone_key TEXT NOT NULL,
+                    disposition TEXT NOT NULL,
+                    changed_at TEXT NOT NULL,
+                    changed_by TEXT DEFAULT '',
+                    notes TEXT DEFAULT ''
+                )
+            """)
+
             # Indexes for performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_detections_serial ON detections(serial_number)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_detections_timestamp ON detections(timestamp)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_detections_serial_ts ON detections(serial_number, timestamp)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_alerts_state ON alerts(state)")
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_disposition_events_key_time
+                    ON disposition_events(drone_key, changed_at DESC)
+            """)
 
             self._init_defaults(cursor)
 
@@ -202,16 +222,16 @@ class Database:
                 device.operator_id, device.self_id_text,
                 device.mac_address, device.rssi, device.protocol,
                 receiver_lat, receiver_lon, receiver_alt,
-                device.last_seen or datetime.utcnow().isoformat() + 'Z',
+                device.last_seen or _utcnow_iso_z(),
             ))
-            return cursor.lastrowid
+            return cursor.lastrowid or 0
 
     def get_active_drones(self, max_age_seconds: int = 180) -> List[Dict]:
         """Get the latest detection for each drone seen within max_age_seconds.
 
         Returns one row per unique serial_number with the most recent data.
         """
-        cutoff = (datetime.utcnow() - timedelta(seconds=max_age_seconds)).isoformat() + 'Z'
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=max_age_seconds)).isoformat().replace('+00:00', 'Z')
         with self.get_cursor() as cursor:
             cursor.execute("""
                 SELECT d.*, fs.first_seen FROM detections d
@@ -256,7 +276,7 @@ class Database:
 
     def get_drone_track(self, serial: str, minutes: int = 5) -> List[Dict]:
         """Get track points for a drone over the last N minutes."""
-        cutoff = (datetime.utcnow() - timedelta(minutes=minutes)).isoformat() + 'Z'
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat().replace('+00:00', 'Z')
         with self.get_cursor() as cursor:
             cursor.execute("""
                 SELECT drone_lat, drone_lon, drone_alt_geo, drone_height_agl,
@@ -269,7 +289,7 @@ class Database:
 
     # ==================== History / Replay Operations ====================
 
-    def get_history(self, from_ts: str, to_ts: str, serial: str = None,
+    def get_history(self, from_ts: str, to_ts: str, serial: Optional[str] = None,
                     limit: int = 10000, offset: int = 0) -> Tuple[List[Dict], int]:
         """Get detection records for a time range. Returns (records, total_count)."""
         with self.get_cursor() as cursor:
@@ -367,15 +387,15 @@ class Database:
                                    drone_lat, drone_lon, drone_height_agl)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
-                event.timestamp or datetime.utcnow().isoformat() + 'Z',
+                event.timestamp or _utcnow_iso_z(),
                 event.alert_type, event.serial_number, event.detail,
                 event.drone_lat, event.drone_lon, event.drone_height_agl,
             ))
-            return cursor.lastrowid
+            return cursor.lastrowid or 0
 
-    def get_alerts(self, from_ts: str = None, to_ts: str = None,
+    def get_alerts(self, from_ts: Optional[str] = None, to_ts: Optional[str] = None,
                    limit: int = 100, offset: int = 0,
-                   state: str = None) -> Tuple[List[Dict], int]:
+                   state: Optional[str] = None) -> Tuple[List[Dict], int]:
         """Get alert log entries. Returns (alerts, total_count).
 
         Args:
@@ -410,7 +430,7 @@ class Database:
 
     def acknowledge_alert(self, alert_id: int, operator: str = '') -> bool:
         """Set a single alert to ACKNOWLEDGED state. Returns True if a row was updated."""
-        now = datetime.utcnow().isoformat() + 'Z'
+        now = _utcnow_iso_z()
         with self.get_cursor() as cursor:
             cursor.execute("""
                 UPDATE alerts
@@ -421,7 +441,7 @@ class Database:
 
     def acknowledge_all_active(self, operator: str = '') -> int:
         """Acknowledge all ACTIVE alerts. Returns the count of rows updated."""
-        now = datetime.utcnow().isoformat() + 'Z'
+        now = _utcnow_iso_z()
         with self.get_cursor() as cursor:
             cursor.execute("""
                 UPDATE alerts
@@ -432,7 +452,7 @@ class Database:
 
     def resolve_alert(self, alert_id: int) -> bool:
         """Set an alert to RESOLVED state. Returns True if a row was updated."""
-        now = datetime.utcnow().isoformat() + 'Z'
+        now = _utcnow_iso_z()
         with self.get_cursor() as cursor:
             cursor.execute("""
                 UPDATE alerts
@@ -443,12 +463,17 @@ class Database:
 
     # ==================== Settings Operations ====================
 
-    def get_setting(self, key: str, default: str = None) -> Optional[str]:
+    def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Get a setting value."""
         with self.get_cursor() as cursor:
             cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
             row = cursor.fetchone()
             return row['value'] if row else default
+
+    def get_setting_str(self, key: str, default: str) -> str:
+        """Get a setting value, guaranteed to return str (uses default if not found)."""
+        value = self.get_setting(key, default)
+        return value if value is not None else default
 
     def set_setting(self, key: str, value: str) -> bool:
         """Set a setting value."""
@@ -480,7 +505,7 @@ class Database:
         """Purge data older than retention_days. Returns (detections_deleted, alerts_deleted)."""
         if retention_days <= 0:
             return 0, 0
-        cutoff = (datetime.utcnow() - timedelta(days=retention_days)).isoformat() + 'Z'
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat().replace('+00:00', 'Z')
         d = self.purge_detections(cutoff)
         a = self.purge_alerts(cutoff)
         return d, a
@@ -538,13 +563,77 @@ class Database:
             cursor.execute("SELECT COUNT(DISTINCT serial_number) as cnt FROM detections")
             return cursor.fetchone()['cnt']
 
+    # ==================== Disposition Operations ====================
+
+    _VALID_DISPOSITIONS = frozenset({'friendly', 'threat', 'unknown'})
+
+    def add_disposition_event(self, drone_key: str, disposition: str,
+                              changed_by: str = '', notes: str = '') -> int:
+        if disposition not in self._VALID_DISPOSITIONS:
+            raise ValueError(f"Invalid disposition {disposition!r}; must be one of {sorted(self._VALID_DISPOSITIONS)}")
+        now = _utcnow_iso_z()
+        with self.get_cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO disposition_events (drone_key, disposition, changed_at, changed_by, notes)
+                VALUES (?, ?, ?, ?, ?)
+            """, (drone_key, disposition, now, changed_by, notes))
+            return cursor.lastrowid or 0
+
+    def get_current_dispositions(self) -> Dict[str, str]:
+        """Return {drone_key: disposition} for all keys whose latest disposition != 'unknown'."""
+        with self.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT drone_key, disposition
+                FROM disposition_events
+                WHERE id IN (
+                    SELECT MAX(id) FROM disposition_events GROUP BY drone_key
+                )
+                AND disposition != 'unknown'
+            """)
+            return {row['drone_key']: row['disposition'] for row in cursor.fetchall()}
+
+    def get_disposition_history(self, drone_key: Optional[str] = None, limit: int = 500) -> List[Dict]:
+        """Return disposition event rows, newest first, optionally filtered by drone_key."""
+        with self.get_cursor() as cursor:
+            if drone_key:
+                cursor.execute("""
+                    SELECT id, drone_key, disposition, changed_at, changed_by, notes
+                    FROM disposition_events
+                    WHERE drone_key = ?
+                    ORDER BY changed_at DESC
+                    LIMIT ?
+                """, (drone_key, limit))
+            else:
+                cursor.execute("""
+                    SELECT id, drone_key, disposition, changed_at, changed_by, notes
+                    FROM disposition_events
+                    ORDER BY changed_at DESC
+                    LIMIT ?
+                """, (limit,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def migrate_disposition_key(self, old_key: str, new_key: str,
+                                changed_by: str = 'system:key-migration') -> bool:
+        """If old_key has a non-unknown current disposition, append a new event under new_key.
+
+        Append-only — old rows are never deleted.
+        Returns True if a migration event was written.
+        """
+        current = self.get_current_dispositions()
+        disp = current.get(old_key)
+        if not disp:
+            return False
+        self.add_disposition_event(new_key, disp, changed_by=changed_by,
+                                   notes=f'migrated from {old_key}')
+        return True
+
 
 # --------------- Global Singleton -----------------------------------------
 
 _db: Optional[Database] = None
 
 
-def get_db(db_path: str = None) -> Database:
+def get_db(db_path: Optional[str] = None) -> Database:
     """Get or create the global database instance."""
     global _db
     if _db is None:
