@@ -168,7 +168,7 @@ const App = (() => {
   function _applyTheme(theme) {
     document.documentElement.setAttribute('data-bs-theme', theme);
     const icon = document.getElementById('themeIcon');
-    if (icon) icon.className = theme === 'dark' ? 'bi bi-moon-fill' : 'bi bi-sun-fill';
+    if (icon) icon.className = theme === 'dark' ? 'bi bi-sun-fill' : 'bi bi-moon-fill';
     if (typeof MapManager !== 'undefined' && MapManager.setTheme) {
       MapManager.setTheme(theme);
     }
