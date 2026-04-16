@@ -213,7 +213,9 @@ const Utils = (() => {
     switch (protocol) {
       case 'astm_nan':       return '<span class="badge bg-info text-dark">NAN</span>';
       case 'astm_beacon':    return '<span class="badge bg-primary">Beacon</span>';
+      case 'astm_ble':       return '<span class="badge bg-info text-dark">BLE</span>';
       case 'dji_proprietary':return '<span class="badge bg-warning text-dark">DJI</span>';
+      case 'french':         return '<span class="badge" style="background:#1E40AF;color:#fff;">FR-DID</span>';
       case 'wifi_ssid':      return '<span class="badge bg-success">WiFi SSID</span>';
       default: return `<span class="badge bg-secondary">${protocol || '?'}</span>`;
     }

@@ -26,6 +26,8 @@ _TRACK_COLOURS = [
 
 _RECEIVER_COLOUR = "ff00ff00"   # lime — matches standard "friendly" colour
 _OPERATOR_COLOUR = "ff00a5ff"   # orange
+_TAKEOFF_COLOUR = "ffcf62f9"    # violet — distinct from operator to signal
+                                # "launch point, not live pilot position"
 
 
 # --------------- Helpers --------------------------------------------------
@@ -117,9 +119,10 @@ def generate_kml(
         colour = _TRACK_COLOURS[idx % len(_TRACK_COLOURS)]
         _add_style(doc, f"drone_{idx}", colour, colour)
 
-    # Receiver / operator styles
+    # Receiver / operator / takeoff styles
     _add_style(doc, "receiver_style", _RECEIVER_COLOUR, _RECEIVER_COLOUR)
     _add_style(doc, "operator_style", _OPERATOR_COLOUR, _OPERATOR_COLOUR)
+    _add_style(doc, "takeoff_style", _TAKEOFF_COLOUR, _TAKEOFF_COLOUR)
 
     # ---- Optional receiver placemark ------------------------------------
     rec_lat = receiver_lat or 0.0
@@ -205,6 +208,24 @@ def generate_kml(
             _sub(op_pm, "styleUrl", "#operator_style")
             op_pt = _sub(op_pm, "Point")
             _sub(op_pt, "coordinates", _coords(op_lon, op_lat, op_alt))
+        else:
+            # Fallback: French RemoteID broadcasts the takeoff point rather
+            # than live operator position. Render it as a distinct placemark
+            # so downstream consumers don't conflate takeoff with pilot loc.
+            to_lat = to_lon = 0.0
+            for r in reversed(drone_records):
+                cand_lat = r.get("takeoff_lat", 0.0) or 0.0
+                cand_lon = r.get("takeoff_lon", 0.0) or 0.0
+                if _has_position(cand_lat, cand_lon):
+                    to_lat = cand_lat
+                    to_lon = cand_lon
+                    break
+            if _has_position(to_lat, to_lon):
+                to_pm = _sub(folder, "Placemark")
+                _sub(to_pm, "name", f"Takeoff: {sn}")
+                _sub(to_pm, "styleUrl", "#takeoff_style")
+                to_pt = _sub(to_pm, "Point")
+                _sub(to_pt, "coordinates", _coords(to_lon, to_lat, 0.0))
 
     # ---- Serialise to string --------------------------------------------
     tree = ET.ElementTree(kml)

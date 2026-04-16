@@ -167,6 +167,9 @@ _schema('DroneSummary', _obj({
     'operator_alt':     _num(description='Operator altitude (metres)'),
     'operator_id':      _str(description='Operator identifier string'),
     'self_id_text':     _str(description='Free-text self-identification from drone'),
+    # Takeoff point (populated by French RemoteID; distinct from operator pos)
+    'takeoff_lat':      _num(description='Takeoff latitude (decimal degrees) — French RID'),
+    'takeoff_lon':      _num(description='Takeoff longitude (decimal degrees) — French RID'),
     # Auth
     'auth_type':        _int(description='Authentication type code'),
     'auth_data':        _str(description='Authentication data (hex string)'),
@@ -177,7 +180,7 @@ _schema('DroneSummary', _obj({
     'frequency':        _int(description='Frequency (MHz)'),
     # Protocol
     'protocol':         _str(
-        enum=['astm_nan', 'astm_beacon', 'astm_ble', 'dji_proprietary', 'wifi_ssid'],
+        enum=['astm_nan', 'astm_beacon', 'astm_ble', 'dji_proprietary', 'french', 'wifi_ssid'],
         description='Detection protocol',
     ),
     # Timestamps

@@ -759,6 +759,44 @@ const MapManager = (() => {
     return L.divIcon({ className: '', html, iconSize: [22,22], iconAnchor: [11,11] });
   }
 
+  // Takeoff marker — used when a protocol carries a launch point rather than
+  // live operator position (French RemoteID). Distinct icon to avoid misleading
+  // users into treating takeoff as pilot location.
+  function makeTakeoffIcon(drone) {
+    const color = dispositionColor(drone, '#8B5CF6');
+    const html = `<div style="
+      display:flex;align-items:center;justify-content:center;
+      width:22px;height:22px;
+      background:${color};
+      border:2px solid rgba(0,0,0,0.4);
+      box-shadow:0 0 6px ${color}88;
+      color:#fff;font-size:12px;
+      transform:rotate(45deg);
+    "><i class="bi bi-geo-alt-fill" style="transform:rotate(-45deg);"></i></div>`;
+    return L.divIcon({ className: '', html, iconSize: [22,22], iconAnchor: [11,11] });
+  }
+
+  function buildTakeoffPopup(drone) {
+    const esc = Utils.escapeHtml;
+    const lat = drone.takeoff_lat?.toFixed(5) ?? '—';
+    const lon = drone.takeoff_lon?.toFixed(5) ?? '—';
+    const serial = drone.serial_number || drone.mac_address || '?';
+    const rows = [
+      _popupRow('Drone', esc(serial)),
+      _popupRow('Position', esc(`${lat}, ${lon}`)),
+    ].filter(Boolean).join('');
+    return `
+      <div class="drone-popup">
+        <div class="drone-popup-title" style="color:#8B5CF6;">
+          <i class="bi bi-geo-alt-fill me-1"></i>Takeoff Point
+        </div>
+        <div class="drone-popup-small" style="color:#9CA3AF;font-size:11px;margin-bottom:6px;">
+          French RemoteID broadcasts launch position, not live pilot location.
+        </div>
+        <div class="drone-popup-grid">${rows}</div>
+      </div>`;
+  }
+
   function buildOperatorPopup(drone) {
     const esc = Utils.escapeHtml;
     const opLat = drone.operator_lat?.toFixed(5) ?? '—';
@@ -958,6 +996,22 @@ const MapManager = (() => {
               color: lineColor, weight: 1.5, dashArray: '5 4', opacity: 0.7
             }).addTo(_map);
           }
+        } else if (drone.takeoff_lat && drone.takeoff_lon) {
+          // Fallback: protocol broadcasts takeoff point rather than operator
+          // position (French RemoteID). Render a distinct marker.
+          const toLatLng = [drone.takeoff_lat, drone.takeoff_lon];
+          if (entry.takeoffMarker) {
+            entry.takeoffMarker.setLatLng(toLatLng);
+            entry.takeoffMarker.setIcon(makeTakeoffIcon(drone));
+            entry.takeoffMarker.getPopup()?.setContent(buildTakeoffPopup(drone));
+          } else {
+            entry.takeoffMarker = L.marker(toLatLng, { icon: makeTakeoffIcon(drone), zIndexOffset: 100 }).addTo(_map);
+            entry.takeoffMarker.bindPopup(buildTakeoffPopup(drone), { maxWidth: 260, minWidth: 200 });
+            entry.takeoffMarker.on('click', (e) => {
+              L.DomEvent.stopPropagation(e);
+              if (_measureActive) { _onMeasureLeftClick(e); return; }
+            });
+          }
         }
       } else {
         // Create new
@@ -994,6 +1048,7 @@ const MapManager = (() => {
         });
 
         let operatorMarker = null;
+        let takeoffMarker = null;
         let line = null;
 
         if (drone.operator_lat && drone.operator_lon) {
@@ -1008,9 +1063,19 @@ const MapManager = (() => {
           line = L.polyline([latLng, opLatLng], {
             color: lineColor, weight: 1.5, dashArray: '5 4', opacity: 0.7
           }).addTo(_map);
+        } else if (drone.takeoff_lat && drone.takeoff_lon) {
+          // French RID: launch point, not pilot. No line drawn — takeoff is
+          // not a live tether, so implying distance would mislead.
+          const toLatLng = [drone.takeoff_lat, drone.takeoff_lon];
+          takeoffMarker = L.marker(toLatLng, { icon: makeTakeoffIcon(drone), zIndexOffset: 100 }).addTo(_map);
+          takeoffMarker.bindPopup(buildTakeoffPopup(drone), { maxWidth: 260, minWidth: 200 });
+          takeoffMarker.on('click', (e) => {
+            L.DomEvent.stopPropagation(e);
+            if (_measureActive) { _onMeasureLeftClick(e); return; }
+          });
         }
 
-        _droneMarkers[serial] = { marker, operatorMarker, line, track: null, drone };
+        _droneMarkers[serial] = { marker, operatorMarker, takeoffMarker, line, track: null, drone };
       }
     });
 
@@ -1029,6 +1094,7 @@ const MapManager = (() => {
     if (!entry) return;
     entry.marker.remove();
     if (entry.operatorMarker) entry.operatorMarker.remove();
+    if (entry.takeoffMarker) entry.takeoffMarker.remove();
     if (entry.line) entry.line.remove();
     if (entry.track) entry.track.remove();
     delete _droneMarkers[serial];
@@ -1178,6 +1244,8 @@ const MapManager = (() => {
         direction: rec.direction,
         operator_lat: rec.operator_lat,
         operator_lon: rec.operator_lon,
+        takeoff_lat: rec.takeoff_lat,
+        takeoff_lon: rec.takeoff_lon,
         rssi: rec.rssi,
         last_seen: rec.timestamp,
         derived: { state: 'active' },
@@ -1186,6 +1254,7 @@ const MapManager = (() => {
       const latLng = [rec.drone_lat, rec.drone_lon];
       const marker = L.marker(latLng, { icon: makeDroneIcon(fakeDrone), zIndexOffset: 200 }).addTo(_map);
       let operatorMarker = null;
+      let takeoffMarker = null;
       let line = null;
 
       if (rec.operator_lat && rec.operator_lon) {
@@ -1193,9 +1262,13 @@ const MapManager = (() => {
         operatorMarker = L.marker(opLatLng, { icon: makeOperatorIcon(fakeDrone), zIndexOffset: 100 }).addTo(_map);
         operatorMarker.bindPopup(buildOperatorPopup(fakeDrone), { maxWidth: 260, minWidth: 180 });
         line = L.polyline([latLng, opLatLng], { color: '#14B8A6', weight: 1.5, dashArray: '5 4', opacity: 0.7 }).addTo(_map);
+      } else if (rec.takeoff_lat && rec.takeoff_lon) {
+        const toLatLng = [rec.takeoff_lat, rec.takeoff_lon];
+        takeoffMarker = L.marker(toLatLng, { icon: makeTakeoffIcon(fakeDrone), zIndexOffset: 100 }).addTo(_map);
+        takeoffMarker.bindPopup(buildTakeoffPopup(fakeDrone), { maxWidth: 260, minWidth: 200 });
       }
 
-      _droneMarkers[rec.serial_number] = { marker, operatorMarker, line, track: null };
+      _droneMarkers[rec.serial_number] = { marker, operatorMarker, takeoffMarker, line, track: null };
     });
 
     // Draw tracks per serial — only up to currentTimeMs

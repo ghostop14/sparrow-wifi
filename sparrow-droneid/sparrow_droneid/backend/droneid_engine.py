@@ -5,6 +5,8 @@ Manages monitor-mode WiFi capture via tcpdump and decodes:
 - ASTM F3411 via Wi-Fi NAN action frames (OUI 50:6F:9A)
 - ASTM F3411 via Wi-Fi beacon vendor IE (OUI FA:0B:BC)
 - DJI proprietary DroneID via beacon vendor IE (OUI 26:37:12)
+- French RemoteID (FR-DID / arrêté du 27/12/2019) via beacon vendor IE
+  (ASD-STAN OUI 6A:5C:35, OUI type 0x01)
 """
 import asyncio
 import logging
@@ -51,6 +53,23 @@ _DJI_OUIS = frozenset({b'\x26\x37\x12', b'\x60\x60\x1f', b'\x60\x60\x14'})
 # Vendor type bytes
 NAN_OUI_TYPE = 0x13
 ASTM_BEACON_OUI_TYPE = 0x0D
+
+# French RemoteID (arrêté du 27 décembre 2019) — ASD-STAN OUI
+OUI_FRENCH = b'\x6a\x5c\x35'
+FRENCH_OUI_TYPE = 0x01
+
+# French RemoteID TLV types (from opendroneid-core-c wifi.c:frdid_build)
+FR_TLV_VERSION = 0x01          # 1 byte
+FR_TLV_ID = 0x02               # 30 bytes, ASCII
+FR_TLV_ANSI_CTA_2063 = 0x03    # variable, ASCII
+FR_TLV_LATITUDE = 0x04         # int32 BE, degrees × 1e5
+FR_TLV_LONGITUDE = 0x05        # int32 BE, degrees × 1e5
+FR_TLV_ALTITUDE = 0x06         # int16 BE, metres (MSL)
+FR_TLV_HEIGHT = 0x07           # int16 BE, metres above takeoff
+FR_TLV_TAKEOFF_LAT = 0x08      # int32 BE, degrees × 1e5
+FR_TLV_TAKEOFF_LON = 0x09      # int32 BE, degrees × 1e5
+FR_TLV_H_SPEED = 0x0A          # int8, m/s
+FR_TLV_TRUE_COURSE = 0x0B      # int16 BE, degrees
 
 # BLE constants
 BLE_ASTM_UUID = "0000fffa-0000-1000-8000-00805f9b34fb"
@@ -399,6 +418,102 @@ class DJIParser:
         return device
 
 
+# --------------- French RemoteID Parser -----------------------------------
+
+class FrenchRIDParser:
+    """Parser for French RemoteID (arrêté du 27 décembre 2019 / NF Z17-201).
+
+    Transported in a WiFi beacon vendor-specific IE (tag 221) with
+    ASD-STAN OUI ``6A:5C:35`` and OUI-type ``0x01``. Payload is a stream
+    of TLV records (1-byte type, 1-byte length, big-endian value).
+
+    Implementation derived from opendroneid-core-c ``frdid_build()``
+    (wifi.c:717-772) and ``frdid_wifi_build_beacon_frame()`` (wifi.c:631-696).
+    All integer fields are big-endian.
+    """
+
+    @staticmethod
+    def _iter_tlvs(data: bytes):
+        """Yield (type, value_bytes) pairs from a TLV stream."""
+        offset = 0
+        while offset + 2 <= len(data):
+            t = data[offset]
+            ln = data[offset + 1]
+            if offset + 2 + ln > len(data):
+                break
+            yield t, data[offset + 2:offset + 2 + ln]
+            offset += 2 + ln
+
+    @staticmethod
+    def parse(data: bytes) -> DroneIDDevice:
+        """Decode a French RemoteID TLV payload into a DroneIDDevice."""
+        device = DroneIDDevice(protocol=Protocol.FRENCH.value)
+        log = logging.getLogger(__name__)
+
+        for tlv_type, value in FrenchRIDParser._iter_tlvs(data):
+            try:
+                if tlv_type == FR_TLV_VERSION and len(value) == 1:
+                    version = value[0]
+                    if version != 1:
+                        log.debug("FR-DID: unknown version byte 0x%02x (expected 0x01)", version)
+                elif tlv_type == FR_TLV_ID:
+                    # Spec: 30-byte zero-padded ASCII. Reject malformed lengths
+                    # rather than silently accept.
+                    if len(value) != 30:
+                        log.debug("FR-DID: Identifier TLV length %d (expected 30); skipping", len(value))
+                        continue
+                    ident = value.split(b'\x00', 1)[0].decode('ascii', errors='replace').strip()
+                    if ident and not device.serial_number:
+                        device.registration_id = ident
+                        device.id_type = 2  # CAA Assigned Registration ID
+                elif tlv_type == FR_TLV_ANSI_CTA_2063 and len(value) > 0:
+                    # Variable-length ANSI/CTA-2063-A serial number.
+                    serial = value.split(b'\x00', 1)[0].decode('ascii', errors='replace').strip()
+                    if serial:
+                        device.serial_number = serial
+                        device.id_type = 1  # Serial Number (ANSI/CTA-2063-A)
+                elif tlv_type == FR_TLV_LATITUDE and len(value) == 4:
+                    raw = struct.unpack('>i', value)[0]
+                    if raw != 0:
+                        device.drone_lat = round(raw / 1e5, 7)
+                elif tlv_type == FR_TLV_LONGITUDE and len(value) == 4:
+                    raw = struct.unpack('>i', value)[0]
+                    if raw != 0:
+                        device.drone_lon = round(raw / 1e5, 7)
+                elif tlv_type == FR_TLV_ALTITUDE and len(value) == 2:
+                    alt = struct.unpack('>h', value)[0]
+                    # -1000 matches the ASTM INV_ALT sentinel used elsewhere in
+                    # opendroneid-core-c; treat as "unknown" rather than real data.
+                    if alt != -1000:
+                        device.drone_alt_geo = float(alt)
+                elif tlv_type == FR_TLV_HEIGHT and len(value) == 2:
+                    h = struct.unpack('>h', value)[0]
+                    if h != -1000:
+                        device.drone_height_agl = float(h)
+                elif tlv_type == FR_TLV_TAKEOFF_LAT and len(value) == 4:
+                    # Takeoff point — NOT operator/pilot location. French RID
+                    # does not transmit live operator position. See takeoff_lat
+                    # field comment in DroneIDDevice model.
+                    raw = struct.unpack('>i', value)[0]
+                    if raw != 0:
+                        device.takeoff_lat = round(raw / 1e5, 7)
+                elif tlv_type == FR_TLV_TAKEOFF_LON and len(value) == 4:
+                    raw = struct.unpack('>i', value)[0]
+                    if raw != 0:
+                        device.takeoff_lon = round(raw / 1e5, 7)
+                elif tlv_type == FR_TLV_H_SPEED and len(value) == 1:
+                    device.speed = float(struct.unpack('>b', value)[0])
+                elif tlv_type == FR_TLV_TRUE_COURSE and len(value) == 2:
+                    course = struct.unpack('>h', value)[0]
+                    # Valid range is [0, 360); malformed values are wrapped so
+                    # downstream range/heading logic doesn't see negatives.
+                    device.direction = float(course % 360)
+            except (struct.error, UnicodeDecodeError):
+                continue
+
+        return device
+
+
 # --------------- Frame Extractor ------------------------------------------
 
 class FrameExtractor:
@@ -536,6 +651,16 @@ class FrameExtractor:
             if oui in _DJI_OUIS:
                 try:
                     device = DJIParser.parse(bytes([oui_type]) + payload)
+                    key = device.get_key()
+                    if key and len(key) >= 4:
+                        return device
+                except Exception:
+                    continue
+
+            # French RemoteID (ASD-STAN OUI 6A:5C:35, type 0x01)
+            if oui == OUI_FRENCH and oui_type == FRENCH_OUI_TYPE:
+                try:
+                    device = FrenchRIDParser.parse(payload)
                     key = device.get_key()
                     if key and len(key) >= 4:
                         return device

@@ -79,6 +79,8 @@ class Database:
                     operator_alt REAL DEFAULT 0.0,
                     operator_id TEXT DEFAULT '',
                     self_id_text TEXT DEFAULT '',
+                    takeoff_lat REAL DEFAULT 0.0,
+                    takeoff_lon REAL DEFAULT 0.0,
                     mac_address TEXT DEFAULT '',
                     rssi INTEGER DEFAULT 0,
                     protocol TEXT DEFAULT 'astm_nan',
@@ -126,6 +128,16 @@ class Database:
             ):
                 try:
                     cursor.execute(f"ALTER TABLE alerts {col_def}")
+                except Exception:
+                    pass  # Column already exists
+
+            # Migrate existing DBs: add takeoff columns (French RemoteID).
+            for col_def in (
+                "ADD COLUMN takeoff_lat REAL DEFAULT 0.0",
+                "ADD COLUMN takeoff_lon REAL DEFAULT 0.0",
+            ):
+                try:
+                    cursor.execute(f"ALTER TABLE detections {col_def}")
                 except Exception:
                     pass  # Column already exists
 
@@ -209,10 +221,11 @@ class Database:
                     speed, direction, vertical_speed,
                     operator_lat, operator_lon, operator_alt,
                     operator_id, self_id_text,
+                    takeoff_lat, takeoff_lon,
                     mac_address, rssi, protocol,
                     receiver_lat, receiver_lon, receiver_alt,
                     timestamp
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 device.serial_number, device.registration_id, device.id_type, device.ua_type,
                 device.drone_lat, device.drone_lon, device.drone_alt_geo,
@@ -220,6 +233,7 @@ class Database:
                 device.speed, device.direction, device.vertical_speed,
                 device.operator_lat, device.operator_lon, device.operator_alt,
                 device.operator_id, device.self_id_text,
+                device.takeoff_lat, device.takeoff_lon,
                 device.mac_address, device.rssi, device.protocol,
                 receiver_lat, receiver_lon, receiver_alt,
                 device.last_seen or _utcnow_iso_z(),
@@ -307,6 +321,7 @@ class Database:
             cursor.execute(f"""
                 SELECT serial_number, ua_type, drone_lat, drone_lon, drone_height_agl,
                        speed, direction, operator_lat, operator_lon,
+                       takeoff_lat, takeoff_lon,
                        rssi, protocol, receiver_lat, receiver_lon, timestamp
                 FROM detections {where}
                 ORDER BY timestamp ASC

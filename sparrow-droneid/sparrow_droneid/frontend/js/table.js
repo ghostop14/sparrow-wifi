@@ -274,7 +274,7 @@ const TableManager = (() => {
     if (drone.id_type_name && drone.id_type_name !== 'None / Not Declared') {
       idRows.push(['ID Type', _esc(drone.id_type_name)]);
     }
-    const protoNames = { astm_nan: 'WiFi NAN', astm_beacon: 'WiFi Beacon', astm_ble: 'Bluetooth', dji_proprietary: 'WiFi (DJI)', wifi_ssid: 'WiFi SSID Detection' };
+    const protoNames = { astm_nan: 'WiFi NAN', astm_beacon: 'WiFi Beacon', astm_ble: 'Bluetooth', dji_proprietary: 'WiFi (DJI)', french: 'French RemoteID', wifi_ssid: 'WiFi SSID Detection' };
     idRows.push(['Protocol', _esc(protoNames[drone.protocol] || drone.protocol || '—')]);
     idRows.push(['MAC', _esc(drone.mac_address || '—')]);
     if (drone.operator_id) idRows.push(['Operator ID', _esc(drone.operator_id)]);
@@ -309,6 +309,13 @@ const TableManager = (() => {
         ['Lon', drone.operator_lon.toFixed(6)],
         ['Range', Utils.formatRange(d.operator_range_m)],
         ['Bearing', Utils.formatBearing(d.operator_bearing_deg, d.operator_bearing_cardinal)],
+      ]);
+    } else if (drone.takeoff_lat && drone.takeoff_lon) {
+      // French RemoteID: no live operator position, only launch point.
+      html += section('Takeoff Point', [
+        ['Lat', drone.takeoff_lat.toFixed(6)],
+        ['Lon', drone.takeoff_lon.toFixed(6)],
+        ['Note', '<span style="color:#9CA3AF;font-style:italic;">Launch location, not pilot position</span>'],
       ]);
     }
 

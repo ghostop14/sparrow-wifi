@@ -128,6 +128,34 @@ class TestDocumentBuilder(unittest.TestCase):
         self.assertIn("geo", doc["observer"])
         self.assertIn("location", doc["droneid"]["operator"])
 
+    def test_takeoff_point_emitted_for_french_rid(self):
+        """French RID: takeoff populated, operator empty → doc.droneid.takeoff
+        object with geo_point exists, and operator.location is absent."""
+        device = self._make_device(
+            protocol="french",
+            operator_lat=0.0, operator_lon=0.0,
+            takeoff_lat=48.8580, takeoff_lon=2.2940,
+        )
+        doc = DocumentBuilder.build_detection(
+            device, 35.0, -78.0, 100.0,
+            "sensor-1", "rpi-01",
+        )
+        self.assertIn("takeoff", doc["droneid"])
+        self.assertAlmostEqual(doc["droneid"]["takeoff"]["lat"], 48.8580, places=4)
+        self.assertEqual(
+            doc["droneid"]["takeoff"]["location"],
+            {"lat": 48.8580, "lon": 2.2940},
+        )
+        self.assertNotIn("location", doc["droneid"]["operator"])
+
+    def test_takeoff_absent_when_not_broadcast(self):
+        """Non-French protocols: no takeoff object in doc."""
+        doc = DocumentBuilder.build_detection(
+            self._make_device(), 35.0, -78.0, 100.0,
+            "sensor-1", "rpi-01",
+        )
+        self.assertNotIn("takeoff", doc["droneid"])
+
     def test_bvlos_true_when_no_operator_pos(self):
         device = self._make_device(operator_lat=0.0, operator_lon=0.0)
         doc = DocumentBuilder.build_detection(

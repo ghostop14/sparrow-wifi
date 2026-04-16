@@ -506,6 +506,8 @@ class DocumentBuilder:
 
         has_drone_pos = device.drone_lat != 0.0 or device.drone_lon != 0.0
         has_operator_pos = device.operator_lat != 0.0 or device.operator_lon != 0.0
+        has_takeoff_pos = (getattr(device, 'takeoff_lat', 0.0) != 0.0
+                           or getattr(device, 'takeoff_lon', 0.0) != 0.0)
         has_receiver_pos = receiver_lat != 0.0 or receiver_lon != 0.0
 
         # Drone-to-operator geometry
@@ -658,6 +660,14 @@ class DocumentBuilder:
         if has_operator_pos:
             doc["droneid"]["operator"]["location"] = {
                 "lat": device.operator_lat, "lon": device.operator_lon,
+            }
+        if has_takeoff_pos:
+            doc["droneid"]["takeoff"] = {
+                "lat": device.takeoff_lat,
+                "lon": device.takeoff_lon,
+                "location": {
+                    "lat": device.takeoff_lat, "lon": device.takeoff_lon,
+                },
             }
 
         return doc
@@ -1013,6 +1023,15 @@ def build_index_template(prefix: str, shards: int, replicas: int,
                                                      }},
                                     "distance_m": {"type": "float"},
                                     "bvlos": {"type": "boolean"},
+                                },
+                            },
+                            # Takeoff point (French RemoteID carries this
+                            # instead of live operator position).
+                            "takeoff": {
+                                "properties": {
+                                    "lat": {"type": "float"},
+                                    "lon": {"type": "float"},
+                                    "location": {"type": "geo_point"},
                                 },
                             },
                             "rf": {

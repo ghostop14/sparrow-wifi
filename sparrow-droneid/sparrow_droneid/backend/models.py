@@ -80,6 +80,7 @@ class Protocol(str, Enum):
     ASTM_BEACON = "astm_beacon"
     ASTM_BLE = "astm_ble"
     DJI_PROPRIETARY = "dji_proprietary"
+    FRENCH = "french"
     WIFI_SSID = "wifi_ssid"
 
 
@@ -235,6 +236,12 @@ class DroneIDDevice:
     operator_alt: float = 0.0
     operator_id: str = ""
     self_id_text: str = ""
+
+    # Takeoff point — only populated by protocols that carry it (e.g. French
+    # RemoteID). Semantically distinct from operator location: French RID does
+    # not transmit live pilot position, only the launch point.
+    takeoff_lat: float = 0.0
+    takeoff_lon: float = 0.0
 
     # Auth (optional, stored but not heavily used in v1)
     auth_type: int = 0
