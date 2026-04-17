@@ -141,8 +141,11 @@ class ODIDParser:
         if len(data) < ODID_MSG_SIZE:
             return
         status_byte = data[1]
-        ew_dir = (status_byte >> 3) & 0x01
-        speed_mult = (status_byte >> 2) & 0x01
+        # ASTM F3411-22a byte 1 layout (LSb-first):
+        #   bit 0: SpeedMult, bit 1: EWDirection, bit 2: HeightType,
+        #   bit 3: Reserved, bits 4-7: Status
+        ew_dir = (status_byte >> 1) & 0x01
+        speed_mult = status_byte & 0x01
 
         # Direction: 0-179 -> 0-358 degrees (2-degree steps)
         raw_dir = data[2]
