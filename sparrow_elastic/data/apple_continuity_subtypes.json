@@ -1,0 +1,33 @@
+{
+  "_meta": {
+    "source": "seed",
+    "upstream": "https://github.com/furiousMAC/continuity",
+    "note": "Hand-curated subtype table based on publicly documented Apple Continuity protocol. The furiousMAC upstream serves a Wireshark dissector C file, not structured JSON; this seed is the canonical structured form used by sparrow_elastic. Refresh logic for this file is a no-op (static seed); update manually when new subtypes are documented."
+  },
+  "subtypes": {
+    "0x01": { "name": "Unknown (0x01)", "device_class_hint": "phone" },
+    "0x02": { "name": "iBeacon", "device_class_hint": "beacon" },
+    "0x03": { "name": "AirPrint", "device_class_hint": "printer" },
+    "0x05": { "name": "AirDrop", "device_class_hint": "phone" },
+    "0x07": { "name": "AirPods Proximity Pair", "device_class_hint": "headset" },
+    "0x08": { "name": "Handoff", "device_class_hint": "phone" },
+    "0x09": { "name": "WiFi Settings", "device_class_hint": "phone" },
+    "0x0A": { "name": "Instant Hotspot", "device_class_hint": "phone" },
+    "0x0B": { "name": "Apple Watch Proximity Pair", "device_class_hint": "wearable" },
+    "0x0C": { "name": "Handoff v2", "device_class_hint": "phone" },
+    "0x0D": { "name": "HomeKit Accessory", "device_class_hint": "iot" },
+    "0x0E": { "name": "Proximity Pair", "device_class_hint": "phone" },
+    "0x0F": { "name": "Nearby Action", "device_class_hint": "phone" },
+    "0x10": { "name": "Nearby Info", "device_class_hint": "phone" },
+    "0x11": { "name": "AirPlay Target", "device_class_hint": "speaker" },
+    "0x12": { "name": "AirPlay Source", "device_class_hint": "phone" },
+    "0x13": { "name": "Magic Switch", "device_class_hint": "phone" },
+    "0x14": { "name": "Continuity Command", "device_class_hint": "phone" },
+    "0x15": { "name": "Siri Remote Pairing", "device_class_hint": "remote" },
+    "0x16": { "name": "HomePod Setup", "device_class_hint": "speaker" },
+    "0x17": { "name": "Multi-color LED", "device_class_hint": "iot" },
+    "0x19": { "name": "Notification Center", "device_class_hint": "phone" },
+    "0x1A": { "name": "Pair Verification", "device_class_hint": "phone" },
+    "0x1E": { "name": "Find My", "device_class_hint": "tracker" }
+  }
+}
