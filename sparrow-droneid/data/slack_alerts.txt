@@ -1,0 +1,43 @@
+[2:08 PM]:rotating_light: New Drone Detected
+Helicopter / Multirotor
+Serial: 1748FEV5LTE924361177
+Reg: 1748FEV5LTE924361177
+Protocol: WiFi Beacon
+Description: unset
+Range: 10 yd  Bearing: 182° (S)
+Pos: 33.141864, -80.108474
+RSSI: -10 dBm
+
+[2:11 PM]:rotating_light: New Drone Detected
+Autel Helicopter / Multirotor
+Serial: 1748FEV5LTE924361177
+Reg: 1748FEV5LTE924361177
+Protocol: WiFi Beacon
+Description: unset
+Range: 11 yd  Bearing: 168° (SSE)
+Pos: 33.141863, -80.108448
+RSSI: -15 dBm
+
+[2:11 PM]:rotating_light: New Drone Detected
+Autel Helicopter / Multirotor
+Serial: P
+Reg: ``
+Protocol: WiFi Beacon
+RSSI: -11 dBm[2:14 PM]:rotating_light: Signal Lost
+Autel Helicopter / Multirotor
+Serial: P
+Reg: ``
+Protocol: WiFi Beacon
+RSSI: -11 dBm
+No signal for 194 s (timeout 180 s)
+d
+[2:15 PM]:rotating_light: Signal Lost
+Autel Helicopter / Multirotor
+Serial: 1748FEV5LTE924361177
+Reg: 1748FEV5LTE924361177
+Protocol: WiFi Beacon
+Description: unset
+Range: 12 yd  Bearing: 177° (S)
+Pos: 33.141848, -80.108464
+RSSI: -9 dBm
+No signal for 206 s (timeout 180 s)

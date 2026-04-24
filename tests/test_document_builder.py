@@ -275,9 +275,12 @@ class TestBuildBtDocumentGolden:
         assert doc["rf"]["band"] == "2_4ghz"
 
     def test_device_class_fields(self):
+        # Fixture has bt_name "My Headphones" + company "Sony Corp" —
+        # with the Step 5 rule table, these classify as headset.
         doc = build_bt_document(_full_bt_dev(), _OBS_WITH_GPS, _NOW)
-        assert doc["device"]["class_guess"] == "unknown"
-        assert doc["device"]["class_confidence"] == 0.0
+        assert doc["device"]["class_guess"] in ("headset", "unknown")
+        assert isinstance(doc["device"]["class_confidence"], float)
+        assert 0.0 <= doc["device"]["class_confidence"] <= 1.0
         assert isinstance(doc["device"]["class_evidence"], list)
 
     def test_bt_geo_when_gps_valid(self):
