@@ -56,9 +56,10 @@
         },
         "related": {
           "properties": {
-            "hash":  { "type": "keyword" },
-            "mac":   { "type": "keyword" },
-            "hosts": { "type": "keyword" }
+            "hash":          { "type": "keyword" },
+            "hash_strength": { "type": "keyword" },
+            "mac":           { "type": "keyword" },
+            "hosts":         { "type": "keyword" }
           }
         },
         "rf": {
