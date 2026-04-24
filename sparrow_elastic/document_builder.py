@@ -366,11 +366,18 @@ def build_wifi_document(net: dict, obs: dict, now_utc: datetime) -> dict:
     # Device classification (Step 5 will provide real logic)
     # ------------------------------------------------------------------
     class_evidence_dict = {
-        "oui_vendor": mac_vendor_str,
-        "wifi_ssid": ssid,
-        "wifi_vendor_ies": vendor_ie_ouis,
+        "oui_vendor":            mac_vendor_str,
+        "bt_cod":                None,
+        "bt_appearance":         None,
+        "bt_name":               None,
+        "bt_company":            None,
+        "wifi_ssid":             ssid,
+        "wifi_vendor_ies":       vendor_ie_ouis,
+        "service_uuids":         None,
+        "apple_continuity_type": None,
     }
     class_guess, class_conf, class_evidence = classify(class_evidence_dict)
+    class_evidence = [str(e) for e in (class_evidence or [])]
 
     # ------------------------------------------------------------------
     # Controller-candidate RF signature
@@ -639,7 +646,10 @@ def build_bt_document(dev: dict, obs: dict, now_utc: datetime) -> dict:
     # MAC canonicalization
     # ------------------------------------------------------------------
     canon_mac = _safe_mac(raw_mac) or raw_mac or ""
-    is_ble = (bt_type is None) or (int(bt_type) == 2 if bt_type is not None else True)
+    try:
+        is_ble = bt_type is None or int(bt_type) == 2
+    except (TypeError, ValueError):
+        is_ble = True
     mac_flag_dict = mac_flags(canon_mac, is_ble=is_ble) if canon_mac else {}
 
     # ------------------------------------------------------------------
@@ -662,11 +672,18 @@ def build_bt_document(dev: dict, obs: dict, now_utc: datetime) -> dict:
     # Device classification
     # ------------------------------------------------------------------
     class_evidence_dict = {
-        "oui_vendor": bt_manufacturer or bt_company or None,
-        "bt_name": bt_name,
-        "bt_company": bt_company,
+        "oui_vendor":            bt_manufacturer or bt_company or None,
+        "bt_cod":                None,
+        "bt_appearance":         adv_parsed.get("advertising.appearance"),
+        "bt_name":               bt_name,
+        "bt_company":            bt_company,
+        "wifi_ssid":             None,
+        "wifi_vendor_ies":       None,
+        "service_uuids":         None,
+        "apple_continuity_type": adv_parsed.get("apple.continuity_type"),
     }
     class_guess, class_conf, class_evidence = classify(class_evidence_dict)
+    class_evidence = [str(e) for e in (class_evidence or [])]
     device_id = canon_mac
 
     # ------------------------------------------------------------------
