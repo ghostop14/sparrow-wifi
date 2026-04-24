@@ -427,9 +427,17 @@ class TestComputeDocId:
 # ---------------------------------------------------------------------------
 
 class TestBtEmptyAdvPayload:
-    def test_no_advertising_key_in_bluetooth(self):
+    def test_advertising_contains_only_native_tx_power_when_adv_hex_absent(self):
+        # adv_hex not set -> stub returns {}; native txpower is valid in fixture.
+        # Advertising block should contain only tx_power_dbm, no parsed subkeys.
         dev = dict(_full_bt_dev())
-        # adv_hex not set -- stub returns {}
+        doc = build_bt_document(dev, _OBS_NO_GPS, _NOW)
+        adv = doc.get("bluetooth", {}).get("advertising")
+        assert adv == {"tx_power_dbm": -60.0}
+
+    def test_no_advertising_key_when_tx_power_invalid_and_no_adv_hex(self):
+        dev = dict(_full_bt_dev())
+        dev["txpowervalid"] = "False"
         doc = build_bt_document(dev, _OBS_NO_GPS, _NOW)
         assert "advertising" not in doc.get("bluetooth", {})
 

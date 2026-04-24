@@ -1,12 +1,26 @@
 {
-  "include": [
-    "sparrow_elastic",
-    "tests"
-  ],
   "exclude": [
     "**/__pycache__",
     "legacy",
-    "sparrow-droneid"
+    "sparrow-droneid",
+    "sparrowwifiagent.py",
+    "sparrow-wifi.py",
+    "wirelessengine.py",
+    "sparrowhackrf.py",
+    "sparrowbluetooth.py",
+    "sparrowgps.py",
+    "sparrowcommon.py",
+    "sparrowwaterfall.py",
+    "sparrowmap.py",
+    "sparrowwificonfig.py",
+    "sparrowdialogs.py",
+    "sparrowtablewidgets.py",
+    "manuf",
+    "plugins",
+    "init.d_scripts",
+    "sampledata",
+    "recordings",
+    "images"
   ],
   "extraPaths": [
     "."

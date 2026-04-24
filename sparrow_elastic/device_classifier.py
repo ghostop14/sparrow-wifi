@@ -3,9 +3,6 @@
 Current placeholder always returns ("unknown", 0.0, []).
 """
 
-from typing import Optional
-
-
 def classify(evidence: dict) -> tuple:
     """Returns (class_guess, confidence, evidence_list).
 

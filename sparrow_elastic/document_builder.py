@@ -141,7 +141,7 @@ def _observed_temporal(now_utc: datetime) -> dict:
     }
 
 
-def _build_observer(obs: dict, now_utc: datetime) -> dict:
+def _build_observer(obs: dict) -> dict:
     """Build the observer ECS section from the obs context dict."""
     observer: dict = {
         "id": obs.get("id") or socket.gethostname(),
@@ -271,23 +271,16 @@ def build_wifi_document(net: dict, obs: dict, now_utc: datetime) -> dict:
     last_seen_raw   = net.get("lastseen")
     strongest_sig   = net.get("strongestsignal")
 
-    # GPS from toJsondict flat fields
-    gps_lat         = net.get("lat")
-    gps_lon         = net.get("lon")
-    gps_alt         = net.get("alt")
-    gps_valid       = net.get("gpsvalid", "False")
+    # Per-AP strongest-signal GPS (observer-side GPS comes from obs)
     strongest_lat   = net.get("strongestlat")
     strongest_lon   = net.get("strongestlon")
     strongest_alt   = net.get("strongestalt")
-    strongest_valid = net.get("strongestgpsvalid", "False")
 
     # Extended fingerprint / capability fields (not in baseline toJsondict;
     # populated by extended agent or test fixtures)
     vendor_ie_ouis  = net.get("vendor_ie_ouis")   # list[str] or None
     wps_enabled     = net.get("wps_enabled")       # bool or None
     wps_uuid        = net.get("wps_uuid")          # str or None
-    supported_rates = net.get("supported_rates")   # str or None
-    ht_capabilities = net.get("ht_capabilities")   # str or None
     ht_cap_flag     = net.get("ht")                # bool or None
     vht_cap_flag    = net.get("vht")               # bool or None
     he_cap_flag     = net.get("he")                # bool or None
@@ -396,12 +389,8 @@ def build_wifi_document(net: dict, obs: dict, now_utc: datetime) -> dict:
     device_id = rel_hash if rel_hash else canon_mac
 
     # ------------------------------------------------------------------
-    # GPS
+    # GPS (observer-side comes from obs; per-AP strongest_signal below)
     # ------------------------------------------------------------------
-    gps_lat_f   = _to_float(gps_lat)
-    gps_lon_f   = _to_float(gps_lon)
-    gps_alt_f   = _to_float(gps_alt)
-
     strongest_lat_f = _to_float(strongest_lat)
     strongest_lon_f = _to_float(strongest_lon)
     strongest_alt_f = _to_float(strongest_alt)
@@ -426,7 +415,7 @@ def build_wifi_document(net: dict, obs: dict, now_utc: datetime) -> dict:
             "action": "wifi-network-observed",
             "ingested": to_es_timestamp(now_utc),
         },
-        "observer": _build_observer(obs, now_utc),
+        "observer": _build_observer(obs),
         "source": {
             "mac": canon_mac,
             "address": canon_mac,
@@ -631,13 +620,10 @@ def build_bt_document(dev: dict, obs: dict, now_utc: datetime) -> dict:
     uuid_str         = dev.get("uuid", "")
     first_seen_raw   = dev.get("firstseen")
     last_seen_raw    = dev.get("lastseen")
-    strongest_rssi   = dev.get("strongestrssi")
 
-    # GPS (flat fields as in toJsondict)
+    # GPS (flat fields as in toJsondict; bt mapping has no geo.altitude)
     gps_lat          = dev.get("lat")
     gps_lon          = dev.get("lon")
-    gps_alt          = dev.get("alt")
-    gps_valid        = dev.get("gpsvalid", "False")
 
     # BLE raw advertising payload (agent extension -- not yet in baseline)
     adv_hex          = dev.get("adv_hex")
@@ -699,7 +685,6 @@ def build_bt_document(dev: dict, obs: dict, now_utc: datetime) -> dict:
     # ------------------------------------------------------------------
     gps_lat_f = _to_float(gps_lat)
     gps_lon_f = _to_float(gps_lon)
-    gps_alt_f = _to_float(gps_alt)
 
     # ------------------------------------------------------------------
     # Temporal
@@ -721,7 +706,7 @@ def build_bt_document(dev: dict, obs: dict, now_utc: datetime) -> dict:
             "action": "bluetooth-device-observed",
             "ingested": to_es_timestamp(now_utc),
         },
-        "observer": _build_observer(obs, now_utc),
+        "observer": _build_observer(obs),
         "source": {
             "mac": canon_mac,
             "address": canon_mac,
@@ -789,11 +774,11 @@ def build_bt_document(dev: dict, obs: dict, now_utc: datetime) -> dict:
         }
 
     # bluetooth.advertising / beacon / apple from parsed adv payload
-    if adv_parsed:
-        adv_doc: dict = {}
-        beacon_doc: dict = {}
-        apple_doc: dict = {}
+    adv_doc: dict = {}
+    beacon_doc: dict = {}
+    apple_doc: dict = {}
 
+    if adv_parsed:
         for key, val in adv_parsed.items():
             if key.startswith("advertising."):
                 adv_doc[key[len("advertising."):]] = val
@@ -802,12 +787,16 @@ def build_bt_document(dev: dict, obs: dict, now_utc: datetime) -> dict:
             elif key.startswith("apple."):
                 apple_doc[key[len("apple."):]] = val
 
-        if adv_doc:
-            bt["advertising"] = adv_doc
-        if beacon_doc:
-            bt["beacon"] = beacon_doc
-        if apple_doc:
-            bt["apple"] = apple_doc
+    # Native tx_power from sparrow BluetoothDevice (independent of adv parse)
+    if tx_power_valid_b and tx_power_dbm is not None:
+        adv_doc["tx_power_dbm"] = tx_power_dbm
+
+    if adv_doc:
+        bt["advertising"] = adv_doc
+    if beacon_doc:
+        bt["beacon"] = beacon_doc
+    if apple_doc:
+        bt["apple"] = apple_doc
 
     # bluetooth.ibeacon_range_m
     if ibeacon_range_f is not None and ibeacon_range_f >= 0:
