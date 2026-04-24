@@ -1,1 +1,5 @@
+# Runtime-generated files — geozones and alert history are written by the
+# droneid engine at runtime and should not be tracked.
 *.pcap
+geozones/*.json
+slack_alerts.txt
