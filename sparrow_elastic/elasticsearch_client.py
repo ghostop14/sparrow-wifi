@@ -136,9 +136,7 @@ class ElasticsearchClient(SearchClient):
                 initial_index, alias,
             )
         except elasticsearch.ApiError as exc:
-            status = getattr(exc, "status_code", None) or getattr(exc, "meta", {})
-            if hasattr(exc, "meta"):
-                status = exc.meta.status  # type: ignore[union-attr]
+            status = exc.meta.status if hasattr(exc, "meta") else getattr(exc, "status_code", None)
             error_type = ""
             try:
                 error_type = exc.body.get("error", {}).get("type", "")  # type: ignore[union-attr]
