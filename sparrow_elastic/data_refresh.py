@@ -240,6 +240,16 @@ def all_data_files() -> list[DataFile]:
             max_age_days=90,
             format="json",
         ),
+        # Fingerbank offline DB — SQLite binary (~150 MB); NOT committed to
+        # the repo.  Downloaded on first refresh; weekly thereafter.
+        # Fingerbank public API v2 download endpoint (documented at
+        # https://fingerbank.org/api/v2/download/db/upstream).
+        DataFile(
+            name="fingerbank.db",
+            url="https://fingerbank.org/api/v2/download/db/upstream",
+            max_age_days=7,
+            format="raw",
+        ),
     ]
 
 

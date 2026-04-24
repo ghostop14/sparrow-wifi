@@ -14,3 +14,5 @@ __pycache__/
 controller/.venv/
 controller/state/controller.db
 controller.db
+# Fingerbank offline DB — large binary (~150 MB), downloaded by data_refresh
+sparrow_elastic/data/fingerbank.db
