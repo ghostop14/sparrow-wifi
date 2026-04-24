@@ -1,7 +1,7 @@
 {
   "template": {
     "mappings": {
-      "dynamic": "false",
+      "dynamic": "strict",
       "properties": {
         "@timestamp": { "type": "date" },
         "ecs": {
