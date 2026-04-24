@@ -322,7 +322,7 @@ class TestDashboardPanelCounts(unittest.TestCase):
         ("sparrow_wifi_pattern_of_life.ndjson", 5, 6),
         ("sparrow_wifi_new_device_detection.ndjson", 4, 5),
         ("sparrow_wifi_spectrum_planning.ndjson", 6, 7),
-        ("sparrow_bluetooth_situational_awareness.ndjson", 11, 12),
+        ("sparrow_bluetooth_situational_awareness.ndjson", 12, 13),
     ]
 
     def test_panel_counts(self):
