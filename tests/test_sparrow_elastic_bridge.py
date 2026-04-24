@@ -18,10 +18,8 @@ import json
 import os
 import socket
 import sys
-import types
 import unittest
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
 # Path setup: repo root so both sparrow_elastic and the bridge script are found.
@@ -39,6 +37,8 @@ def _load_bridge():
     """Load sparrow-elastic.py as a module named ``_sparrow_elastic_bridge``."""
     bridge_path = os.path.join(_REPO_ROOT, "sparrow-elastic.py")
     spec = importlib.util.spec_from_file_location("_sparrow_elastic_bridge", bridge_path)
+    assert spec is not None and spec.loader is not None, \
+        f"Failed to load spec for {bridge_path}"
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -70,17 +70,6 @@ def _make_wifi_doc(
             "class_evidence": class_evidence or [f"{class_guess}_base"],
         },
     }
-
-
-def _make_bt_doc(
-    class_guess: str = "headset",
-    class_conf: float = 0.7,
-    class_evidence: list | None = None,
-    mac: str = "11:22:33:44:55:66",
-) -> dict:
-    doc = _make_wifi_doc(class_guess, class_conf, class_evidence, mac)
-    doc["event"]["dataset"] = "sparrow.bluetooth"
-    return doc
 
 
 # ---------------------------------------------------------------------------
@@ -388,8 +377,11 @@ class TestBootstrap(unittest.TestCase):
         kind: str,
         engine: str = "elasticsearch",
         ilm_override: str = "",
-    ) -> MagicMock:
-        """Run bridge.bootstrap() with mocked resolve_template + policy load."""
+    ) -> tuple:
+        """Run bridge.bootstrap() with mocked resolve_template + policy load.
+
+        Returns (mock_client, success_bool).
+        """
         mock_client = self._make_mock_client()
         fake_template = {"index_patterns": [f"{alias}-*"], "template": {}}
 

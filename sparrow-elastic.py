@@ -53,7 +53,7 @@ from sparrow_elastic.fingerbank_client import (
     enrich_classification,
     lookup as fb_lookup,
 )
-from sparrow_elastic.settings import fingerbank_enabled, load_settings
+from sparrow_elastic.settings import fingerbank_enabled
 from sparrow_elastic.templates import resolve_template
 
 # ---------------------------------------------------------------------------
