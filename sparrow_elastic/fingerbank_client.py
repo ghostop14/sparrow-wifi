@@ -369,14 +369,17 @@ def lookup(
     Returns:
         FingerbankResult or None.
     """
+    # Reserved for future agent extensions — accepted but unused today.
+    del dhcp_fingerprint, user_agent
+
     if not mac:
         return None
 
     db_path = _resolve_db_path()
     db_available = os.path.isfile(db_path)
-    key_available = bool(_api_key)
+    api_key = _api_key  # local binding so Pyright can narrow Optional[str] → str
 
-    if not db_available and not key_available:
+    if not db_available and not api_key:
         logger.debug(
             "fingerbank_client: disabled (no offline DB at %s and no api_key)", db_path
         )
@@ -389,14 +392,14 @@ def lookup(
             return result
         logger.debug(
             "fingerbank_client: offline DB miss for %s — %s",
-            mac, "falling through to live API" if key_available else "no api_key, done",
+            mac, "falling through to live API" if api_key else "no api_key, done",
         )
 
     # 2. Fall through to live API.
-    if not key_available:
+    if not api_key:
         return None
 
-    return _query_live_api(_api_key, mac)
+    return _query_live_api(api_key, mac)
 
 
 # ---------------------------------------------------------------------------
