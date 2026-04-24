@@ -1,0 +1,115 @@
+# sparrow-elastic.conf — Sparrow WiFi/BT Elasticsearch bridge configuration.
+# Copy to /etc/sparrow-elastic.conf and customize.
+#
+# All values below are defaults. Uncomment and change what you need.
+# Environment variables override file values; CLI flags override everything.
+#
+# The bridge reads this file from the path passed via --config (if supported
+# by your deployment) or from /etc/sparrow-elastic.conf by convention.
+# When using the systemd unit, set SPARROW_ES_* environment variables in
+# /etc/sparrow-elastic.env instead (see sparrow-elastic.env.example).
+
+[elastic]
+
+# ---------------------------------------------------------------------------
+# Engine
+# ---------------------------------------------------------------------------
+
+# Target cluster type. Use "elasticsearch" for Elastic Stack 8.x or
+# "opensearch" for OpenSearch 2.x. Choosing the wrong engine causes
+# bootstrap to fail with a template or policy API error.
+# Env: SPARROW_ES_ENGINE
+# engine = elasticsearch
+
+# ---------------------------------------------------------------------------
+# Connection
+# ---------------------------------------------------------------------------
+
+# Full URL of the Elasticsearch or OpenSearch cluster. Include scheme, host,
+# and port. Credentials may be embedded: http://user:pass@host:9200.
+# Required unless --refresh-data mode is used.
+# Env: SPARROW_ES_URL
+# url =
+
+# HTTP Basic auth username. Ignored when api_key is set.
+# Env: SPARROW_ES_USERNAME
+# username =
+
+# HTTP Basic auth password. Ignored when api_key is set.
+# Env: SPARROW_ES_PASSWORD
+# password =
+
+# Elasticsearch API key (base64-encoded "id:key" string).
+# Takes precedence over username/password.
+# Not supported on OpenSearch — falls back to no-auth with a WARN log.
+# Env: SPARROW_ES_API_KEY
+# api_key =
+
+# Verify TLS certificates. Set to false only in test environments or when
+# using self-signed certificates that you have explicitly accepted.
+# verify_certs = true
+
+# ---------------------------------------------------------------------------
+# Sparrow WiFi agent
+# ---------------------------------------------------------------------------
+
+# Hostname or IP address of the sparrow-wifi agent to poll.
+# agent_host = 127.0.0.1
+
+# HTTP port the sparrow-wifi agent listens on.
+# agent_port = 8020
+
+# Wireless interface on the agent to scan. When left empty the bridge uses
+# the first interface returned by the agent.
+# wifi_interface =
+
+# ---------------------------------------------------------------------------
+# Index aliases
+# ---------------------------------------------------------------------------
+
+# Elasticsearch/OpenSearch write alias for WiFi observations.
+# This alias is created by bootstrap and points to the current backing index.
+# wifi_alias = sparrow-wifi
+
+# Write alias for Bluetooth observations.
+# Set to an empty string to disable Bluetooth indexing entirely.
+# bt_alias = sparrow-bt
+
+# ---------------------------------------------------------------------------
+# Timing
+# ---------------------------------------------------------------------------
+
+# Seconds between agent scan cycles. Lower values increase scan frequency
+# at the cost of higher agent CPU and more small bulk requests.
+# poll_interval_sec = 15.0
+
+# Maximum seconds between bulk flushes. A flush also fires when the buffer
+# reaches batch_size documents, whichever comes first.
+# flush_interval_sec = 5.0
+
+# Number of buffered documents that triggers an immediate flush regardless
+# of flush_interval_sec.
+# batch_size = 500
+
+# ---------------------------------------------------------------------------
+# Observer identity
+# ---------------------------------------------------------------------------
+
+# Identifier injected into observer.hostname of every document. Defaults to
+# the system hostname at startup. Override when running multiple bridge
+# instances against the same cluster so you can filter by sensor.
+# observer_id =
+
+# ---------------------------------------------------------------------------
+# Fingerbank device enrichment (optional)
+# ---------------------------------------------------------------------------
+
+# Fingerbank live-API key. When set, the bridge submits MAC addresses to the
+# Fingerbank API for device fingerprinting.
+# Disabled by default. See sparrow_elastic/README.md for offline DB mode.
+# Env: SPARROW_FINGERBANK_API_KEY
+# fingerbank_api_key =
+
+# Path to a local Fingerbank SQLite database (offline mode). When left empty
+# the bridge looks for sparrow_elastic/data/fingerbank.db.
+# fingerbank_offline_db =

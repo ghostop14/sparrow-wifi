@@ -1,0 +1,43 @@
+# sparrow-elastic.service — systemd unit for the Sparrow WiFi/BT
+# Elasticsearch bridge.
+#
+# Installation:
+#   1. Copy this file to /etc/systemd/system/sparrow-elastic.service
+#   2. Copy sparrow-elastic.env.example to /etc/sparrow-elastic.env and edit.
+#   3. Adjust User=, Group=, and WorkingDirectory= as needed.
+#   4. Run: systemctl daemon-reload && systemctl enable --now sparrow-elastic
+
+[Unit]
+Description=Sparrow WiFi/BT to Elasticsearch bridge
+Documentation=file:/opt/sdr/sparrow/sparrow-wifi/sparrow_elastic/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sparrow
+Group=sparrow
+WorkingDirectory=/opt/sdr/sparrow/sparrow-wifi
+
+# Shell-format environment file. Copy sparrow-elastic.env.example to this
+# path and set SPARROW_ES_URL (and optionally SPARROW_ES_ENGINE, credentials).
+EnvironmentFile=/etc/sparrow-elastic.env
+
+ExecStart=/opt/sdr/sparrow/sparrow-wifi/sparrow-elastic.py \
+    --elasticserver ${SPARROW_ES_URL}
+
+# Restart the bridge automatically if it crashes. 10-second cooldown avoids
+# rapid restart loops when the cluster is unreachable at startup.
+Restart=on-failure
+RestartSec=10s
+
+# Give the process up to 30 seconds to flush its bulk buffer on shutdown.
+TimeoutStopSec=30s
+
+# Log to the journal; view with: journalctl -u sparrow-elastic -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sparrow-elastic
+
+[Install]
+WantedBy=multi-user.target

@@ -348,6 +348,35 @@ sparrow-wifi/
 
 ---
 
+## Elasticsearch / OpenSearch Bridge
+
+The `sparrow_elastic` package provides an ECS 8.17 bridge that polls the
+Sparrow WiFi agent and bulk-indexes WiFi and Bluetooth observations into
+Elasticsearch or OpenSearch.
+
+**Quick start:**
+
+```bash
+pip install -r requirements-elastic.txt
+./sparrow-elastic.py --elasticserver http://user:pass@host:9200
+```
+
+The bridge handles index template bootstrap, ILM/ISM lifecycle policies, OUI
+vendor enrichment, device classification, optional Fingerbank fingerprinting,
+and four bundled Kibana dashboards.
+
+For full operator documentation including engine selection, auth modes,
+dashboard import, reference data refresh, and a complete CLI reference, see
+[sparrow_elastic/README.md](sparrow_elastic/README.md).
+
+Sample configuration files:
+
+- `sparrow-elastic.conf.example` — INI-style config with all supported keys
+- `sparrow-elastic.env.example` — shell-format env file for systemd deployments
+- `init.d_scripts/sparrow-elastic.service.example` — systemd unit template
+
+---
+
 ## License
 
 This project is licensed under the terms included in the repository. See the LICENSE file for details.
