@@ -29,7 +29,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -46,10 +46,8 @@ _DATA_DIR: Path = Path(__file__).parent / "data"
 # ---------------------------------------------------------------------------
 try:
     import yaml as _yaml  # type: ignore[import]
-    _YAML_AVAILABLE = True
 except ImportError:
     _yaml = None  # type: ignore[assignment]
-    _YAML_AVAILABLE = False
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +175,7 @@ class DataFile:
             return (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
         if self.format == "yaml":
-            if not _YAML_AVAILABLE:
+            if _yaml is None:
                 raise ImportError(
                     "pyyaml is required to refresh YAML sources. "
                     "Install with: pip install pyyaml"
