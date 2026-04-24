@@ -1,0 +1,82 @@
+PUT _index_template/sparrowbt
+{
+  "priority": 500,
+  "template": {
+    "settings": {
+      "index": {
+        "lifecycle": {
+          "name": "sparrow"
+        }
+      }
+    },
+    "mappings": {
+      "properties": {
+        "bluetooth.type": {
+          "type": "keyword"
+        },
+        "bluetooth.uuid": {
+          "type": "keyword"
+        },
+        "bluetooth.company": {
+          "type": "keyword"
+        },
+        "bluetooth.manufacturer": {
+          "type": "keyword"
+        },
+        "host.hostname": {
+          "type": "keyword"
+        },
+        "agent.hostname": {
+          "type": "keyword"
+        },
+        "bluetooth.geo.location": {
+          "type": "geo_point"
+        },
+        "process.name": {
+          "type": "keyword"
+        },
+        "agent.type": {
+          "type": "keyword"
+        },
+        "@timestamp": {
+          "type": "date"
+        },
+        "event.module": {
+          "type": "keyword"
+        },
+        "ecs.version": {
+          "type": "keyword"
+        },
+        "event.type": {
+          "type": "keyword"
+        },
+        "bluetooth.strongest_signal.location": {
+          "type": "geo_point"
+        },
+        "agent.version": {
+          "type": "keyword"
+        },
+        "host.name": {
+          "type": "keyword"
+        },
+        "host.geo.location": {
+          "type": "geo_point"
+        },
+        "event.kind": {
+          "type": "keyword"
+        },
+        "event.dataset": {
+          "type": "keyword"
+        }
+      }
+    }
+  },
+  "index_patterns": [
+    "sparrowbt-home*"
+  ],
+  "data_stream": {
+    "hidden": false,
+    "allow_custom_routing": false
+  },
+  "composed_of": []
+}

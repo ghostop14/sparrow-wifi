@@ -1,0 +1,27 @@
+PUT _ilm/policy/sparrow
+{
+  "policy": {
+    "phases": {
+      "hot": {
+        "min_age": "0ms",
+        "actions": {
+          "set_priority": {
+            "priority": 100
+          },
+          "rollover": {
+            "max_size": "20gb",
+            "max_age": "7d"
+          }
+        }
+      },
+      "delete": {
+        "min_age": "40d",
+        "actions": {
+          "delete": {
+            "delete_searchable_snapshot": true
+          }
+        }
+      }
+    }
+  }
+}
