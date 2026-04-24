@@ -789,9 +789,11 @@ def main(argv: Optional[List[str]] = None) -> int:  # noqa: C901
     bt_bootstrap_needed = [False]
 
     if not args.dont_create_indices:
-        bootstrap(client, args.wifi_alias, "wifi", args.engine, args.ilm_policy)
+        if not bootstrap(client, args.wifi_alias, "wifi", args.engine, args.ilm_policy):
+            wifi_bootstrap_needed[0] = True
         if args.bt_alias:
-            bootstrap(client, args.bt_alias, "bt", args.engine, args.ilm_policy)
+            if not bootstrap(client, args.bt_alias, "bt", args.engine, args.ilm_policy):
+                bt_bootstrap_needed[0] = True
 
     # ------------------------------------------------------------------
     # Start background reference-data refresh thread.
