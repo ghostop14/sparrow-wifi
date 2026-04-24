@@ -270,13 +270,29 @@ def classify(evidence: Dict[str, Any]) -> Tuple[str, float, List[str]]:
                 per_class[cls] = []
             per_class[cls].append((rule["confidence"], rule["evidence_tag"]))
 
+    return combine_matches(per_class)
+
+
+def combine_matches(
+    per_class: Dict[str, List[Tuple[float, str]]],
+) -> Tuple[str, float, List[str]]:
+    """Combine per-class (confidence, evidence_tag) lists into a single winner.
+
+    Uses the probabilistic-OR formula: ``combined = 1 - product(1 - c_i)``.
+    The winner is the class with the highest combined confidence; the
+    evidence list is the deduplicated, order-preserving list of tags that
+    contributed to that class.
+
+    Exposed as a public helper so downstream enrichers (e.g. the Fingerbank
+    client in Step 5b) can add their own (class, confidence, tag) entries
+    into ``per_class`` and re-run the combiner to fold the new evidence in
+    without overriding higher-confidence Tier 1 signals.
+
+    Returns ``("unknown", 0.0, [])`` when ``per_class`` is empty.
+    """
     if not per_class:
         return ("unknown", 0.0, [])
 
-    # Combine confidences per class using the probabilistic OR formula:
-    #   combined = 1 - product(1 - c_i)
-    # This is non-commutative in floating point but gives a sensible
-    # combined probability that caps gracefully near 1.0 when many rules fire.
     best_class: Optional[str] = None
     best_confidence: float = 0.0
     best_evidence: List[str] = []
@@ -290,7 +306,6 @@ def classify(evidence: Dict[str, Any]) -> Tuple[str, float, List[str]]:
         if combined > best_confidence:
             best_confidence = combined
             best_class = cls
-            # Collect deduplicated evidence tags, preserving order
             seen: set = set()
             tags: List[str] = []
             for _, tag in matches:
