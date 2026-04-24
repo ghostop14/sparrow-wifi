@@ -9,7 +9,6 @@ import importlib.util
 import io
 import json
 import os
-import sys
 import unittest
 import unittest.mock
 
@@ -53,6 +52,8 @@ def _load_ndjson(filename):
 def _load_installer():
     """Import install_dashboards module dynamically."""
     spec = importlib.util.spec_from_file_location("install_dashboards", INSTALLER)
+    assert spec is not None and spec.loader is not None, \
+        f"Failed to load spec for {INSTALLER}"
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -520,11 +521,12 @@ class TestInstallerMockedPost(unittest.TestCase):
     def test_http_error_handled_gracefully(self):
         import urllib.error
         opener_mock = unittest.mock.MagicMock()
+        from email.message import Message
         opener_mock.open.side_effect = urllib.error.HTTPError(
             url="http://kibana.test",
             code=401,
             msg="Unauthorized",
-            hdrs=None,
+            hdrs=Message(),
             fp=io.BytesIO(b"not authorised"),
         )
 
