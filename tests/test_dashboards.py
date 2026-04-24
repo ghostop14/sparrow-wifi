@@ -25,6 +25,7 @@ EXPECTED_FILES = {
     "sparrow_wifi_pattern_of_life.ndjson",
     "sparrow_wifi_new_device_detection.ndjson",
     "sparrow_wifi_spectrum_planning.ndjson",
+    "legacy_preserved.ndjson",
 }
 
 VALID_INDEX_PATTERN_IDS = {"sparrow-wifi", "sparrow-bt"}
@@ -582,6 +583,174 @@ class TestInstallerFileDiscovery(unittest.TestCase):
         files = self.mod._ndjson_files_in_dir(DASHBOARDS_DIR)
         for f in files:
             self.assertTrue(os.path.isfile(f), f"File not found: {f}")
+
+
+# ---------------------------------------------------------------------------
+# 9b: TestLegacyPreserved — legacy_preserved.ndjson
+# ---------------------------------------------------------------------------
+
+LEGACY_FILE = "legacy_preserved.ndjson"
+
+EXPECTED_LEGACY_VIZ_IDS = {
+    "legacy_sparrow_unique_wifi_networks",
+    "legacy_sparrow_unique_aps",
+    "legacy_sparrow_wifi_ssid_list",
+    "legacy_sparrow_unique_bt_devices",
+    "legacy_sparrow_bt_time_series",
+    "legacy_sparrow_bt_top_named",
+}
+
+LEGACY_BANNED_FIELDS = ["wifi.mac_addr", "wifi.signal_strength", "agent_name"]
+LEGACY_REQUIRED_NEW_FIELDS = ["source.mac", "wifi.channel.primary"]
+
+
+class TestLegacyPreserved(unittest.TestCase):
+    """Step 9: Tests for legacy_preserved.ndjson field-renamed viz clones."""
+
+    def setUp(self):
+        self.objects = _load_ndjson(LEGACY_FILE)
+        self.raw_text = open(
+            os.path.join(DASHBOARDS_DIR, LEGACY_FILE), encoding="utf-8"
+        ).read()
+
+    # ---- 9b-1: File exists and contains enough objects ----
+
+    def test_file_exists(self):
+        self.assertTrue(
+            os.path.isfile(os.path.join(DASHBOARDS_DIR, LEGACY_FILE)),
+            f"{LEGACY_FILE} missing from dashboards dir",
+        )
+
+    def test_at_least_six_objects(self):
+        self.assertGreaterEqual(
+            len(self.objects), 6,
+            f"{LEGACY_FILE} must contain at least 6 objects, found {len(self.objects)}",
+        )
+
+    # ---- 9b-2: All viz IDs are present ----
+
+    def test_all_required_viz_ids_present(self):
+        found_ids = {obj["id"] for obj in self.objects if obj.get("type") == "visualization"}
+        for expected_id in EXPECTED_LEGACY_VIZ_IDS:
+            with self.subTest(viz_id=expected_id):
+                self.assertIn(
+                    expected_id,
+                    found_ids,
+                    f"Expected viz id '{expected_id}' not found in {LEGACY_FILE}",
+                )
+
+    # ---- 9b-3: References point to valid index patterns ----
+
+    def test_all_index_pattern_refs_valid(self):
+        for obj in self.objects:
+            for ref in obj.get("references", []):
+                if ref.get("type") == "index-pattern":
+                    with self.subTest(obj_id=obj["id"], ref_id=ref["id"]):
+                        self.assertIn(
+                            ref["id"],
+                            VALID_INDEX_PATTERN_IDS,
+                            f"Object '{obj['id']}' references unknown index-pattern '{ref['id']}'",
+                        )
+
+    def test_wifi_viz_reference_sparrow_wifi(self):
+        wifi_viz_ids = {
+            "legacy_sparrow_unique_wifi_networks",
+            "legacy_sparrow_unique_aps",
+            "legacy_sparrow_wifi_ssid_list",
+        }
+        for obj in self.objects:
+            if obj.get("id") in wifi_viz_ids:
+                refs = {r["id"] for r in obj.get("references", [])
+                        if r.get("type") == "index-pattern"}
+                with self.subTest(viz_id=obj["id"]):
+                    self.assertIn(
+                        "sparrow-wifi",
+                        refs,
+                        f"WiFi viz '{obj['id']}' must reference sparrow-wifi index pattern",
+                    )
+
+    def test_bt_viz_reference_sparrow_bt(self):
+        bt_viz_ids = {
+            "legacy_sparrow_unique_bt_devices",
+            "legacy_sparrow_bt_time_series",
+            "legacy_sparrow_bt_top_named",
+        }
+        for obj in self.objects:
+            if obj.get("id") in bt_viz_ids:
+                refs = {r["id"] for r in obj.get("references", [])
+                        if r.get("type") == "index-pattern"}
+                with self.subTest(viz_id=obj["id"]):
+                    self.assertIn(
+                        "sparrow-bt",
+                        refs,
+                        f"BT viz '{obj['id']}' must reference sparrow-bt index pattern",
+                    )
+
+    # ---- 9b-4: No legacy (banned) field names in the file ----
+
+    def test_no_banned_legacy_fields(self):
+        for field in LEGACY_BANNED_FIELDS:
+            with self.subTest(field=field):
+                self.assertNotIn(
+                    field,
+                    self.raw_text,
+                    f"Banned legacy field '{field}' found in {LEGACY_FILE}",
+                )
+
+    # ---- 9b-5: Required new field names ARE present ----
+
+    def test_required_new_fields_present(self):
+        for field in LEGACY_REQUIRED_NEW_FIELDS:
+            with self.subTest(field=field):
+                self.assertIn(
+                    field,
+                    self.raw_text,
+                    f"Expected new field '{field}' not found in {LEGACY_FILE}",
+                )
+
+    # ---- 9b-6: Optional compat dashboard references all 6 viz IDs ----
+
+    def test_compat_dashboard_references_all_six_viz(self):
+        """If a compat dashboard is present, it must ref all 6 legacy viz."""
+        dashboard_objs = [o for o in self.objects if o.get("type") == "dashboard"]
+        if not dashboard_objs:
+            self.skipTest("No dashboard object in legacy_preserved.ndjson")
+        db = dashboard_objs[0]
+        ref_ids = {r["id"] for r in db.get("references", [])
+                   if r.get("type") == "visualization"}
+        for vid in EXPECTED_LEGACY_VIZ_IDS:
+            with self.subTest(viz_id=vid):
+                self.assertIn(
+                    vid,
+                    ref_ids,
+                    f"Compat dashboard does not reference viz '{vid}'",
+                )
+
+    # ---- 9b-7: All viz IDs carry the [Legacy] title prefix ----
+
+    def test_legacy_title_prefix_on_all_viz(self):
+        for obj in self.objects:
+            if obj.get("type") == "visualization" and obj.get("id", "").startswith("legacy_"):
+                title = obj["attributes"].get("title", "")
+                with self.subTest(viz_id=obj["id"]):
+                    self.assertTrue(
+                        title.startswith("[Legacy]"),
+                        f"Viz '{obj['id']}' title does not start with '[Legacy]': {title!r}",
+                    )
+
+    # ---- 9b-8: visState inner JSON is valid and has 'type' key ----
+
+    def test_legacy_viz_vis_state_valid(self):
+        for obj in self.objects:
+            if obj.get("type") == "visualization":
+                with self.subTest(viz_id=obj["id"]):
+                    vis_str = obj["attributes"].get("visState", "{}")
+                    try:
+                        parsed = json.loads(vis_str)
+                    except json.JSONDecodeError as e:
+                        self.fail(f"visState for '{obj['id']}' is not valid JSON: {e}")
+                    self.assertIn("type", parsed,
+                                  f"visState for '{obj['id']}' missing 'type' key")
 
 
 # ---------------------------------------------------------------------------
