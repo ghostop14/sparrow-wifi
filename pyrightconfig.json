@@ -3,9 +3,16 @@
     "sparrow_elastic",
     "tests"
   ],
+  "exclude": [
+    "**/__pycache__",
+    "legacy",
+    "sparrow-droneid"
+  ],
   "extraPaths": [
     "."
   ],
   "pythonVersion": "3.12",
-  "reportMissingImports": "warning"
+  "pythonPath": "/usr/bin/python3",
+  "reportMissingImports": "warning",
+  "reportMissingModuleSource": "none"
 }
