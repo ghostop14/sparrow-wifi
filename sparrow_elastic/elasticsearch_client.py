@@ -101,6 +101,15 @@ class ElasticsearchClient(SearchClient):
     # Index template
     # ------------------------------------------------------------------
 
+    def ensure_component_template(self, name: str, body: dict) -> None:
+        """PUT component template — idempotent upsert."""
+        try:
+            self._client.cluster.put_component_template(name=name, body=body)
+            logger.info("ES component template '%s' applied", name)
+        except Exception as exc:
+            logger.error("ES ensure_component_template('%s') failed: %s", name, exc)
+            raise
+
     def ensure_template(self, template_name: str, template_body: dict) -> None:
         """PUT composable index template — idempotent upsert."""
         try:

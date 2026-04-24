@@ -35,6 +35,21 @@ class SearchClient(ABC):
         """
 
     @abstractmethod
+    def ensure_component_template(self, name: str, body: dict) -> None:
+        """Create or update a component template via PUT _component_template.
+
+        Elasticsearch: PUT _component_template/{name}.
+        OpenSearch: no-op — the OS path inlines component bodies into the
+        composable template before ensure_template(), so components never
+        exist as separate server-side objects.
+
+        For ES this must be called for every component referenced in a
+        composable template's `composed_of` list BEFORE ensure_template()
+        is called, otherwise ES rejects the composable template with
+        invalid_index_template_exception.
+        """
+
+    @abstractmethod
     def ensure_template(self, template_name: str, template_body: dict) -> None:
         """Create or update a composable index template via PUT _index_template.
 

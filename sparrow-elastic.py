@@ -54,7 +54,7 @@ from sparrow_elastic.fingerbank_client import (
     lookup as fb_lookup,
 )
 from sparrow_elastic.settings import fingerbank_enabled
-from sparrow_elastic.templates import resolve_template
+from sparrow_elastic.templates import load_component, resolve_template
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -568,6 +568,33 @@ def bootstrap(client, alias: str, kind: str, engine: str, ilm_override: str) -> 
         except Exception as exc:
             logger.warning("bootstrap[%s]: ensure_policy failed: %s", kind, exc)
             # Non-fatal: proceed to template + index creation.
+
+    # Upload referenced component templates first (ES path). The OS path has
+    # already inlined components and will have no `composed_of` here; its
+    # ensure_component_template is a no-op for uniformity.
+    composed_of = template_body.get("composed_of", []) or []
+    if composed_of:
+        base = template_name.rsplit("-template", 1)[0]
+        for comp_full_name in composed_of:
+            prefix = base + "-"
+            role = (
+                comp_full_name[len(prefix):]
+                if comp_full_name.startswith(prefix)
+                else comp_full_name
+            )
+            try:
+                comp_body = load_component(base, role)
+                logger.info(
+                    "bootstrap[%s]: ensuring component template '%s'",
+                    kind, comp_full_name,
+                )
+                client.ensure_component_template(comp_full_name, comp_body)
+            except Exception as exc:
+                logger.warning(
+                    "bootstrap[%s]: ensure_component_template('%s') failed: %s",
+                    kind, comp_full_name, exc,
+                )
+                return False
 
     try:
         logger.info("bootstrap[%s]: ensuring template '%s'", kind, template_name)

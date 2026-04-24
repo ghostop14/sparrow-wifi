@@ -120,6 +120,17 @@ class OpenSearchClient(SearchClient):
     # Index template
     # ------------------------------------------------------------------
 
+    def ensure_component_template(self, name: str, body: dict) -> None:
+        """No-op for OpenSearch — components are inlined at template-resolution time.
+
+        Included so the SearchClient interface is uniform; callers may invoke
+        unconditionally and this path simply logs at DEBUG.
+        """
+        logger.debug(
+            "OpenSearch ensure_component_template('%s') — no-op (components are inlined)",
+            name,
+        )
+
     def ensure_template(self, template_name: str, template_body: dict) -> None:
         """PUT composable index template — idempotent upsert.
 
