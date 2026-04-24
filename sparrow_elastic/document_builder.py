@@ -81,9 +81,14 @@ def _parse_dt(raw) -> Optional[datetime]:
             except Exception:
                 return None
 
-    # Normalise to UTC
+    # Normalise to UTC. Naive datetimes are interpreted as the bridge's
+    # local timezone (the sparrow agent serialises firstseen/lastseen as
+    # naive local time without tz info, e.g. "2026-04-24 16:02:13"). Since
+    # the bridge typically runs on the same host as the agent, the bridge's
+    # local tz equals the sensor's local tz.
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        local_tz = datetime.now().astimezone().tzinfo
+        dt = dt.replace(tzinfo=local_tz).astimezone(timezone.utc)
     else:
         dt = dt.astimezone(timezone.utc)
     return dt

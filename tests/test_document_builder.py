@@ -33,7 +33,12 @@ def _utc(y, mo, d, h=12, mi=0, s=0, us=0):
     return datetime(y, mo, d, h, mi, s, us, tzinfo=timezone.utc)
 
 
-_NOW = _utc(2024, 6, 15, 14, 30, 0)
+# Fixture firstseen/lastseen are naive strings ("2024-06-15 14:29:00") that
+# the bridge now interprets as local time and converts to UTC. The UTC value
+# depends on the test runner's local tz (e.g. EDT → +4h shift, JST → -9h
+# shift). _NOW must be strictly AFTER the converted value for age_seconds
+# to be non-negative regardless of tz. Pick a day later to cover any tz.
+_NOW = _utc(2024, 6, 16, 14, 30, 0)
 
 _OBS_WITH_GPS = {
     "id": "sensor-alpha",
@@ -226,8 +231,30 @@ class TestBuildWifiDocumentGolden:
 
     def test_timestamp_uses_lastseen(self):
         doc = build_wifi_document(_full_wifi_net(), _OBS_WITH_GPS, _NOW)
-        # last_seen is 2024-06-15 14:29:00 UTC
-        assert doc["@timestamp"].startswith("2024-06-15T14:29:00")
+        # last_seen in the fixture is the naive string "2024-06-15 14:29:00"
+        # which the bridge interprets as LOCAL time (matching sparrow agent
+        # behaviour) and converts to UTC. Compute the expected UTC by doing
+        # the same conversion here so the test is timezone-agnostic.
+        local_tz = datetime.now().astimezone().tzinfo
+        expected_utc = datetime(2024, 6, 15, 14, 29, 0, tzinfo=local_tz).astimezone(timezone.utc)
+        assert doc["@timestamp"].startswith(expected_utc.strftime("%Y-%m-%dT%H:%M:%S"))
+
+    def test_naive_timestamps_converted_from_local_to_utc(self):
+        """Naive firstseen/lastseen strings must be treated as local time
+        and emitted as UTC (the sparrow agent does not include tz info)."""
+        net = _full_wifi_net()
+        net["firstseen"] = "2024-06-15 10:00:00"
+        net["lastseen"]  = "2024-06-15 10:05:00"
+        doc = build_wifi_document(net, _OBS_WITH_GPS, _NOW)
+        local_tz = datetime.now().astimezone().tzinfo
+        # Expected UTC equivalents
+        fs_utc = datetime(2024, 6, 15, 10,  0, 0, tzinfo=local_tz).astimezone(timezone.utc)
+        ls_utc = datetime(2024, 6, 15, 10,  5, 0, tzinfo=local_tz).astimezone(timezone.utc)
+        assert doc["observed"]["first_seen"].startswith(fs_utc.strftime("%Y-%m-%dT%H:%M:%S"))
+        assert doc["observed"]["last_seen"].startswith(ls_utc.strftime("%Y-%m-%dT%H:%M:%S"))
+        # Every emitted timestamp must end in Z (UTC), never a numeric offset
+        for f in ("first_seen", "last_seen"):
+            assert doc["observed"][f].endswith("Z"), f"{f} not in UTC Z form"
 
 
 # ---------------------------------------------------------------------------
