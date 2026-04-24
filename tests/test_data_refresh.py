@@ -236,8 +236,9 @@ class TestRefreshAll:
 # ---------------------------------------------------------------------------
 
 class TestAllDataFiles:
-    def test_returns_five_items(self):
-        assert len(all_data_files()) == 5
+    def test_returns_six_items(self):
+        # Five original files + fingerbank.db added in Step 5b.
+        assert len(all_data_files()) == 6
 
     def test_manuf_is_raw_format(self):
         manuf = next(df for df in all_data_files() if df.name == "manuf")

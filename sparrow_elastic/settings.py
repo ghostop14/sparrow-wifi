@@ -18,6 +18,11 @@ import os
 import socket
 from typing import Optional
 
+# Default path to the bundled Fingerbank offline DB (not committed to git).
+_DEFAULT_FINGERBANK_DB = os.path.join(
+    os.path.dirname(__file__), "data", "fingerbank.db"
+)
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -35,6 +40,9 @@ _DEFAULTS: dict = {
     "flush_interval_sec": 5.0,
     "batch_size": 500,
     "fingerbank_api_key": "",
+    # Path to the Fingerbank offline SQLite DB.  Empty string means: use the
+    # bundled default path (sparrow_elastic/data/fingerbank.db) if it exists.
+    "fingerbank_offline_db": "",
     "observer_id": "",          # filled at load time via socket.gethostname()
     "agent_host": "127.0.0.1",
     "agent_port": 8020,
@@ -132,3 +140,30 @@ def load_settings(config_path: Optional[str] = None) -> dict:
                 )
 
     return cfg
+
+
+# ---------------------------------------------------------------------------
+# Fingerbank helper
+# ---------------------------------------------------------------------------
+
+def fingerbank_enabled(settings: dict) -> bool:
+    """Return True if Fingerbank enrichment is available.
+
+    Fingerbank is considered enabled when either:
+    - A non-empty ``fingerbank_api_key`` is configured (live API available), OR
+    - The resolved offline DB path points to an existing file.
+
+    The offline DB path is resolved as follows:
+    - If ``fingerbank_offline_db`` is a non-empty string, use it as-is.
+    - Otherwise fall back to the bundled default path.
+
+    Args:
+        settings: Dict returned by :func:`load_settings`.
+
+    Returns:
+        True if at least one lookup mode is available, False otherwise.
+    """
+    if settings.get("fingerbank_api_key"):
+        return True
+    db_path = settings.get("fingerbank_offline_db") or _DEFAULT_FINGERBANK_DB
+    return os.path.isfile(db_path)
