@@ -895,6 +895,10 @@ def main(argv: Optional[List[str]] = None) -> int:  # noqa: C901
     # ------------------------------------------------------------------
     try:
         while True:
+            # Per-cycle reference time for bootstrap/flush housekeeping only.
+            # Doc-build now_utc is recaptured AFTER each scan returns so it
+            # is always >= the agent's observation timestamps (avoids
+            # negative age_seconds due to scan-call latency).
             now_utc = datetime.now(tz=timezone.utc)
 
             # Re-bootstrap if a previous flush detected a missing index.
@@ -916,6 +920,9 @@ def main(argv: Optional[List[str]] = None) -> int:  # noqa: C901
                 agent_ip, agent_port, wifi_interface
             )
             if errcode == 0 and networks is not None:
+                # Recapture after HTTP returns so now_utc >= any lastseen the
+                # agent reports for this batch.
+                now_utc = datetime.now(tz=timezone.utc)
                 logger.debug("WiFi scan: %d networks received", len(networks))
                 for net in networks:
                     try:
@@ -947,6 +954,8 @@ def main(argv: Optional[List[str]] = None) -> int:  # noqa: C901
                         # Clear the remote list after fetching so we don't
                         # re-index stale entries on the next cycle.
                         clearRemoteBluetoothDeviceList(agent_ip, agent_port)
+                        # Recapture after HTTP returns (see WiFi branch).
+                        now_utc = datetime.now(tz=timezone.utc)
                         logger.debug("BT scan: %d devices received", len(devices))
                         for dev in devices:
                             try:

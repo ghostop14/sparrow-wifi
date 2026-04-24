@@ -298,6 +298,10 @@ def build_wifi_document(net: dict, obs: dict, now_utc: datetime) -> dict:
     # ------------------------------------------------------------------
     first_seen_dt = _parse_dt(first_seen_raw) or now_utc
     last_seen_dt  = _parse_dt(last_seen_raw)  or now_utc
+    # Defensive: sparrow agent occasionally reports firstseen > lastseen
+    # (observed in production BT scans). Preserve the first/last invariant.
+    if first_seen_dt > last_seen_dt:
+        first_seen_dt, last_seen_dt = last_seen_dt, first_seen_dt
     timestamp_str = to_es_timestamp(last_seen_dt)
 
     # ------------------------------------------------------------------
@@ -410,7 +414,9 @@ def build_wifi_document(net: dict, obs: dict, now_utc: datetime) -> dict:
     # ------------------------------------------------------------------
     # Temporal
     # ------------------------------------------------------------------
-    age_seconds = int((now_utc - first_seen_dt).total_seconds())
+    # Clamp to 0: scan-call latency can push first_seen slightly ahead
+    # of now_utc when the agent stamps lastseen at HTTP-response time.
+    age_seconds = max(0, int((now_utc - first_seen_dt).total_seconds()))
 
     # ------------------------------------------------------------------
     # Assemble document skeleton
@@ -645,6 +651,9 @@ def build_bt_document(dev: dict, obs: dict, now_utc: datetime) -> dict:
     # ------------------------------------------------------------------
     first_seen_dt = _parse_dt(first_seen_raw) or now_utc
     last_seen_dt  = _parse_dt(last_seen_raw)  or now_utc
+    # Defensive: preserve first/last invariant (see WiFi path for rationale).
+    if first_seen_dt > last_seen_dt:
+        first_seen_dt, last_seen_dt = last_seen_dt, first_seen_dt
     timestamp_str = to_es_timestamp(last_seen_dt)
 
     # ------------------------------------------------------------------
@@ -711,7 +720,9 @@ def build_bt_document(dev: dict, obs: dict, now_utc: datetime) -> dict:
     # ------------------------------------------------------------------
     # Temporal
     # ------------------------------------------------------------------
-    age_seconds = int((now_utc - first_seen_dt).total_seconds())
+    # Clamp to 0: scan-call latency can push first_seen slightly ahead
+    # of now_utc when the agent stamps lastseen at HTTP-response time.
+    age_seconds = max(0, int((now_utc - first_seen_dt).total_seconds()))
 
     # ------------------------------------------------------------------
     # Assemble document skeleton

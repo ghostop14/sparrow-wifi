@@ -239,6 +239,30 @@ class TestBuildWifiDocumentGolden:
         expected_utc = datetime(2024, 6, 15, 14, 29, 0, tzinfo=local_tz).astimezone(timezone.utc)
         assert doc["@timestamp"].startswith(expected_utc.strftime("%Y-%m-%dT%H:%M:%S"))
 
+    def test_age_seconds_clamped_when_first_seen_ahead_of_now(self):
+        """Scan-call latency can make the agent's lastseen slightly newer
+        than the bridge's now_utc. age_seconds must clamp to 0, not go
+        negative."""
+        net = _full_wifi_net()
+        # lastseen 10 seconds "after" _NOW (local time)
+        local_tz = datetime.now().astimezone().tzinfo
+        future_local = (_NOW + timedelta(seconds=10)).astimezone(local_tz)
+        net["firstseen"] = future_local.strftime("%Y-%m-%d %H:%M:%S")
+        net["lastseen"]  = future_local.strftime("%Y-%m-%d %H:%M:%S")
+        doc = build_wifi_document(net, _OBS_WITH_GPS, _NOW)
+        assert doc["observed"]["age_seconds"] == 0
+
+    def test_first_seen_and_last_seen_swapped_if_out_of_order(self):
+        """Sparrow BT agent occasionally reports firstseen > lastseen.
+        Builder must swap them to preserve the invariant."""
+        net = _full_wifi_net()
+        net["firstseen"] = "2024-06-15 14:20:00"   # later
+        net["lastseen"]  = "2024-06-15 14:10:00"   # earlier
+        doc = build_wifi_document(net, _OBS_WITH_GPS, _NOW)
+        fs = doc["observed"]["first_seen"]
+        ls = doc["observed"]["last_seen"]
+        assert fs <= ls, f"first_seen {fs} must be <= last_seen {ls}"
+
     def test_naive_timestamps_converted_from_local_to_utc(self):
         """Naive firstseen/lastseen strings must be treated as local time
         and emitted as UTC (the sparrow agent does not include tz info)."""
