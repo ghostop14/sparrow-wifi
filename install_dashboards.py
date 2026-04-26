@@ -4,7 +4,7 @@ install_dashboards.py — Import Sparrow WiFi Kibana dashboards via the
 Kibana saved-objects import API.
 
 Usage:
-    python install_dashboards.py --kibana-url http://elkstack.phn.private \\
+    python install_dashboards.py --kibana-url http://kibana.example.com \\
         --username elastic --password elastic --overwrite
 
 Requirements: Python 3.6+ stdlib only (urllib, no requests).
@@ -183,11 +183,11 @@ def main():
         epilog="""
 Examples:
   # Import all dashboards (overwrite existing):
-  python install_dashboards.py --kibana-url http://elkstack.phn.private \\
+  python install_dashboards.py --kibana-url http://kibana.example.com \\
       --username elastic --password elastic --overwrite
 
   # Import a single file:
-  python install_dashboards.py --kibana-url http://elkstack.phn.private \\
+  python install_dashboards.py --kibana-url http://kibana.example.com \\
       --username elastic --password elastic \\
       --file sparrow_elastic/dashboards/sparrow_wifi_situational_awareness.ndjson
 
@@ -199,7 +199,7 @@ Examples:
     parser.add_argument(
         "--kibana-url",
         required=True,
-        help="Kibana base URL, e.g. http://elkstack.phn.private",
+        help="Kibana base URL, e.g. http://kibana.example.com",
     )
     parser.add_argument("--username", default=None, help="Basic auth username")
     parser.add_argument("--password", default=None, help="Basic auth password")

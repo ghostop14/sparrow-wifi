@@ -45,8 +45,8 @@ To target a remote agent and a named wireless interface:
 
 ```bash
 ./sparrow-elastic.py \
-    --elasticserver http://elastic:changeme@elkstack:9200 \
-    --sparrowagent 192.168.1.50 \
+    --elasticserver http://elastic:changeme@elasticsearch.example.com:9200 \
+    --sparrowagent agent.example.com \
     --sparrowport 8020 \
     --wifiinterface wlan0
 ```
