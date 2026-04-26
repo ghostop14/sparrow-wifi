@@ -26,7 +26,7 @@ import sys
 if '..' not in sys.path:
     sys.path.insert(0, '..')
     
-from wirelessengine import WirelessEngine, WirelessNetwork, WirelessClient
+from wirelessengine import WirelessEngine, WirelessNetwork, WirelessClient, findIwTool
 from sparrowgps import SparrowGPS
 
 # ------------------  Falcon Remote Agent Functionality and Abstraction ------------------------------
@@ -977,7 +977,15 @@ class FalconWirelessEngine(object):
             return None
 
     def setChannel(interface, channel):
-        result = subprocess.run(['iwconfig', interface, 'channel', str(channel)], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        tool = findIwTool()
+        if tool == 'iwconfig':
+            result = subprocess.run(['iwconfig', interface, 'channel', str(channel)],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif tool == 'iw':
+            result = subprocess.run(['iw', 'dev', interface, 'set', 'channel', str(channel)],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            return -1
 
         return result.returncode
 

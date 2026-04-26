@@ -124,6 +124,23 @@ def _findInterfaceApp():
             return (cmd, pattern)
     return None
 
+
+# Cached iwconfig-vs-iw selection for callsites that cannot use nmcli
+# (monitor-mode enumeration, channel set). iwconfig is preferred when present
+# for behavioral parity with older releases; iw is the fallback on systems
+# where iwconfig has been removed (Ubuntu 25.04+, etc).
+_iwTool = None
+
+def findIwTool():
+    """Return 'iwconfig' if available, else 'iw' if available, else None."""
+    global _iwTool
+    if _iwTool is None:
+        if shutil.which('iwconfig'):
+            _iwTool = 'iwconfig'
+        elif shutil.which('iw'):
+            _iwTool = 'iw'
+    return _iwTool
+
 # ------------------  WirelessNetwork class ------------------------------------
 class WirelessClient(object):
     def __init__(self):
@@ -569,42 +586,62 @@ class WirelessEngine(object):
     def getMonitoringModeInterfaces(printResults=False):
         # Note: for standard scans with iw, this isn't required.  Just root access.
         # This is only required for some of the more advanced pen testing capabilities
-        result = subprocess.run(['iwconfig'], stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
-        wirelessResult = result.stdout.decode('UTF-8')
-        p = re.compile('^(.*?) IEEE.*?Mode:Monitor', re.MULTILINE)
-        tmpInterfaces = p.findall(wirelessResult)
-        
+        tool = findIwTool()
         retVal = []
-        
-        if (len(tmpInterfaces) > 0):
-            for curInterface in tmpInterfaces:
-                tmpStr=curInterface.replace(' ','')
-                retVal.append(tmpStr)
-                # debug
-                if (printResults):
-                    print(tmpStr)
-        else:
-            # If we're on a pi or the driver is weird, it may not put IEEE and Mode:Monitor on the same line.
-            monLine = -1
-            i = 0
-            lines = wirelessResult.split('\n')
-            for curLine in lines:
-                if 'Mode:Monitor' in curLine:
-                    monLine = i - 1
-                    break
-                else:
-                    i = i + 1   
-            if monLine > -1:
-                p = re.compile('^(.*?) .*', re.MULTILINE)
-                tmpInterfaces = p.findall(lines[monLine])
-                if (len(tmpInterfaces) > 0):
-                    for curInterface in tmpInterfaces:
-                        tmpStr=curInterface.replace(' ','')
-                        retVal.append(tmpStr)
 
-            # debug
-            if (len(retVal) == 0 and printResults):
-                print("Error: No monitoring mode wireless interfaces found.")
+        if tool is None:
+            if printResults:
+                print("Error: Neither iwconfig nor iw is available.")
+            return retVal
+
+        if tool == 'iwconfig':
+            result = subprocess.run(['iwconfig'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            wirelessResult = result.stdout.decode('UTF-8')
+            p = re.compile('^(.*?) IEEE.*?Mode:Monitor', re.MULTILINE)
+            tmpInterfaces = p.findall(wirelessResult)
+
+            if (len(tmpInterfaces) > 0):
+                for curInterface in tmpInterfaces:
+                    tmpStr=curInterface.replace(' ','')
+                    retVal.append(tmpStr)
+                    # debug
+                    if (printResults):
+                        print(tmpStr)
+            else:
+                # If we're on a pi or the driver is weird, it may not put IEEE and Mode:Monitor on the same line.
+                monLine = -1
+                i = 0
+                lines = wirelessResult.split('\n')
+                for curLine in lines:
+                    if 'Mode:Monitor' in curLine:
+                        monLine = i - 1
+                        break
+                    else:
+                        i = i + 1
+                if monLine > -1:
+                    p = re.compile('^(.*?) .*', re.MULTILINE)
+                    tmpInterfaces = p.findall(lines[monLine])
+                    if (len(tmpInterfaces) > 0):
+                        for curInterface in tmpInterfaces:
+                            tmpStr=curInterface.replace(' ','')
+                            retVal.append(tmpStr)
+        else:
+            # 'iw dev' output: blocks of "Interface <name>" followed by lines
+            # including "type monitor" for monitor-mode interfaces.
+            result = subprocess.run(['iw', 'dev'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            current = None
+            for line in result.stdout.decode('UTF-8').splitlines():
+                stripped = line.strip()
+                if stripped.startswith('Interface '):
+                    current = stripped.split(None, 1)[1]
+                elif stripped == 'type monitor' and current:
+                    retVal.append(current)
+                    if printResults:
+                        print(current)
+                    current = None
+
+        if len(retVal) == 0 and printResults:
+            print("Error: No monitoring mode wireless interfaces found.")
 
         return retVal
 
