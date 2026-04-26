@@ -1,6 +1,6 @@
 # Sparrow-WiFi
 
-Sparrow-WiFi is a next-generation 2.4 GHz and 5 GHz WiFi and Bluetooth spectral awareness tool for Linux. It integrates WiFi scanning, Bluetooth Low Energy and Classic discovery, software-defined radio spectrum analysis (HackRF, Ubertooth), GPS tracking, and drone/rover-mounted remote operations into a single platform. Written entirely in Python 3.
+Sparrow-WiFi is a 2.4 GHz and 5 GHz WiFi and Bluetooth spectral awareness tool for Linux. It integrates WiFi scanning, Bluetooth Low Energy and Classic discovery, software-defined radio spectrum analysis (HackRF, Ubertooth), GPS tracking, FAA RemoteID drone detection, and drone/rover-mounted remote operations into a single platform. Written entirely in Python 3.
 
 The project includes two applications and a headless agent, all exposing JSON-based REST APIs for integration with external tools and automation:
 
@@ -11,6 +11,16 @@ The project includes two applications and a headless agent, all exposing JSON-ba
 | **Sparrow DroneID** | Web-based (browser) | FAA RemoteID drone detection via WiFi and Bluetooth LE |
 
 Both the Sparrow Agent and Sparrow DroneID expose REST APIs that allow other applications to query scan results, trigger scans, retrieve drone detections, and integrate wireless/drone awareness into their own workflows.
+
+---
+
+## What's New (April 2026)
+
+This release covers three significant improvements over the prior version:
+
+- **Sparrow Agent: single-flight WiFi scan coalescing.** When multiple HTTP clients (the DroneID app, the Elasticsearch bridge, the GUI) hit `/wireless/networks/<iface>` simultaneously, the agent previously kicked off N redundant `iw scan` calls that serialized on the per-interface lock, multiplying scan latency by the number of clients. The first request is now the "leader" that actually scans; concurrent requests wait on a `threading.Event` and share the leader's result. Also includes lock-creation TOCTOU fix and exception-safety on per-interface locks.
+- **Sparrow DroneID** &mdash; new web-based application for FAA RemoteID detection via WiFi (ASTM F3411 NAN, beacon vendor IEs, DJI proprietary) and Bluetooth LE (BT4/BT5 Legacy advertising). Includes geozone overlays, multi-state alerts with Slack integration, KML export, Cursor-on-Target output, and a multi-device responsive web UI. See the [Sparrow DroneID](#sparrow-droneid-web-application) section below.
+- **Modernized Elasticsearch / OpenSearch bridge** &mdash; the `sparrow-elastic.py` bridge has been rewritten to produce **ECS 8.17** documents (was ECS 1.5), now supports both **Elasticsearch 8.x and OpenSearch 2.x**, bootstraps composable index templates with ILM/ISM lifecycle policies and rollover write aliases automatically, performs OUI vendor enrichment and rule-based device classification (with optional Fingerbank fingerprinting), and ships four bundled Kibana dashboards plus six legacy-preserved visualizations. The legacy ECS 1.5 bridge is preserved at `legacy/sparrow-elastic.py`. See [Elasticsearch / OpenSearch Integration](#elasticsearch--opensearch-integration).
 
 ---
 
@@ -61,21 +71,7 @@ A standalone web-based drone detection and tracking system that decodes FAA-mand
 - **Multi-device** &mdash; Web UI works on desktop, tablet, and phone simultaneously
 - **Metric / Imperial** &mdash; Full unit preference support throughout the UI and alerts
 
-### Quick Start
-
-```bash
-cd sparrow-droneid
-pip3 install -r sparrow_droneid/requirements.txt
-sudo apt install tcpdump bluez
-
-# Either launch method works:
-sudo python3 sparrow_droneid/app.py
-sudo python3 -m sparrow_droneid
-```
-
-The web UI is available at `http://localhost:8097`. Configure the monitor interface and GPS in Settings, then click Start.
-
-For full API documentation, see the [API reference](sparrow-droneid/sparrow_drone_id_api.md).
+Web UI runs at `http://localhost:8097` once started. See [Installation](#sparrow-droneid-web-application-1) below for setup, and the [API reference](sparrow-droneid/sparrow_drone_id_api.md) for programmatic access.
 
 ---
 
@@ -102,28 +98,39 @@ git clone https://github.com/ghostop14/sparrow-wifi
 cd sparrow-wifi
 ```
 
-Install system packages and Python dependencies:
+System packages (Ubuntu 22.04+ / Debian 12+ / Kali rolling):
 
 ```bash
-# Ubuntu 22.04+ / Debian 12+
 sudo apt install python3-pip python3-pyqt5 python3-pyqt5.qtchart \
                  gpsd gpsd-clients python3-tk python3-setuptools
-
-pip3 install -r requirements.txt
 ```
 
-Run:
+> **Kali users:** PyQt5, PyQtChart, and aircrack-ng (for the Falcon plugin) are typically pre-installed. You'll mostly just need `gpsd`, `gpsd-clients`, and the Python deps below.
+
+Python dependencies &mdash; choose either approach:
+
+**Option A: System-wide install with `--break-system-packages`** &mdash; simplest, fits how the GUI/agent get launched (root-owned scripts):
 
 ```bash
-sudo ./sparrow-wifi.py
+# Modern systems (Ubuntu 24.04+, Kali rolling 2023+, Debian 12+) require this
+# flag because Python is marked externally-managed (PEP 668). Sparrow runs as
+# root anyway, so system-wide install is consistent with how it executes.
+sudo pip3 install --break-system-packages -r requirements.txt
 ```
 
-#### Virtual Environment (optional)
+**Option B: Virtual environment** &mdash; isolated, no system pip warnings, preferred by some operators:
 
 ```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+# Run with sudo using the venv interpreter:
+sudo venv/bin/python3 ./sparrow-wifi.py
+```
+
+Either way, run:
+
+```bash
 sudo ./sparrow-wifi.py
 ```
 
@@ -132,21 +139,29 @@ sudo ./sparrow-wifi.py
 ```bash
 cd sparrow-droneid
 
-# Python dependencies
-pip3 install -r sparrow_droneid/requirements.txt
+# System tools — tcpdump for WiFi monitor mode, bluez for BLE RemoteID
+sudo apt install tcpdump bluez
 
-# System tools for WiFi monitor mode capture
-sudo apt install tcpdump
+# Python dependencies — pick one of:
+sudo pip3 install --break-system-packages -r sparrow_droneid/requirements.txt
+# or:
+python3 -m venv venv && source venv/bin/activate && pip install -r sparrow_droneid/requirements.txt
 
-# System tools for BLE RemoteID capture (optional but recommended)
-sudo apt install bluez
-
-# Run (either method)
+# Run (either entry point works):
 sudo python3 sparrow_droneid/app.py
 # or: sudo python3 -m sparrow_droneid
 ```
 
-Open `http://localhost:8097` in a browser.
+Open `http://localhost:8097` in a browser. Configure the monitor interface and GPS in Settings, then click Start.
+
+### Elasticsearch / OpenSearch Bridge (optional)
+
+```bash
+sudo pip3 install --break-system-packages -r requirements-elastic.txt
+# or via venv as above
+```
+
+See [Elasticsearch / OpenSearch Integration](#elasticsearch--opensearch-integration) below.
 
 ---
 
@@ -255,6 +270,33 @@ Listens on port 8020 by default. Key options:
 
 See `--help` for the full list.
 
+### Example API calls
+
+```bash
+# List wireless interfaces the agent can scan
+curl http://sensor:8020/wireless/interfaces
+
+# Trigger a WiFi scan and pull results (multiple concurrent callers
+# get coalesced into a single iw scan; first caller is the leader)
+curl http://sensor:8020/wireless/networks/wlan0
+
+# Filter to specific frequencies
+curl "http://sensor:8020/wireless/networks/wlan0?frequencies=2412,2437,2462"
+
+# Query GPS status
+curl http://sensor:8020/gps/status
+
+# Start a Bluetooth Low Energy advertisement scan
+curl http://sensor:8020/bluetooth/discoverystarta
+
+# Pull current BT discovery results
+curl http://sensor:8020/bluetooth/discoverystatus
+```
+
+For Sparrow DroneID, see the dedicated [API reference](sparrow-droneid/sparrow_drone_id_api.md).
+
+> **Production note:** the agent listens on all interfaces by default. For deployments outside a trusted network, use `--allowedips` to restrict callers, run behind a reverse proxy with TLS, or bind to a private interface only.
+
 ---
 
 ## Falcon / Aircrack-ng Plugin
@@ -269,7 +311,13 @@ Advanced wireless penetration testing integration. Provides point-and-click acce
 
 ### Prerequisites
 
-Install aircrack-ng and JTR, ensuring `airmon-ng`, `airodump-ng`, and `wpapcap2john` are in your PATH.
+```bash
+# Kali users: aircrack-ng + JTR are usually pre-installed.
+# Ubuntu / Debian / Raspberry Pi OS:
+sudo apt install aircrack-ng john
+```
+
+Verify `airmon-ng`, `airodump-ng`, and `wpapcap2john` are on your PATH after install.
 
 ### Disclaimer
 
@@ -279,56 +327,68 @@ Install aircrack-ng and JTR, ensuring `airmon-ng`, `airodump-ng`, and `wpapcap2j
 
 ## Elasticsearch / OpenSearch Integration
 
-Modernized in April 2026. The bridge now produces ECS 8.17 compliant
-documents and supports both Elasticsearch 8.x and OpenSearch 2.x.
-See **[Elasticsearch / OpenSearch Bridge](#elasticsearch--opensearch-bridge)**
-below for details.
+The `sparrow_elastic` package provides an **ECS 8.17** bridge that polls the Sparrow WiFi agent and bulk-indexes WiFi and Bluetooth observations into Elasticsearch 8.x or OpenSearch 2.x. It bootstraps composable index templates, ILM/ISM lifecycle policies, and rollover write aliases automatically; performs OUI vendor enrichment and rule-based device classification (with optional Fingerbank fingerprinting); and ships pre-built Kibana dashboards.
 
-Quickstart (after starting the agent):
+### Quickstart
 
 ```bash
-sudo ./sparrowwifiagent.py        # remote agent
-pip install -r requirements-elastic.txt
+# 1. Start the remote agent (it provides scan data via HTTP)
+sudo ./sparrowwifiagent.py
+
+# 2. Install bridge dependencies
+sudo pip3 install --break-system-packages -r requirements-elastic.txt
+
+# 3. Run the bridge
 ./sparrow-elastic.py --elasticserver http://user:pass@host:9200 --wifiinterface wlan1
+
+# 4. (Optional) Import the bundled Kibana dashboards
+python3 install_dashboards.py --kibana-url http://kibana:5601 \
+    --username elastic --password '<password>'
 ```
 
-### Migration from the legacy bridge
+> **Credential hygiene:** embedding `user:pass@` in `--elasticserver` is convenient but the URL becomes visible in `ps`, `journalctl`, and shell history. For production, use `--username`/`--password` flags, environment variables (`SPARROW_ES_USERNAME`, `SPARROW_ES_PASSWORD`), or the `EnvironmentFile=` pattern in the included systemd unit example.
 
-The pre-2026 bridge wrote ECS 1.5 documents into operator-named indices
-via `--wifiindex` / `--btindex`. The new bridge writes ECS 8.17
-documents into rollover-managed write aliases (default `sparrow-wifi` /
-`sparrow-bt`) and bootstraps ILM/ISM policies, index templates,
-component templates, and the initial backing index automatically.
+### What the bridge ships with
 
-**The legacy script is preserved at `legacy/sparrow-elastic.py`** and
-the legacy `.txt` template files live alongside it. Running the legacy
-script still requires its old environment (ECS 1.5 templates, manual
-ILM, etc.).
+- **5 Kibana dashboards** &mdash; Situational Awareness, Pattern of Life, New Device Detection, Spectrum Planning (with SSID × Channel signal-strength heatmap), and Bluetooth Situational Awareness (with truly-new-device Vega panel and estimated-range proximity table)
+- **6 legacy-preserved visualizations** &mdash; field-renamed clones of the original `Sparrow*` viz so old muscle memory keeps working
+- **Device classifier** &mdash; 64-rule seed table covering drone controllers (DJI/Autel/Skydio/Parrot/Yuneec), BT Class of Device, GAP Appearance, Apple Continuity subtypes, and OUI vendor heuristics
+- **Reference-data refresh** &mdash; bundled Wireshark `manuf`, BT SIG company IDs, service UUIDs, GAP appearance values, and Apple Continuity subtype tables, with a 30/90-day self-refresh background thread
+- **Pre-flight compatibility check** &mdash; refuses to write into legacy ECS 1.5 indices and prints clear remediation steps instead of silently corrupting data
+
+For full operator documentation (engine selection, auth modes, dashboard import, reference data, complete CLI reference) see [sparrow_elastic/README.md](sparrow_elastic/README.md).
+
+Sample configuration files are in the repo root and `init.d_scripts/`:
+
+- `sparrow-elastic.conf.example` &mdash; INI-style config with all supported keys
+- `sparrow-elastic.env.example` &mdash; shell-format env file for systemd deployments
+- `init.d_scripts/sparrow-elastic.service.example` &mdash; systemd unit template
+
+### Migration from the legacy ECS 1.5 bridge
+
+The pre-2026 bridge wrote ECS 1.5 documents into operator-named indices via `--wifiindex` / `--btindex`. The new bridge writes ECS 8.17 documents into rollover-managed write aliases (default `sparrow-wifi` / `sparrow-bt`).
+
+**The legacy script is preserved at `legacy/sparrow-elastic.py`** alongside its `.txt` template and ILM policy files. Running it still requires the legacy environment (manual template + ILM setup).
 
 **Flag changes (with backwards compatibility):**
 
-| Legacy flag         | New flag           | Notes                                                               |
-|---------------------|--------------------|---------------------------------------------------------------------|
-| `--wifiindex NAME`  | `--wifi-alias NAME`| Legacy spelling still accepted as a deprecated alias.               |
-| `--btindex NAME`    | `--bt-alias NAME`  | Legacy spelling still accepted as a deprecated alias.               |
-| `--dont-create-indices` | (same)         | Skips bootstrap. In the new bridge bootstrap is fully managed.      |
+| Legacy flag         | New flag           | Notes                                                  |
+|---------------------|--------------------|--------------------------------------------------------|
+| `--wifiindex NAME`  | `--wifi-alias NAME`| Legacy spelling still accepted as a deprecated alias.  |
+| `--btindex NAME`    | `--bt-alias NAME`  | Legacy spelling still accepted as a deprecated alias.  |
+| `--dont-create-indices` | unchanged       | Skips bootstrap.                                       |
 | `--elasticserver`, `--sparrowagent`, `--sparrowport`, `--wifiinterface`, `--scandelay` | unchanged | |
 
-So a legacy invocation like:
+A legacy invocation like:
 
 ```bash
 ./sparrow-elastic.py --elasticserver=http://user:pass@host:9200 \
-                     --wifiinterface=wlan1 --wifiindex=sparrowwifi-home \
+                     --wifiinterface=wlan1 \
+                     --wifiindex=sparrowwifi-home \
                      --btindex=sparrowbt-home
 ```
 
-still parses and runs. The behaviour difference is that `sparrowwifi-home`
-is now a write alias backed by `sparrowwifi-home-000001`, `-000002`, … with
-a sparrow-managed ILM policy, rather than the legacy data stream.
-
-For a truly clean install on the new schema, drop the `--wifiindex`/
-`--btindex` overrides and accept the new defaults (`sparrow-wifi`,
-`sparrow-bt`).
+still parses and runs &mdash; but the bridge now refuses to write into a pre-existing index whose mapping doesn't carry the ECS 8.17 schema marker, exiting with three remediation options (use a different alias, wipe and re-bootstrap, or run the legacy bridge). For a clean install, just drop `--wifiindex` / `--btindex` and accept the new defaults.
 
 ---
 
@@ -354,8 +414,8 @@ Recordings can be retrieved via the Sparrow-WiFi GUI's agent management interfac
 ### Pi Setup Notes
 
 - Use Raspberry Pi OS (Bookworm or later) with Python 3.8+
-- Disable the onboard WiFi to enable 5 GHz scanning with USB adapters: add `dtoverlay=disable-wifi` to `/boot/config.txt`
-- Install prerequisites: `pip3 install -r requirements.txt`
+- Disable the onboard WiFi to enable 5 GHz scanning with USB adapters: add `dtoverlay=disable-wifi` to `/boot/firmware/config.txt` on Bookworm and later, or `/boot/config.txt` on older releases
+- Install prerequisites: `sudo pip3 install --break-system-packages -r requirements.txt` (or use a venv as in the [Installation](#installation) section)
 
 ---
 
@@ -363,15 +423,27 @@ Recordings can be retrieved via the Sparrow-WiFi GUI's agent management interfac
 
 ```
 sparrow-wifi/
-  sparrow-wifi.py           # Desktop GUI entry point
+  sparrow-wifi.py            # Desktop GUI entry point
   sparrowwifiagent.py        # Headless remote agent
-  sparrow-elastic.py         # Elasticsearch bridge
+  sparrow-elastic.py         # Elasticsearch / OpenSearch bridge (ECS 8.17)
+  install_dashboards.py      # One-shot Kibana dashboard installer
   requirements.txt           # Python dependencies (GUI)
+  requirements-elastic.txt   # Python dependencies (Elasticsearch bridge)
   wirelessengine.py          # WiFi scan engine (iw)
   sparrowbluetooth.py        # Bluetooth scan engine
   sparrowhackrf.py           # HackRF spectrum engine
   sparrowmap.py              # Map generation
   plugins/                   # Falcon and other plugins
+  sparrow_elastic/           # ES/OS bridge package
+    *.py                     # Client abstraction, document builder, classifier...
+    templates/               # Composable index templates (ES + OS variants)
+    policies/                # ILM (ES) and ISM (OS) lifecycle policy JSON
+    dashboards/              # Kibana NDJSON: 5 dashboards + legacy-preserved
+    data/                    # Bundled reference data (manuf, BT SIG, classifier rules)
+    README.md                # Full bridge operator documentation
+  legacy/                    # Pre-2026 ECS 1.5 bridge, frozen for reference
+    sparrow-elastic.py       # Legacy bridge (still runnable)
+    sparrow_elastic_*.txt    # Legacy index templates and ILM policy
   sparrow-droneid/           # DroneID web application
     sparrow_droneid/
       app.py                 # Entry point (sudo python3 app.py)
@@ -381,35 +453,6 @@ sparrow-wifi/
       frontend/              # HTML, JS, CSS (served by backend)
     sparrow_drone_id_api.md  # REST API reference
 ```
-
----
-
-## Elasticsearch / OpenSearch Bridge
-
-The `sparrow_elastic` package provides an ECS 8.17 bridge that polls the
-Sparrow WiFi agent and bulk-indexes WiFi and Bluetooth observations into
-Elasticsearch or OpenSearch.
-
-**Quick start:**
-
-```bash
-pip install -r requirements-elastic.txt
-./sparrow-elastic.py --elasticserver http://user:pass@host:9200
-```
-
-The bridge handles index template bootstrap, ILM/ISM lifecycle policies, OUI
-vendor enrichment, device classification, optional Fingerbank fingerprinting,
-and four bundled Kibana dashboards.
-
-For full operator documentation including engine selection, auth modes,
-dashboard import, reference data refresh, and a complete CLI reference, see
-[sparrow_elastic/README.md](sparrow_elastic/README.md).
-
-Sample configuration files:
-
-- `sparrow-elastic.conf.example` — INI-style config with all supported keys
-- `sparrow-elastic.env.example` — shell-format env file for systemd deployments
-- `init.d_scripts/sparrow-elastic.service.example` — systemd unit template
 
 ---
 
