@@ -1,16 +1,17 @@
 # Sparrow-WiFi
 
-Sparrow-WiFi is a 2.4 GHz and 5 GHz WiFi and Bluetooth spectral awareness tool for Linux. It integrates WiFi scanning, Bluetooth Low Energy and Classic discovery, software-defined radio spectrum analysis (HackRF, Ubertooth), GPS tracking, FAA RemoteID drone detection, and drone/rover-mounted remote operations into a single platform. Written entirely in Python 3.
+Sparrow-WiFi is a 2.4 GHz and 5 GHz WiFi and Bluetooth spectral awareness tool for Linux. It integrates WiFi scanning, Bluetooth Low Energy and Classic discovery, software-defined radio spectrum analysis (HackRF, Ubertooth), GPS tracking, FAA RemoteID drone detection, drone/rover-mounted remote operations, and ECS 8.17 indexing into Elasticsearch or OpenSearch into a single platform. Written entirely in Python 3.
 
-The project includes two applications and a headless agent, all exposing JSON-based REST APIs for integration with external tools and automation:
+The project includes four components that work standalone or together:
 
 | Component | Interface | Purpose |
 |-----------|-----------|---------|
 | **Sparrow-WiFi** | PyQt5 desktop GUI | WiFi/BT scanning, spectrum analysis, source tracking, wardriving |
 | **Sparrow Agent** | Headless HTTP server | Remote scanning, drone/rover deployments, third-party integration |
 | **Sparrow DroneID** | Web-based (browser) | FAA RemoteID drone detection via WiFi and Bluetooth LE |
+| **Sparrow Elastic Bridge** | Headless CLI service | ECS 8.17 indexing of WiFi/BT observations into Elasticsearch / OpenSearch |
 
-Both the Sparrow Agent and Sparrow DroneID expose REST APIs that allow other applications to query scan results, trigger scans, retrieve drone detections, and integrate wireless/drone awareness into their own workflows.
+The Sparrow Agent and Sparrow DroneID expose JSON REST APIs that allow other applications to query scan results, trigger scans, retrieve drone detections, and integrate wireless/drone awareness into their own workflows. The Elastic Bridge consumes the agent's REST API and ships ECS 8.17 documents with bundled Kibana dashboards.
 
 ---
 
@@ -19,7 +20,7 @@ Both the Sparrow Agent and Sparrow DroneID expose REST APIs that allow other app
 This release covers three significant improvements over the prior version:
 
 - **Sparrow Agent: single-flight WiFi scan coalescing.** When multiple HTTP clients (the DroneID app, the Elasticsearch bridge, the GUI) hit `/wireless/networks/<iface>` simultaneously, the agent previously kicked off N redundant `iw scan` calls that serialized on the per-interface lock, multiplying scan latency by the number of clients. The first request is now the "leader" that actually scans; concurrent requests wait on a `threading.Event` and share the leader's result. Also includes lock-creation TOCTOU fix and exception-safety on per-interface locks.
-- **Sparrow DroneID** &mdash; new web-based application for FAA RemoteID detection via WiFi (ASTM F3411 NAN, beacon vendor IEs, DJI proprietary) and Bluetooth LE (BT4/BT5 Legacy advertising). Includes geozone overlays, multi-state alerts with Slack integration, KML export, Cursor-on-Target output, and a multi-device responsive web UI. See the [Sparrow DroneID](#sparrow-droneid-web-application) section below.
+- **Sparrow DroneID** &mdash; new web-based application for FAA RemoteID detection via WiFi (ASTM F3411 NAN, beacon vendor IEs, DJI's proprietary DroneID protocol) and Bluetooth LE (BT4/BT5 Legacy advertising). Includes geozone overlays, multi-state alerts with Slack integration, KML export, Cursor-on-Target output, optional ECS 8.17 indexing to Elasticsearch / OpenSearch (with a custom `droneid.*` namespace), and a multi-device responsive web UI. See the [Sparrow DroneID](#sparrow-droneid-web-application) section below.
 - **Modernized Elasticsearch / OpenSearch bridge** &mdash; the `sparrow-elastic.py` bridge has been rewritten to produce **ECS 8.17** documents (was ECS 1.5), now supports both **Elasticsearch 8.x and OpenSearch 2.x**, bootstraps composable index templates with ILM/ISM lifecycle policies and rollover write aliases automatically, performs OUI vendor enrichment and rule-based device classification (with optional Fingerbank fingerprinting), and ships four bundled Kibana dashboards plus six legacy-preserved visualizations. The legacy ECS 1.5 bridge is preserved at `legacy/sparrow-elastic.py`. See [Elasticsearch / OpenSearch Integration](#elasticsearch--opensearch-integration).
 
 ---
@@ -188,7 +189,7 @@ Sparrow-WiFi supports several Bluetooth scanning modes:
 | BLE advertisement scan | Standard BT adapter | LE devices that are actively advertising |
 | Promiscuous scan | Ubertooth One + Blue Hydra | All BLE and Classic BT devices in range |
 | iBeacon advertising | Standard BT adapter | Advertise your own iBeacons |
-| **RemoteID scan** | Standard BT adapter | **FAA-compliant drone identification (DroneID only)** |
+| **RemoteID scan** | Standard BT adapter | **FAA-compliant drone identification (Sparrow DroneID only)** |
 
 A standard built-in or USB Bluetooth adapter is sufficient for BLE advertisement scanning and RemoteID drone detection. Test your adapter with `bluetoothctl scan on`.
 
