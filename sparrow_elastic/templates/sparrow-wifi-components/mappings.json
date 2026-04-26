@@ -1,6 +1,11 @@
 {
   "template": {
     "mappings": {
+      "_meta": {
+        "sparrow_elastic_schema": "wifi",
+        "sparrow_elastic_schema_version": "1.0",
+        "ecs_version": "8.17.0"
+      },
       "dynamic": "strict",
       "properties": {
         "@timestamp": { "type": "date" },

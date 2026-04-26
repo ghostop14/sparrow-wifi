@@ -223,6 +223,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Refresh all bundled reference data files then exit (no scanning).",
     )
     p.add_argument(
+        "--skip-compat-check",
+        action="store_true",
+        default=False,
+        help=(
+            "Skip the startup pre-flight that refuses to write into a legacy or "
+            "foreign-schema index. Use only when you know what you're doing."
+        ),
+    )
+    p.add_argument(
         "--debug",
         action="store_true",
         default=False,
@@ -530,6 +539,108 @@ def _load_policy(kind: str, engine: str) -> dict:
         return {}
 
 
+def check_index_compatibility(client, alias: str, kind: str) -> Optional[str]:
+    """Pre-flight: confirm the named alias/index either doesn't exist yet,
+    or already carries our ECS 8.17 sparrow_elastic schema.
+
+    Returns None if compatible (proceed). Returns a human-readable error
+    message if a legacy or foreign schema is detected (caller should print
+    and exit).
+
+    Two markers indicate "ours":
+      1. Primary: mappings._meta.sparrow_elastic_schema_version
+      2. Fallback (for indices created by an earlier version of this
+         bridge before the _meta marker was added): presence of
+         signal.strength_mw (WiFi+BT) or wifi.channel.occupied_set (WiFi)
+         — fields that are unique to our schema and absent from ECS 1.5.
+    """
+    es = client._client  # ES or OS python client
+    try:
+        resolved = es.indices.resolve_index(name=alias)
+    except Exception as exc:
+        # 404 / not found — nothing matches, clean slate
+        if "not_found" in str(exc).lower() or getattr(exc, "status_code", 0) == 404:
+            return None
+        logger.debug("compat check: resolve_index('%s') raised %s; assuming clean", alias, exc)
+        return None
+
+    indices = resolved.get("indices", []) if isinstance(resolved, dict) else []
+    aliases = resolved.get("aliases", []) if isinstance(resolved, dict) else []
+    data_streams = resolved.get("data_streams", []) if isinstance(resolved, dict) else []
+
+    if not (indices or aliases or data_streams):
+        return None  # nothing to check
+
+    # Pick a concrete backing index to inspect mapping on
+    concrete = None
+    if indices:
+        concrete = indices[0].get("name")
+    elif aliases and aliases[0].get("indices"):
+        concrete = aliases[0]["indices"][0]
+    elif data_streams and data_streams[0].get("backing_indices"):
+        concrete = data_streams[0]["backing_indices"][0]
+
+    if not concrete:
+        return None  # no concrete index to inspect — nothing to do
+
+    try:
+        mapping_resp = es.indices.get_mapping(index=concrete)
+    except Exception as exc:
+        logger.debug("compat check: get_mapping('%s') raised %s; assuming clean", concrete, exc)
+        return None
+
+    # Response shape: {<index>: {"mappings": {"_meta": {...}, "properties": {...}}}}
+    for _idx, idx_data in mapping_resp.items():
+        mappings = idx_data.get("mappings", {}) if isinstance(idx_data, dict) else {}
+        meta = mappings.get("_meta", {}) or {}
+        if meta.get("sparrow_elastic_schema_version"):
+            return None  # primary marker present — definitely ours
+
+        props = mappings.get("properties", {}) or {}
+        # Fallback heuristic: signal.strength_mw is unique to our schema
+        signal = props.get("signal", {}) or {}
+        if isinstance(signal, dict) and "strength_mw" in (signal.get("properties", {}) or {}):
+            return None
+
+    # No marker. Build an actionable error message.
+    what = []
+    if data_streams:
+        what.append(f"data stream '{data_streams[0]['name']}'")
+    if aliases:
+        what.append(f"alias '{aliases[0]['name']}'")
+    if indices:
+        what.append(f"index '{indices[0]['name']}'")
+    detected = ", ".join(what) if what else f"indices matching '{alias}'"
+
+    cluster_url = "<your-cluster>"
+    return (
+        f"\n  Aborting: legacy or unknown schema detected at {detected}.\n"
+        f"  This index/alias does NOT carry our ECS 8.17 'sparrow_elastic_schema_version'\n"
+        f"  marker, and is missing fields like 'signal.strength_mw' that the new bridge\n"
+        f"  emits. Writing into it would either silently corrupt the existing data\n"
+        f"  (different schema) or be rejected by 'dynamic: strict' on every document.\n"
+        f"\n"
+        f"  Three ways to proceed:\n"
+        f"\n"
+        f"  1) Use a fresh alias name (recommended for clean migrations):\n"
+        f"        ./sparrow-elastic.py --{kind}-alias sparrow-{kind}-v2 ...\n"
+        f"\n"
+        f"  2) Wipe the legacy data and let the bridge bootstrap fresh:\n"
+        f"        curl -u <user>:<pass> -XDELETE '{cluster_url}/_data_stream/{alias}'\n"
+        f"        curl -u <user>:<pass> -XDELETE '{cluster_url}/{alias}*'\n"
+        f"        curl -u <user>:<pass> -XDELETE '{cluster_url}/_index_template/{alias}'\n"
+        f"     Then re-run the bridge.\n"
+        f"\n"
+        f"  3) Run the legacy bridge for now (frozen at ECS 1.5):\n"
+        f"        ./legacy/sparrow-elastic.py --wifiindex {alias} ...\n"
+        f"\n"
+        f"  If you have already run the new bridge against this cluster and got an\n"
+        f"  index without the _meta marker (the marker was added in a later commit),\n"
+        f"  re-run with --skip-compat-check, which will then bootstrap idempotently\n"
+        f"  and update the template — subsequent rollovers will carry the marker.\n"
+    )
+
+
 def bootstrap(client, alias: str, kind: str, engine: str, ilm_override: str) -> bool:
     """Run the bootstrap sequence for one index family (wifi or bt).
 
@@ -812,6 +923,20 @@ def main(argv: Optional[List[str]] = None) -> int:  # noqa: C901
             time.sleep(retry_delay)
             retry_delay = min(retry_delay * 2.0, max_retry_delay)
             client = None
+
+    # ------------------------------------------------------------------
+    # Pre-flight compatibility check: refuse to write into a legacy or
+    # foreign-schema index without operator confirmation.
+    # ------------------------------------------------------------------
+    if not args.skip_compat_check:
+        compat_targets: List[Tuple[str, str]] = [("wifi", args.wifi_alias)]
+        if args.bt_alias:
+            compat_targets.append(("bt", args.bt_alias))
+        for kind, alias in compat_targets:
+            err = check_index_compatibility(client, alias, kind)
+            if err:
+                logger.error(err)
+                return 2
 
     # ------------------------------------------------------------------
     # Bootstrap index templates + policies + initial indices.

@@ -519,3 +519,82 @@ class TestFlushState(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# Tests: check_index_compatibility pre-flight
+# ---------------------------------------------------------------------------
+
+class TestCompatCheck(unittest.TestCase):
+
+    def _client_with(self, resolve_resp=None, resolve_raises=None,
+                     mapping_resp=None):
+        c = MagicMock()
+        c._client = MagicMock()
+        if resolve_raises is not None:
+            c._client.indices.resolve_index.side_effect = resolve_raises
+        else:
+            c._client.indices.resolve_index.return_value = resolve_resp or {}
+        if mapping_resp is not None:
+            c._client.indices.get_mapping.return_value = mapping_resp
+        return c
+
+    def test_resolve_404_returns_none(self):
+        # Nothing exists with that name → compatible
+        class _NotFound(Exception):
+            status_code = 404
+        c = self._client_with(resolve_raises=_NotFound("not_found"))
+        result = bridge.check_index_compatibility(c, "sparrow-wifi", "wifi")
+        self.assertIsNone(result)
+
+    def test_empty_resolve_returns_none(self):
+        c = self._client_with(resolve_resp={"indices": [], "aliases": [], "data_streams": []})
+        self.assertIsNone(bridge.check_index_compatibility(c, "sparrow-wifi", "wifi"))
+
+    def test_marker_present_returns_none(self):
+        # Index exists; mapping has our _meta marker
+        c = self._client_with(
+            resolve_resp={"indices": [{"name": "sparrow-wifi-000001", "aliases": ["sparrow-wifi"]}]},
+            mapping_resp={"sparrow-wifi-000001": {"mappings": {
+                "_meta": {"sparrow_elastic_schema_version": "1.0"},
+                "properties": {"@timestamp": {"type": "date"}},
+            }}},
+        )
+        self.assertIsNone(bridge.check_index_compatibility(c, "sparrow-wifi", "wifi"))
+
+    def test_fallback_marker_signal_strength_mw(self):
+        # Marker absent but signal.strength_mw present → ours
+        c = self._client_with(
+            resolve_resp={"indices": [{"name": "sparrow-wifi-000001"}]},
+            mapping_resp={"sparrow-wifi-000001": {"mappings": {
+                "properties": {"signal": {"properties": {"strength_mw": {"type": "float"}}}},
+            }}},
+        )
+        self.assertIsNone(bridge.check_index_compatibility(c, "sparrow-wifi", "wifi"))
+
+    def test_legacy_data_stream_returns_error(self):
+        # Data stream with no marker, no signal.strength_mw → bail
+        c = self._client_with(
+            resolve_resp={"data_streams": [
+                {"name": "sparrowwifi-home", "backing_indices": [".ds-sparrowwifi-home-0001"]}
+            ]},
+            mapping_resp={".ds-sparrowwifi-home-0001": {"mappings": {
+                "properties": {"wifi": {"properties": {"mac_addr": {"type": "keyword"}}}},
+            }}},
+        )
+        result = bridge.check_index_compatibility(c, "sparrowwifi-home", "wifi")
+        self.assertIsNotNone(result)
+        self.assertIn("legacy or unknown schema", result)
+        self.assertIn("sparrowwifi-home", result)
+        self.assertIn("--skip-compat-check", result)
+
+    def test_unknown_index_returns_error(self):
+        c = self._client_with(
+            resolve_resp={"indices": [{"name": "sparrow-wifi-000001"}]},
+            mapping_resp={"sparrow-wifi-000001": {"mappings": {
+                "properties": {"foo": {"type": "keyword"}},
+            }}},
+        )
+        result = bridge.check_index_compatibility(c, "sparrow-wifi", "wifi")
+        self.assertIsNotNone(result)
+        self.assertIn("legacy or unknown schema", result)
