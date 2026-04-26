@@ -1524,7 +1524,7 @@ class AdvancedScanDialog(QDialog):
         
         if self.usingRemoteAgent:
             curInterface = self.getMonitoringInterface()
-            retVal,errMsg,isRunning,ivcount, passwords=getRemoteWEPCrackStatus(self.remoteAgentIP, self.remoteAgentPort, curInterface)
+            retVal, errMsg, _isRunning, ivcount, passwords = getRemoteWEPCrackStatus(self.remoteAgentIP, self.remoteAgentPort, curInterface)
             
             if retVal != 0:
                 displayedError = True
@@ -1607,7 +1607,7 @@ class AdvancedScanDialog(QDialog):
         
         if self.usingRemoteAgent:
             curInterface = self.getMonitoringInterface()
-            retVal,errMsg,isRunning,hasHandshake,fileName=getRemoteWPAPSKCrackStatus(self.remoteAgentIP, self.remoteAgentPort, curInterface)
+            retVal, errMsg, _isRunning, hasHandshake, fileName = getRemoteWPAPSKCrackStatus(self.remoteAgentIP, self.remoteAgentPort, curInterface)
 
             if retVal != 0:
                 self.statBar.setText('ERROR: ' + errMsg)
