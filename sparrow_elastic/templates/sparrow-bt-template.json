@@ -1,0 +1,9 @@
+{
+  "priority": 500,
+  "index_patterns": ["sparrow-bt-*"],
+  "composed_of": ["sparrow-bt-settings", "sparrow-bt-mappings"],
+  "_meta": {
+    "description": "Sparrow Bluetooth ECS 8.17 template. Write alias: sparrow-bt.",
+    "sparrow_elastic_version": "2.0.0"
+  }
+}

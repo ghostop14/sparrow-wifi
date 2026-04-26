@@ -1,0 +1,186 @@
+{
+  "template": {
+    "mappings": {
+      "_meta": {
+        "sparrow_elastic_schema": "wifi",
+        "sparrow_elastic_schema_version": "1.0",
+        "ecs_version": "8.17.0"
+      },
+      "dynamic": "strict",
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "ecs": {
+          "properties": {
+            "version": { "type": "keyword" }
+          }
+        },
+        "event": {
+          "properties": {
+            "dataset":   { "type": "keyword" },
+            "kind":      { "type": "keyword" },
+            "category":  { "type": "keyword" },
+            "type":      { "type": "keyword" },
+            "action":    { "type": "keyword" },
+            "module":    { "type": "keyword" },
+            "ingested":  { "type": "date" }
+          }
+        },
+        "observer": {
+          "properties": {
+            "id":       { "type": "keyword" },
+            "hostname": { "type": "keyword" },
+            "type":     { "type": "keyword" },
+            "vendor":   { "type": "keyword" },
+            "product":  { "type": "keyword" },
+            "geo": {
+              "properties": {
+                "location": { "type": "geo_point" },
+                "altitude": { "type": "float" }
+              }
+            },
+            "gps": {
+              "properties": {
+                "status": { "type": "keyword" }
+              }
+            }
+          }
+        },
+        "source": {
+          "properties": {
+            "mac":     { "type": "keyword" },
+            "address": { "type": "keyword" }
+          }
+        },
+        "device": {
+          "properties": {
+            "id":               { "type": "keyword" },
+            "class_guess":      { "type": "keyword" },
+            "class_confidence": { "type": "float" },
+            "class_evidence":   { "type": "keyword" }
+          }
+        },
+        "related": {
+          "properties": {
+            "hash":          { "type": "keyword" },
+            "hash_strength": { "type": "keyword" },
+            "mac":           { "type": "keyword" },
+            "hosts":         { "type": "keyword" }
+          }
+        },
+        "rf": {
+          "properties": {
+            "frequency_mhz":    { "type": "long" },
+            "band":             { "type": "keyword" },
+            "channel_occupied_set": { "type": "integer" },
+            "signature": {
+              "properties": {
+                "controller_candidate": { "type": "boolean" }
+              }
+            }
+          }
+        },
+        "signal": {
+          "properties": {
+            "strength_dbm":         { "type": "float" },
+            "strength_mw":          { "type": "float" },
+            "strength_quality_0_5": { "type": "byte" }
+          }
+        },
+        "observed": {
+          "properties": {
+            "first_seen":       { "type": "date" },
+            "last_seen":        { "type": "date" },
+            "age_seconds":      { "type": "long" },
+            "hour_utc":         { "type": "byte" },
+            "day_of_week_utc":  { "type": "keyword" },
+            "hour_local":       { "type": "byte" },
+            "day_of_week_local": { "type": "keyword" },
+            "timezone_local":   { "type": "keyword" }
+          }
+        },
+        "threat": {
+          "properties": {
+            "indicator": {
+              "properties": {
+                "type":  { "type": "keyword" },
+                "value": { "type": "keyword" }
+              }
+            }
+          }
+        },
+        "host": {
+          "properties": {
+            "hostname": { "type": "keyword" }
+          }
+        },
+        "wifi": {
+          "properties": {
+            "ssid":        { "type": "keyword" },
+            "ssid_hidden": { "type": "boolean" },
+            "bssid":       { "type": "keyword" },
+            "security":    { "type": "keyword" },
+            "cipher":      { "type": "keyword" },
+            "privacy":     { "type": "keyword" },
+            "mode":        { "type": "keyword" },
+            "mac": {
+              "properties": {
+                "locally_administered": { "type": "boolean" },
+                "randomized":           { "type": "boolean" }
+              }
+            },
+            "channel": {
+              "properties": {
+                "primary":       { "type": "integer" },
+                "secondary":     { "type": "integer" },
+                "width_mhz":     { "type": "integer" },
+                "occupied_set":  { "type": "integer" }
+              }
+            },
+            "capabilities": {
+              "properties": {
+                "ht":  { "type": "boolean" },
+                "vht": { "type": "boolean" },
+                "he":  { "type": "boolean" },
+                "eht": { "type": "boolean" }
+              }
+            },
+            "qbss": {
+              "properties": {
+                "station_count":        { "type": "integer" },
+                "channel_utilization":  { "type": "float" }
+              }
+            },
+            "wps": {
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "uuid":    { "type": "keyword" }
+              }
+            },
+            "vendor_ie": {
+              "properties": {
+                "ouis": { "type": "keyword" }
+              }
+            },
+            "probe": {
+              "properties": {
+                "ssid_list": { "type": "keyword" }
+              }
+            },
+            "mac_vendor": { "type": "keyword" },
+            "strongest_signal": {
+              "properties": {
+                "geo": {
+                  "properties": {
+                    "location": { "type": "geo_point" },
+                    "altitude": { "type": "float" }
+                  }
+                },
+                "strength_dbm": { "type": "float" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

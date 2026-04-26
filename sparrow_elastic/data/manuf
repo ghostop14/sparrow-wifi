@@ -1,0 +1,38 @@
+# Wireshark OUI seed file — 20-30 well-known entries.
+# This is a SEED copy.  The full Wireshark manuf database (~5 MB) will be
+# downloaded automatically on first run of:  python -m sparrow_elastic.data_refresh --force
+# Upstream: https://www.wireshark.org/download/automated/data/manuf
+# Format: OUI<TAB>ShortName<TAB>LongName
+#
+# ---- Drone manufacturers ----
+60:60:1F	DJI	SZ DJI Technology Co.,Ltd
+28:A1:83	DJI	SZ DJI Technology Co.,Ltd
+48:1C:B9	DJI	SZ DJI Technology Co.,Ltd
+00:1B:C5	Parrot	Parrot SA
+A0:14:3D	Parrot	Parrot SA
+90:3A:E6	Skydio	Skydio Inc.
+34:D2:62	Autel	Autel Robotics Co.,Ltd
+# ---- Mobile / Consumer ----
+00:17:F2	Apple	Apple, Inc.
+98:01:A7	Apple	Apple, Inc.
+DC:2B:61	Apple	Apple, Inc.
+00:16:3E	Xensource	Xensource, Inc. (VMware/Apple range)
+00:50:F2	Microsoft	Microsoft Corporation
+28:18:78	Samsung	Samsung Electronics Co.,Ltd
+00:12:47	Samsung	Samsung Electronics Co.,Ltd
+58:CB:52	Google	Google, Inc.
+94:EB:2C	Google	Google LLC
+F4:F5:DB	Google	Google LLC
+# ---- IoT / Smart Home ----
+40:4E:36	Amazon	Amazon Technologies Inc.
+68:37:E9	Amazon	Amazon Technologies Inc.
+00:FC:8B	Ring	Ring LLC (Amazon)
+18:B4:30	Nest	Nest Labs Inc.
+# ---- Networking ----
+04:18:D6	Ubiquiti	Ubiquiti Networks Inc.
+24:A4:3C	Ubiquiti	Ubiquiti Networks Inc.
+# ---- Enterprise / Other ----
+3C:D9:2B	HP	Hewlett Packard
+B8:AF:67	Tesla	Tesla Motors
+00:50:C2	IeeeRegi	IEEE Registration Authority
+00:26:5A	Canon	Canon Inc.

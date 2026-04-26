@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "serial_prefixes": {
+    "1581": "DJI",
+    "1748": "Autel",
+    "1668": "Skydio",
+    "1588": "Parrot"
+  },
+  "mac_oui": {
+    "08:FB:EA": "Autel",
+    "18:D7:93": "Autel",
+    "60:60:1F": "DJI",
+    "D8:96:E0": "DJI",
+    "48:1C:B9": "DJI",
+    "34:D2:62": "DJI"
+  }
+}

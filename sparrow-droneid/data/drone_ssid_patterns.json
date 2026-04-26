@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "patterns": [
+    {"pattern": "^SoloLink_", "label": "3DR Solo"},
+    {"pattern": "^PHANTOM", "label": "DJI Phantom"},
+    {"pattern": "^CGO3", "label": "Yuneec CGO3"},
+    {"pattern": "^ardrone_parrot", "label": "Parrot AR.Drone"},
+    {"pattern": "^Bebop2", "label": "Parrot Bebop 2"},
+    {"pattern": "^Spark-RC-", "label": "DJI Spark"},
+    {"pattern": "^Spark-", "label": "DJI Spark"},
+    {"pattern": "^Mavic-RC-", "label": "DJI Mavic"},
+    {"pattern": "^Mavic-", "label": "DJI Mavic"},
+    {"pattern": "^DISCO", "label": "Parrot Disco"},
+    {"pattern": "^Breeze_", "label": "Yuneec Breeze"},
+    {"pattern": "^LILY-NG", "label": "Lily Drone"},
+    {"pattern": "^ardrone2_", "label": "Parrot AR.Drone 2"},
+    {"pattern": "^CG02", "label": "Yuneec CG02"},
+    {"pattern": "^X-STAR_", "label": "Autel X-Star"},
+    {"pattern": "^Sky_Rider$", "label": "Sky Rider"},
+    {"pattern": "^FPV_WIFI", "label": "FPV WiFi Drone"},
+    {"pattern": "^SKYVIPER17_", "label": "Sky Viper"},
+    {"pattern": "^udirc", "label": "UDI RC"},
+    {"pattern": "^UPAIR$", "label": "UPair"},
+    {"pattern": "^Protocol_Dronium_One$", "label": "Protocol Dronium"},
+    {"pattern": "^HolyStoneFPV", "label": "Holy Stone"},
+    {"pattern": "^HolyStone_FPV", "label": "Holy Stone"},
+    {"pattern": "^WIFI_UFO$", "label": "WiFi UFO Drone"},
+    {"pattern": "^WIFI_720P$", "label": "WiFi 720P Drone"},
+    {"pattern": "^E50_", "label": "EACHINE E50"},
+    {"pattern": "^E90_", "label": "EACHINE E90"},
+    {"pattern": "^RID-", "label": "Remote ID Beacon"}
+  ]
+}

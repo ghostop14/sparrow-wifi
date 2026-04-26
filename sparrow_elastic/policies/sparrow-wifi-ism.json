@@ -1,0 +1,62 @@
+{
+  "policy": {
+    "policy_id": "sparrow-wifi-ism",
+    "description": "Sparrow WiFi ISM: hot 7d -> warm 30d -> delete 90d",
+    "default_state": "hot",
+    "schema_version": 1,
+    "states": [
+      {
+        "name": "hot",
+        "actions": [
+          {
+            "rollover": {
+              "min_primary_shard_size": "10gb",
+              "min_index_age": "7d"
+            }
+          }
+        ],
+        "transitions": [
+          {
+            "state_name": "warm",
+            "conditions": { "min_index_age": "7d" }
+          }
+        ]
+      },
+      {
+        "name": "warm",
+        "actions": [
+          { "force_merge": { "max_num_segments": 1 } },
+          { "replica_count": { "number_of_replicas": 0 } }
+        ],
+        "transitions": [
+          {
+            "state_name": "cold",
+            "conditions": { "min_index_age": "30d" }
+          }
+        ]
+      },
+      {
+        "name": "cold",
+        "actions": [
+          { "read_only": {} }
+        ],
+        "transitions": [
+          {
+            "state_name": "delete",
+            "conditions": { "min_index_age": "90d" }
+          }
+        ]
+      },
+      {
+        "name": "delete",
+        "actions": [
+          { "delete": {} }
+        ],
+        "transitions": []
+      }
+    ],
+    "ism_template": [
+      { "index_patterns": ["sparrow-wifi-*"], "priority": 500 }
+    ]
+  }
+}

@@ -1,0 +1,103 @@
+PUT _index_template/sparrowwifi
+{
+  "priority": 500,
+  "template": {
+    "settings": {
+      "index": {
+        "lifecycle": {
+          "name": "sparrow"
+        }
+      }
+    },
+    "mappings": {
+      "properties": {
+        "wifi.privacy": {
+          "type": "keyword"
+        },
+        "wifi.mac_vendor": {
+          "type": "keyword"
+        },
+        "wifi.geo.location": {
+          "type": "geo_point"
+        },
+        "host.hostname": {
+          "type": "keyword"
+        },
+        "agent.type": {
+          "type": "keyword"
+        },
+        "wifi.mode": {
+          "type": "keyword"
+        },
+        "event.module": {
+          "type": "keyword"
+        },
+        "wifi.security": {
+          "type": "keyword"
+        },
+        "host.name": {
+          "type": "keyword"
+        },
+        "wifi.cipher": {
+          "type": "keyword"
+        },
+        "event.kind": {
+          "type": "keyword"
+        },
+        "wifi.mac_addr": {
+          "type": "keyword"
+        },
+        "wifi.ssid": {
+          "type": "keyword"
+        },
+        "wifi.bandwidth": {
+          "type": "double"
+        },
+        "agent.hostname": {
+          "type": "keyword"
+        },
+        "wifi.strongest_signal.location": {
+          "type": "geo_point"
+        },
+        "process.name": {
+          "type": "keyword"
+        },
+        "wifi.center_frequency_hz": {
+          "type": "double"
+        },
+        "wifi.frequency": {
+          "type": "double"
+        },
+        "@timestamp": {
+          "type": "date"
+        },
+        "ecs.version": {
+          "type": "keyword"
+        },
+        "event.type": {
+          "type": "keyword"
+        },
+        "agent.version": {
+          "type": "keyword"
+        },
+        "wifi.channel_key": {
+          "type": "keyword"
+        },
+        "host.geo.location": {
+          "type": "geo_point"
+        },
+        "event.dataset": {
+          "type": "keyword"
+        }
+      }
+    }
+  },
+  "index_patterns": [
+    "sparrowwifi-home*"
+  ],
+  "data_stream": {
+    "hidden": false,
+    "allow_custom_routing": false
+  },
+  "composed_of": []
+}

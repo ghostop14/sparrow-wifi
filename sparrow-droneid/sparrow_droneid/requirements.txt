@@ -1,0 +1,19 @@
+# Sparrow DroneID - Python Dependencies
+#
+# Install: pip install -r requirements.txt
+#
+# Core dependencies are kept minimal. Most functionality uses the Python
+# standard library (http.server, sqlite3, ssl, struct, socket, subprocess).
+
+# HTTP client for map tile proxy/caching and future export integrations
+requests>=2.28.0
+
+# BLE scanning for Bluetooth RemoteID (ASTM F3411 BT4/BT5 Legacy)
+bleak>=0.21.0
+
+# bleak's Linux backend (auto-installed by bleak, listed for clarity)
+dbus-fast>=1.80.0
+
+# Elasticsearch / OpenSearch integration (both optional — only the configured backend is used)
+elasticsearch>=8.0,<9.0
+opensearch-py>=2.0,<3.0

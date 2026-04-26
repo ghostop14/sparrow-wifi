@@ -1,0 +1,2 @@
+{"id":"sparrow-wifi","type":"index-pattern","attributes":{"name":"sparrow-wifi","title":"sparrow-wifi-*","timeFieldName":"@timestamp"},"references":[],"managed":false,"coreMigrationVersion":"8.17.0","typeMigrationVersion":"8.0.0","version":"WzEsMV0="}
+{"id":"sparrow-bt","type":"index-pattern","attributes":{"name":"sparrow-bt","title":"sparrow-bt-*","timeFieldName":"@timestamp"},"references":[],"managed":false,"coreMigrationVersion":"8.17.0","typeMigrationVersion":"8.0.0","version":"WzIsMV0="}

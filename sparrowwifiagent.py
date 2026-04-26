@@ -33,7 +33,7 @@ import time
 
 from socket import *
 from time import sleep
-from threading import Thread, Lock
+from threading import Thread, Lock, Event
 from dateutil import parser
 from http import server as HTTPServer
 from socketserver import ThreadingMixIn
@@ -59,8 +59,21 @@ except:
     hasOUILookup = False
 
 # ------   Global setup ------------
-_scanCache = {}   # {interface: (timestamp, jsonstr)}
+_scanCache = {}   # {(interface, hunt_channels_tuple): (timestamp, jsonstr)}
 _SCAN_CACHE_TTL = 8.0  # seconds
+
+# Single-flight request coalescing for WiFi scans.
+# When a scan is in-flight for an interface, subsequent requests wait for
+# that scan's result instead of queuing up redundant iw scans.
+class _ScanFlight:
+    __slots__ = ('event', 'result', 'error')
+    def __init__(self):
+        self.event = Event()     # signaled when scan completes
+        self.result = None       # jsonstr on success
+        self.error = None        # error string on failure
+
+_inflight = {}            # {(interface, hunt_channels_tuple): _ScanFlight}
+_inflight_lock = Lock()   # protects _inflight dict and lockList creation
 
 gpsEngine = None
 curTime = datetime.datetime.now()
@@ -755,8 +768,9 @@ class AutoAgentScanThread(Thread):
 
         self.ouiLookupEngine = getOUIDB()
 
-        if interface not in lockList.keys():
-            lockList[interface] = Lock()
+        with _inflight_lock:
+            if interface not in lockList:
+                lockList[interface] = Lock()
 
         if  not os.path.exists('./recordings'):
             os.makedirs('./recordings')
@@ -781,8 +795,9 @@ class AutoAgentScanThread(Thread):
 
         self.threadRunning = True
 
-        if self.interface not in lockList.keys():
-            lockList[self.interface] = Lock()
+        with _inflight_lock:
+            if self.interface not in lockList:
+                lockList[self.interface] = Lock()
 
         curLock = lockList[self.interface]
 
@@ -794,11 +809,8 @@ class AutoAgentScanThread(Thread):
 
         while (not self.signalStop):
             # Scan all / normal mode
-            if (curLock):
-                curLock.acquire()
-            retCode, errString, wirelessNetworks = WirelessEngine.scanForNetworks(self.interface)
-            if (curLock):
-                curLock.release()
+            with curLock:
+                retCode, errString, wirelessNetworks = WirelessEngine.scanForNetworks(self.interface)
 
             if (retCode == 0):
                 if useMavlink:
@@ -1936,44 +1948,79 @@ class SparrowWiFiAgentRequestHandler(HTTPServer.BaseHTTPRequestHandler):
                     SparrowRPi.greenLED(SparrowRPi.LIGHT_STATE_OFF)
                     sleep(0.1)
 
-                if curInterface not in lockList.keys():
-                    lockList[curInterface] = Lock()
+                # --- Single-flight request coalescing ---
+                # Requests with the same interface + hunt channels share one scan.
+                flightKey = (curInterface, tuple(huntChannelList))
 
-                curLock = lockList[curInterface]
-
-                # Return cached result if fresh enough (avoids serializing concurrent requests)
-                cached = _scanCache.get(curInterface)
+                # Fast path: return cached result if fresh enough
+                cached = _scanCache.get(flightKey)
                 if cached and (time.monotonic() - cached[0]) < _SCAN_CACHE_TTL:
                     s.wfile.write(cached[1].encode("UTF-8"))
                     return
 
-                if (curLock):
-                    curLock.acquire()
+                # Check if a scan with these parameters is already in-flight
+                leader = False
+                with _inflight_lock:
+                    flight = _inflight.get(flightKey)
+                    if flight is None:
+                        flight = _ScanFlight()
+                        _inflight[flightKey] = flight
+                        leader = True
+                    # Ensure per-interface lock exists (under _inflight_lock to fix TOCTOU)
+                    if curInterface not in lockList:
+                        lockList[curInterface] = Lock()
 
-                if useMavlink:
-                    gpsCoord = GPSStatus()
-                    gpsCoord.gpsInstalled = True
-                    gpsCoord.gpsRunning = True
-                    gpsCoord.isValid = mavlinkGPSThread.synchronized
-                    gpsCoord.latitude = mavlinkGPSThread.latitude
-                    gpsCoord.longitude = mavlinkGPSThread.longitude
-                    gpsCoord.altitude = mavlinkGPSThread.altitude
-                    gpsCoord.speed = mavlinkGPSThread.vehicle.getAirSpeed()
-                    retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, gpsCoord, huntChannelList)
-                elif gpsEngine.gpsValid():
-                    retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, gpsEngine.lastCoord, huntChannelList)
-                    if useRPILeds:
-                        SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)
-                else:
-                    retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, None, huntChannelList)
-                    if useRPILeds:
-                        SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_HEARTBEAT)
+                if not leader:
+                    # Wait for the leader's scan to finish
+                    flight.event.wait(timeout=25)
+                    if flight.error:
+                        errdict = {'errcode': 1, 'errmsg': flight.error}
+                        s.wfile.write(json.dumps(errdict).encode("UTF-8"))
+                    elif flight.result:
+                        s.wfile.write(flight.result.encode("UTF-8"))
+                    else:
+                        errdict = {'errcode': 1, 'errmsg': 'Scan timeout'}
+                        s.wfile.write(json.dumps(errdict).encode("UTF-8"))
+                    return
 
-                if (curLock):
-                    curLock.release()
+                # Leader path: perform the actual scan
+                curLock = lockList[curInterface]
+                jsonstr = ''
+                try:
+                    with curLock:
+                        if useMavlink:
+                            gpsCoord = GPSStatus()
+                            gpsCoord.gpsInstalled = True
+                            gpsCoord.gpsRunning = True
+                            gpsCoord.isValid = mavlinkGPSThread.synchronized
+                            gpsCoord.latitude = mavlinkGPSThread.latitude
+                            gpsCoord.longitude = mavlinkGPSThread.longitude
+                            gpsCoord.altitude = mavlinkGPSThread.altitude
+                            gpsCoord.speed = mavlinkGPSThread.vehicle.getAirSpeed()
+                            retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, gpsCoord, huntChannelList)
+                        elif gpsEngine.gpsValid():
+                            retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, gpsEngine.lastCoord, huntChannelList)
+                            if useRPILeds:
+                                SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_ON)
+                        else:
+                            retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(fieldValue, None, huntChannelList)
+                            if useRPILeds:
+                                SparrowRPi.redLED(SparrowRPi.LIGHT_STATE_HEARTBEAT)
 
-                # Cache the result for subsequent rapid requests on the same interface
-                _scanCache[curInterface] = (time.monotonic(), jsonstr)
+                    # Cache before signaling waiters so new arrivals hit the fast path
+                    _scanCache[flightKey] = (time.monotonic(), jsonstr)
+                    flight.result = jsonstr
+                except Exception as e:
+                    flight.error = str(e)
+                finally:
+                    with _inflight_lock:
+                        _inflight.pop(flightKey, None)
+                    flight.event.set()
+
+                if flight.error:
+                    errdict = {'errcode': 1, 'errmsg': flight.error}
+                    s.wfile.write(json.dumps(errdict).encode("UTF-8"))
+                    return
 
                 s.wfile.write(jsonstr.encode("UTF-8"))
 
