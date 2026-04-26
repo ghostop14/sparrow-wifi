@@ -26,7 +26,7 @@ The original Sparrow application provides a comprehensive GUI-based replacement 
 - **GPS integration** &mdash; gpsd, static coordinates, or MAVLink (drone GPS)
 - **Mapping** &mdash; Google Maps / OpenStreetMap visualization of scan results with GPS tracks
 - **Import/Export** &mdash; CSV, JSON, and raw `iw scan` output
-- **Elasticsearch** &mdash; ECS 1.5 compliant indexing of WiFi and Bluetooth scan data
+- **Elasticsearch / OpenSearch** &mdash; ECS 8.17 compliant indexing of WiFi and Bluetooth scan data with ILM/ISM lifecycle management, device classification, optional Fingerbank fingerprinting, and bundled Kibana dashboards
 - **Falcon plugin** &mdash; Aircrack-ng integration for penetration testing (monitor mode, hidden SSID discovery, deauth, WEP/WPA capture)
 
 ### Screenshots
@@ -277,22 +277,58 @@ Install aircrack-ng and JTR, ensuring `airmon-ng`, `airodump-ng`, and `wpapcap2j
 
 ---
 
-## Elasticsearch Integration
+## Elasticsearch / OpenSearch Integration
 
-Feed scan data into Elasticsearch with ECS 1.5 compliance:
+Modernized in April 2026. The bridge now produces ECS 8.17 compliant
+documents and supports both Elasticsearch 8.x and OpenSearch 2.x.
+See **[Elasticsearch / OpenSearch Bridge](#elasticsearch--opensearch-bridge)**
+below for details.
+
+Quickstart (after starting the agent):
 
 ```bash
-# Start the agent first
-sudo ./sparrowwifiagent.py
-
-# Bridge to Elasticsearch
-python3 sparrow-elastic.py \
-    --elasticserver https://user:pass@elastic.example.com:9200 \
-    --wifiindex sparrowwifi-site1 \
-    --btindex sparrowbt-site1
+sudo ./sparrowwifiagent.py        # remote agent
+pip install -r requirements-elastic.txt
+./sparrow-elastic.py --elasticserver http://user:pass@host:9200 --wifiinterface wlan1
 ```
 
-WiFi and Bluetooth indices must be separate (different document schemas). See `sparrow-elastic.py --help` for all options.
+### Migration from the legacy bridge
+
+The pre-2026 bridge wrote ECS 1.5 documents into operator-named indices
+via `--wifiindex` / `--btindex`. The new bridge writes ECS 8.17
+documents into rollover-managed write aliases (default `sparrow-wifi` /
+`sparrow-bt`) and bootstraps ILM/ISM policies, index templates,
+component templates, and the initial backing index automatically.
+
+**The legacy script is preserved at `legacy/sparrow-elastic.py`** and
+the legacy `.txt` template files live alongside it. Running the legacy
+script still requires its old environment (ECS 1.5 templates, manual
+ILM, etc.).
+
+**Flag changes (with backwards compatibility):**
+
+| Legacy flag         | New flag           | Notes                                                               |
+|---------------------|--------------------|---------------------------------------------------------------------|
+| `--wifiindex NAME`  | `--wifi-alias NAME`| Legacy spelling still accepted as a deprecated alias.               |
+| `--btindex NAME`    | `--bt-alias NAME`  | Legacy spelling still accepted as a deprecated alias.               |
+| `--dont-create-indices` | (same)         | Skips bootstrap. In the new bridge bootstrap is fully managed.      |
+| `--elasticserver`, `--sparrowagent`, `--sparrowport`, `--wifiinterface`, `--scandelay` | unchanged | |
+
+So a legacy invocation like:
+
+```bash
+./sparrow-elastic.py --elasticserver=http://user:pass@host:9200 \
+                     --wifiinterface=wlan1 --wifiindex=sparrowwifi-home \
+                     --btindex=sparrowbt-home
+```
+
+still parses and runs. The behaviour difference is that `sparrowwifi-home`
+is now a write alias backed by `sparrowwifi-home-000001`, `-000002`, … with
+a sparrow-managed ILM policy, rather than the legacy data stream.
+
+For a truly clean install on the new schema, drop the `--wifiindex`/
+`--btindex` overrides and accept the new defaults (`sparrow-wifi`,
+`sparrow-bt`).
 
 ---
 

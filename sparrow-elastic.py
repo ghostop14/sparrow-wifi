@@ -141,18 +141,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Wireless interface on the agent to scan. When omitted, the first available interface is used.",
     )
 
-    # Index aliases
+    # Index aliases. The legacy bridge used --wifiindex / --btindex; both are
+    # accepted as deprecated aliases so old systemd unit lines and operator
+    # muscle memory keep working. They map straight onto the new flags.
     p.add_argument(
         "--wifi-alias",
+        "--wifiindex",
         default="sparrow-wifi",
         metavar="NAME",
-        help="Elasticsearch alias / index for WiFi documents.",
+        help="Elasticsearch alias / index for WiFi documents. (--wifiindex accepted as legacy alias.)",
     )
     p.add_argument(
         "--bt-alias",
+        "--btindex",
         default="sparrow-bt",
         metavar="NAME",
-        help="Elasticsearch alias / index for Bluetooth documents. Set to empty string to disable BT.",
+        help="Elasticsearch alias / index for Bluetooth documents. Empty string disables BT. (--btindex accepted as legacy alias.)",
     )
 
     # ILM/ISM policy names
