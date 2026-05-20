@@ -407,6 +407,72 @@ const SettingsManager = (() => {
                 </button>
               </div>
 
+              <hr class="my-2">
+
+              <div class="mb-3">
+                <label class="form-label">API-Based Alerting</label>
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="s_alert_api" ${_checked(s.alert_api_enabled)}>
+                  <label class="form-check-label" for="s_alert_api">Send drone alerts to an external API</label>
+                </div>
+                <small class="text-muted">
+                  POSTs an ECS-shaped JSON alert to a generic ingest endpoint
+                  with a bearer-token Authorization header. See the README for
+                  the payload schema and endpoint contract.
+                </small>
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label" for="s_api_base_url">API Endpoint Root</label>
+                <input type="text" class="form-control form-control-sm" id="s_api_base_url"
+                  value="${_esc(s.alert_api_base_url || '')}"
+                  placeholder="http://MY_API_HOST:PORT/API_ROOT">
+                <small class="text-muted">
+                  Full root including any path prefix; the bridge appends
+                  <code>/v1/alerts</code> and <code>/v1/alerts/verify</code>.
+                </small>
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label" for="s_api_domain">Domain</label>
+                <input type="text" class="form-control form-control-sm" id="s_api_domain"
+                  value="${_esc(s.alert_api_domain || '')}"
+                  style="max-width:300px;">
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label" for="s_api_token">Bearer Token</label>
+                <div class="input-group input-group-sm" style="max-width:500px;">
+                  <input type="password" class="form-control" id="s_api_token"
+                    value="${_esc(s.alert_api_token || '')}"
+                    placeholder="${s.alert_api_token === '(set)' ? '(set — leave unchanged to keep)' : ''}"
+                    autocomplete="off">
+                  <button class="btn btn-outline-secondary" type="button" id="btn_api_token_show"
+                    title="Show/hide token">
+                    <i class="bi bi-eye"></i>
+                  </button>
+                </div>
+              </div>
+
+              <div class="mb-3">
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="s_alert_api_verify_tls" ${_checked(s.alert_api_verify_tls !== false)}>
+                  <label class="form-check-label" for="s_alert_api_verify_tls">Verify TLS certificate</label>
+                </div>
+                <small class="text-muted">
+                  Uncheck for self-signed or private-CA endpoints.
+                </small>
+              </div>
+
+              <div class="mb-0 d-flex gap-2">
+                <button class="btn btn-sm btn-outline-secondary" id="btn_api_test_auth" type="button">
+                  <i class="bi bi-shield-check me-1"></i>Test Auth
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" id="btn_api_send_test" type="button">
+                  <i class="bi bi-send me-1"></i>Send Test Message
+                </button>
+              </div>
+
             </div>
           </div>
 
@@ -1065,6 +1131,77 @@ const SettingsManager = (() => {
       }
       btn.disabled = false;
       btn.innerHTML = '<i class="bi bi-send me-1"></i>Test Slack';
+    });
+
+    // API-based alerting: bearer token show/hide.  We swap input type, not the
+    // value, so the field is always submittable and Save Settings still gates
+    // on the '(set)' placeholder via the _collect token guard.
+    document.getElementById('btn_api_token_show')?.addEventListener('click', () => {
+      const input = document.getElementById('s_api_token');
+      const icon = document.querySelector('#btn_api_token_show i');
+      if (!input) return;
+      if (input.type === 'password') {
+        input.type = 'text';
+        if (icon) { icon.classList.remove('bi-eye'); icon.classList.add('bi-eye-slash'); }
+      } else {
+        input.type = 'password';
+        if (icon) { icon.classList.remove('bi-eye-slash'); icon.classList.add('bi-eye'); }
+      }
+    });
+
+    // Helper: gather the API form values for either test endpoint.
+    // Token retains the '(set)' placeholder when the user didn't retype —
+    // the backend resolves it to the stored value.
+    const _collectApiTestBody = () => {
+      const baseUrl = document.getElementById('s_api_base_url')?.value?.trim() || '';
+      const domain  = document.getElementById('s_api_domain')?.value?.trim() || '';
+      const token   = document.getElementById('s_api_token')?.value || '';
+      const verifyTls = !!(document.getElementById('s_alert_api_verify_tls')?.checked);
+      return { base_url: baseUrl, domain, token, verify_tls: verifyTls };
+    };
+
+    // API-based alerting: Test Auth — calls /alerts/api-test (verify endpoint).
+    document.getElementById('btn_api_test_auth')?.addEventListener('click', async () => {
+      const body = _collectApiTestBody();
+      if (!body.base_url) { Utils.toast('Enter the API endpoint root first', 'warning'); return; }
+      if (!body.domain)   { Utils.toast('Enter the API domain first',         'warning'); return; }
+      const btn = document.getElementById('btn_api_test_auth');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Testing…';
+      try {
+        const resp = await Api.post('/alerts/api-test', body);
+        if (resp.success) {
+          Utils.toast(resp.message || 'Authentication verified', 'success');
+        } else {
+          Utils.toast('Auth test failed: ' + (resp.error || 'Unknown error'), 'danger');
+        }
+      } catch (e) {
+        Utils.toast('Auth test error: ' + e.message, 'danger');
+      }
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-shield-check me-1"></i>Test Auth';
+    });
+
+    // API-based alerting: Send Test Message — POSTs a synthetic alert.
+    document.getElementById('btn_api_send_test')?.addEventListener('click', async () => {
+      const body = _collectApiTestBody();
+      if (!body.base_url) { Utils.toast('Enter the API endpoint root first', 'warning'); return; }
+      if (!body.domain)   { Utils.toast('Enter the API domain first',         'warning'); return; }
+      const btn = document.getElementById('btn_api_send_test');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Sending…';
+      try {
+        const resp = await Api.post('/alerts/api-send-test', body);
+        if (resp.success) {
+          Utils.toast(resp.message || 'Test alert sent', 'success');
+        } else {
+          Utils.toast('Send test failed: ' + (resp.error || 'Unknown error'), 'danger');
+        }
+      } catch (e) {
+        Utils.toast('Send test error: ' + e.message, 'danger');
+      }
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-send me-1"></i>Send Test Message';
     });
 
     // Purge data
@@ -1753,6 +1890,25 @@ const SettingsManager = (() => {
     boolField ('s_alert_slack',      'alert_slack_enabled');
     strField  ('s_slack_webhook',    'alert_slack_webhook_url');
     strField  ('s_slack_name',       'alert_slack_display_name');
+
+    // API-based alerting — bearer token uses the '(set)' sensitive-field
+    // pattern: only send the token to the backend when the user actually
+    // typed a new value, otherwise the stored one is preserved.
+    boolField ('s_alert_api',           'alert_api_enabled');
+    strField  ('s_api_base_url',        'alert_api_base_url');
+    strField  ('s_api_domain',          'alert_api_domain');
+    boolField ('s_alert_api_verify_tls','alert_api_verify_tls');
+    const apiTok = document.getElementById('s_api_token')?.value || '';
+    if (apiTok && apiTok !== '(set)') changes.alert_api_token = apiTok;
+
+    // Enable-without-creds guard, matching the Slack pattern.
+    if (changes.alert_api_enabled &&
+        (!changes.alert_api_base_url || !changes.alert_api_domain)) {
+      changes.alert_api_enabled = false;
+      const apiToggle = document.getElementById('s_alert_api');
+      if (apiToggle) apiToggle.checked = false;
+      Utils.toast('API-based alerting requires endpoint root and domain — disabled.', 'warning');
+    }
     boolField ('s_wifi_ssid_enabled',       'wifi_ssid_enabled');
     strField  ('s_wifi_ssid_agent_url',     'wifi_ssid_agent_url');
     strField  ('s_wifi_ssid_agent_iface',   'wifi_ssid_agent_interface');

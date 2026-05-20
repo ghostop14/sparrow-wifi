@@ -191,6 +191,15 @@ class Database:
             'alert_slack_enabled': 'false',
             'alert_slack_webhook_url': '',
             'alert_slack_display_name': 'Sparrow DroneID',
+            # API-based alert delivery (generic ECS-shaped POST to an
+            # external alert ingest API).  Default off; existing installs
+            # inherit these via INSERT OR IGNORE on next startup, leaving
+            # the channel disabled until the operator configures it.
+            'alert_api_enabled': 'false',
+            'alert_api_base_url': '',
+            'alert_api_domain': '',
+            'alert_api_token': '',
+            'alert_api_verify_tls': 'true',
             'tile_cache_enabled': 'true',
             'monitor_interface': '',
             'operator_name': '',
