@@ -63,7 +63,7 @@ A standalone web-based drone detection and tracking system that decodes FAA-mand
 - **Real-time map** &mdash; Leaflet-based map with quadcopter icons, heading indicators, operator position markers, and drone-to-operator lines
 - **At-a-glance labels** &mdash; Operator ID and altitude AGL displayed under each drone icon on the map
 - **Detail popups** &mdash; Click a drone for serial, registration ID, operator ID, type, speed, heading, altitude, bearing/range from receiver, BVLOS status
-- **Alert system** &mdash; Configurable alerts for new drones, altitude violations, speed violations, and signal loss with audio tones, visual toasts, and Slack webhook notifications
+- **Alert system** &mdash; Configurable alerts for new drones, altitude violations, speed violations, and signal loss with audio tones, visual toasts, Slack webhook notifications, and optional bearer-token JSON POSTs to a generic external alert-ingest API (see [API-Based Alerting](#api-based-alerting) below)
 - **Alert acknowledgment** &mdash; Three-state workflow (Active/Acknowledged/Resolved) with operator identity, shared across all connected devices
 - **Airport geozones** &mdash; Automatic download and display of nearby airports (OurAirports data) and FAA Prohibited/Restricted airspace polygons, cached locally for offline operation
 - **GPS** &mdash; gpsd integration or configurable static coordinates
@@ -73,6 +73,71 @@ A standalone web-based drone detection and tracking system that decodes FAA-mand
 - **Metric / Imperial** &mdash; Full unit preference support throughout the UI and alerts
 
 Web UI runs at `http://localhost:8097` once started. See [Installation](#sparrow-droneid-web-application-1) below for setup, and the [API reference](sparrow-droneid/sparrow_drone_id_api.md) for programmatic access.
+
+### API-Based Alerting
+
+In addition to Slack webhooks, Sparrow DroneID can POST each fired alert
+to a generic external alert-ingest endpoint. The channel is **disabled
+by default**; configure it in Settings → Alerts → API-Based Alerting:
+
+- **Enable** &mdash; on/off toggle
+- **API Endpoint Root** &mdash; full root URL including any path prefix, e.g. `http://MY_API_HOST:PORT/API_ROOT`
+- **Domain** &mdash; opaque tenant string the receiving API uses to route alerts
+- **Bearer Token** &mdash; sent in the `Authorization: Bearer ...` header; masked in the UI once stored
+- **Verify TLS** &mdash; uncheck for self-signed or private-CA endpoints
+- **Test Auth** &mdash; calls the receiver's verify endpoint and reports a clear pass/fail
+- **Send Test Message** &mdash; POSTs a synthetic alert (`rule.category: "test"`, serial `TEST-0000`) so the receiver can be exercised end-to-end without waiting for a real drone
+
+#### Endpoint contract
+
+Sparrow DroneID makes two calls against the configured root URL:
+
+| Verb | Path | Purpose |
+|------|------|---------|
+| `POST` | `{root}/v1/alerts/verify` | Credential check &mdash; body `{"domain": "<configured>"}`. Receiver should reply `200 {"status":"ok"}` on success, `401` on bad token. |
+| `POST` | `{root}/v1/alerts` | Fire an alert &mdash; body is the JSON below. Receiver should reply `201 {"alert_id":"..."}` on success. `503` responses are retried with exponential backoff (3 retries); `4xx` aborts without retry. A `200 {"status":"dropped"}` indicates the domain is disabled upstream. |
+
+Both calls send `Authorization: Bearer <token>` and `Content-Type: application/json`.
+
+#### Payload shape
+
+```json
+{
+  "domain": "<configured>",
+  "alert": {
+    "message": "<human-readable text identical to the Slack body>",
+    "observer": {
+      "name": "<operator_name or 'Sparrow DroneID'>",
+      "type": "drone-sensor",
+      "geo": {"location": {"lat": 0.0, "lon": 0.0}}
+    },
+    "rule":  {"name": "<alert type label>", "category": "drone_detection"},
+    "event": {
+      "severity": 40,
+      "category": "network",
+      "action":   "new_drone"
+    },
+    "labels": {
+      "serial":     "<drone serial>",
+      "vendor":     "<resolved vendor>",
+      "ua_type":    "<UA type display name>",
+      "alert_type": "new_drone | altitude_max | speed_max | signal_lost"
+    },
+    "source": {"geo": {"location": {"lat": 0.0, "lon": 0.0}}},
+    "details": {
+      "operator_id": "...", "registration_id": "...", "self_id_text": "...",
+      "mac_address": "...", "protocol": "...", "rssi": -68,
+      "range_m": 1234.5, "bearing_deg": 215.0, "bearing_cardinal": "SW",
+      "speed_mps": 5.2, "direction_deg": 240.0,
+      "altitude_m_agl": 42.0, "detail": "..."
+    }
+  }
+}
+```
+
+`observer.geo.location` is included when the receiver has a GPS fix; `source.geo.location` is included when the drone is broadcasting a position. Severity follows the ECS convention (lower = more urgent): warnings (`new_drone`, `altitude_max`, `speed_max`) are `40`, informational events (`signal_lost`) are `70`. Friendly-tagged drones do not fire alerts when the operator-side "Alert on Friendly drones" toggle is off, so they do not hit this endpoint either.
+
+Synthetic test alerts emitted by the **Send Test Message** button use `rule.category: "test"`, `event.action: "test"`, `event.severity: 70`, and serial `TEST-0000` so the receiver can recognise and exclude them from operational dashboards.
 
 ---
 

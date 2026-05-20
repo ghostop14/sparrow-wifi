@@ -116,6 +116,19 @@ class AlertEngine:
         self._slack_webhook_url: str = self._db.get_setting('alert_slack_webhook_url', '') or ''
         self._slack_display_name: str = self._db.get_setting('alert_slack_display_name', 'Sparrow DroneID') or 'Sparrow DroneID'
 
+        # API-based alert delivery: ECS-shaped POST to a generic alert
+        # ingest endpoint. base_url is the full root including any path
+        # prefix (e.g. https://host:port/some/api/root); the notifier
+        # appends /v1/alerts and /v1/alerts/verify.
+        self._api_enabled: bool      = _bool('alert_api_enabled', False)
+        self._api_base_url: str      = self._db.get_setting('alert_api_base_url', '') or ''
+        self._api_domain: str        = self._db.get_setting('alert_api_domain', '') or ''
+        self._api_token: str         = self._db.get_setting('alert_api_token', '') or ''
+        self._api_verify_tls: bool   = _bool('alert_api_verify_tls', True)
+        # operator_name flows into the observer.name field on outbound
+        # alerts; falls back to a generic label if not configured.
+        self._operator_name: str     = self._db.get_setting('operator_name', '') or ''
+
     def reload_config(self) -> None:
         """Re-read alert configuration from the database."""
         self._load_config()
@@ -490,6 +503,9 @@ class AlertEngine:
         if self._slack_enabled and self._slack_webhook_url:
             self._post_slack(alert_dict)
 
+        if self._api_enabled and self._api_base_url and self._api_token:
+            self._post_api(alert_dict)
+
     def _run_script(self, alert_dict: dict) -> None:
         """Invoke the external alert script in a daemon thread.
 
@@ -660,3 +676,316 @@ class AlertEngine:
             return {'success': True, 'message': 'Test message sent'}
         except Exception as e:
             return {'success': False, 'error': str(e)}
+
+    # ------------------------------------------------------------------ #
+    # API-based alert delivery                                            #
+    # ------------------------------------------------------------------ #
+
+    # Suppress the InsecureRequestWarning that urllib3 logs every time a
+    # request is made with verify=False.  Operators who disable TLS
+    # verification have already made that choice in settings; one log
+    # warning per process is enough.  Best-effort.
+    try:
+        import urllib3 as _urllib3
+        _urllib3.disable_warnings(_urllib3.exceptions.InsecureRequestWarning)
+    except Exception:
+        pass
+
+    # Map alert types to ECS severity numerics (lower = more urgent).
+    # Mirrors the convention used by sibling bridges (AIS, ACARS, ADS-B).
+    _API_SEVERITY_MAP = {
+        'new_drone':    40,   # warning — operator should look
+        'altitude_max': 40,
+        'speed_max':    40,
+        'signal_lost':  70,   # info — informational
+    }
+
+    def _build_api_payload(self, alert_dict: dict, is_test: bool = False) -> dict:
+        """Build the ECS-shaped JSON body for one outbound alert.
+
+        Generic payload — no project-specific terms in the wire format.
+        observer / source.geo / rule / event / labels follow ECS conventions
+        so the receiving system can route without app knowledge.
+        """
+        alert_type = alert_dict.get('alert_type', 'unknown')
+        type_labels = {
+            'new_drone':    'New drone detected',
+            'altitude_max': 'Drone altitude violation',
+            'speed_max':    'Drone speed violation',
+            'signal_lost':  'Drone signal lost',
+        }
+        if is_test:
+            rule_name = 'API test message'
+            rule_category = 'test'
+            severity_num = 70
+            action = 'test'
+            message = f'Test message from {self._operator_name or "Sparrow DroneID"}'
+        else:
+            rule_name = type_labels.get(
+                alert_type, alert_type.replace('_', ' ').title())
+            rule_category = 'drone_detection'
+            severity_num = self._API_SEVERITY_MAP.get(alert_type, 70)
+            action = alert_type
+            # Reuse the operator-facing Slack message text body so the
+            # receiving system sees the same human-readable summary.
+            message = self._format_slack_message(alert_dict)
+
+        observer: Dict = {
+            'name': self._operator_name or 'Sparrow DroneID',
+            'type': 'drone-sensor',
+        }
+        if self._gps:
+            rx_lat, rx_lon, _rx_alt = self._gps.get_receiver_position()
+            if rx_lat != 0.0 or rx_lon != 0.0:
+                observer['geo'] = {'location': {
+                    'lat': float(rx_lat), 'lon': float(rx_lon)}}
+
+        body: Dict = {
+            'domain': self._api_domain,
+            'alert': {
+                'message': message,
+                'observer': observer,
+                'rule':  {'name': rule_name, 'category': rule_category},
+                'event': {
+                    'severity': severity_num,
+                    'category': 'network',
+                    'action':   action,
+                },
+                'labels': {
+                    'serial':      alert_dict.get('serial_number', '') or '',
+                    'vendor':      alert_dict.get('vendor', '') or '',
+                    'ua_type':     alert_dict.get('ua_type_name', '') or '',
+                    'alert_type':  alert_type,
+                },
+                'details': {
+                    'operator_id':       alert_dict.get('operator_id', ''),
+                    'registration_id':   alert_dict.get('registration_id', ''),
+                    'self_id_text':      alert_dict.get('self_id_text', ''),
+                    'mac_address':       alert_dict.get('mac_address', ''),
+                    'protocol':          alert_dict.get('protocol', ''),
+                    'rssi':              alert_dict.get('rssi'),
+                    'range_m':           alert_dict.get('range_m'),
+                    'bearing_deg':       alert_dict.get('bearing_deg'),
+                    'bearing_cardinal':  alert_dict.get('bearing_cardinal', ''),
+                    'speed_mps':         alert_dict.get('speed'),
+                    'direction_deg':     alert_dict.get('direction'),
+                    'altitude_m_agl':    alert_dict.get('drone_height_agl'),
+                    'detail':            alert_dict.get('detail', ''),
+                },
+            },
+        }
+
+        # Source geo: drone position when broadcast.  (0, 0) is treated as
+        # absent — the device hasn't transmitted a position yet.
+        drone_lat = alert_dict.get('drone_lat')
+        drone_lon = alert_dict.get('drone_lon')
+        if drone_lat and drone_lon and (drone_lat != 0.0 or drone_lon != 0.0):
+            body['alert']['source'] = {'geo': {'location': {
+                'lat': float(drone_lat), 'lon': float(drone_lon)}}}
+        return body
+
+    def _post_api(self, alert_dict: dict) -> None:
+        """Dispatch an alert to the configured API endpoint in a daemon thread.
+
+        Fire-and-forget — failures are logged but never block detection or
+        the rest of the alert pipeline (script / Slack / DB / on_alert).
+        Retries 503 with exponential backoff; aborts on 4xx without retry.
+        """
+        url = self._api_base_url.rstrip('/') + '/v1/alerts'
+        token = self._api_token
+        domain = self._api_domain
+        verify_tls = self._api_verify_tls
+        payload = self._build_api_payload(alert_dict, is_test=False)
+
+        def _send():
+            headers = {
+                'Authorization': f'Bearer {token}',
+                'Content-Type':  'application/json',
+            }
+            backoff = 1.0
+            for attempt in range(4):  # 1 initial + 3 retries on 503
+                try:
+                    resp = _requests.post(url, json=payload, headers=headers,
+                                          timeout=15, verify=verify_tls)
+                except _requests.RequestException as exc:
+                    log.warning("alert_engine: API POST network error "
+                                "(attempt %d/4): %s", attempt + 1, exc)
+                    if attempt < 3:
+                        time.sleep(backoff)
+                        backoff *= 2
+                    continue
+                if resp.status_code == 201:
+                    return
+                if resp.status_code == 503 and attempt < 3:
+                    log.warning(
+                        "alert_engine: API returned 503 (attempt %d/4) — "
+                        "retrying in %.1fs", attempt + 1, backoff)
+                    time.sleep(backoff)
+                    backoff *= 2
+                    continue
+                if resp.status_code == 200:
+                    # Some endpoints reply 200 with status:dropped when the
+                    # domain is disabled upstream.  Log and stop.
+                    try:
+                        if resp.json().get('status') == 'dropped':
+                            log.warning(
+                                "alert_engine: API reports domain '%s' is "
+                                "disabled — alert dropped upstream", domain)
+                            return
+                    except ValueError:
+                        pass
+                log.error("alert_engine: API POST failed status=%d body=%s",
+                          resp.status_code, resp.text[:200])
+                return
+
+        t = threading.Thread(target=_send, daemon=True, name='alert-api')
+        t.start()
+
+    @staticmethod
+    def _api_verify_request(base_url: str, domain: str, token: str,
+                            verify_tls: bool) -> dict:
+        """Call the verify endpoint. Returns {success, message/error}.
+
+        Pure static helper: receives all credentials so the api-test handler
+        can call it directly without depending on instance state.  Error
+        messages are operator-actionable (auth vs URL vs network).
+        """
+        if not base_url:
+            return {'success': False, 'error': 'API endpoint root is required.'}
+        if not domain:
+            return {'success': False, 'error': 'Domain is required.'}
+        if not token:
+            return {'success': False, 'error': 'Bearer token is required.'}
+        url = base_url.rstrip('/') + '/v1/alerts/verify'
+        headers = {
+            'Authorization': f'Bearer {token}',
+            'Content-Type':  'application/json',
+        }
+        try:
+            resp = _requests.post(url, json={'domain': domain},
+                                  headers=headers, timeout=10,
+                                  verify=verify_tls)
+        except _requests.exceptions.SSLError as exc:
+            return {'success': False,
+                    'error': f'TLS verification failed: {exc}. '
+                             'Disable "Verify TLS" if the endpoint uses a '
+                             'self-signed or private-CA certificate.'}
+        except _requests.exceptions.ConnectionError as exc:
+            return {'success': False,
+                    'error': f'Could not reach the server: {exc}. '
+                             'Check the endpoint root URL and network access.'}
+        except _requests.exceptions.Timeout:
+            return {'success': False,
+                    'error': 'Request timed out after 10s.'}
+        except _requests.RequestException as exc:
+            return {'success': False, 'error': f'Request error: {exc}'}
+
+        if resp.status_code == 200:
+            try:
+                ok = resp.json().get('status') == 'ok'
+            except ValueError:
+                ok = False
+            if ok:
+                return {'success': True,
+                        'message': f"Authentication verified for domain '{domain}'."}
+            return {'success': False,
+                    'error': f'Server returned 200 but unexpected body: '
+                             f'{resp.text[:200]}'}
+        if resp.status_code == 401:
+            return {'success': False,
+                    'error': 'Authentication failed (401) — check the '
+                             'domain and bearer token.'}
+        if resp.status_code == 404:
+            return {'success': False,
+                    'error': 'Endpoint not found (404) — check the API root '
+                             'URL includes any required path prefix.'}
+        if resp.status_code == 503:
+            return {'success': False,
+                    'error': 'Server reported temporary unavailability (503).'}
+        return {'success': False,
+                'error': f'Unexpected response status {resp.status_code}: '
+                         f'{resp.text[:200]}'}
+
+    def test_api_auth(self) -> dict:
+        """Convenience wrapper: verify with the engine's currently-loaded
+        API credentials.  Caller typically just reloads config first via
+        reload_config() so settings just saved are visible."""
+        return self._api_verify_request(
+            self._api_base_url, self._api_domain, self._api_token,
+            self._api_verify_tls)
+
+    def test_api_send(self) -> dict:
+        """Send a synthetic test alert to the configured endpoint.  Returns
+        {success, message/error}.  Uses rule.category='test' and a sentinel
+        serial so the receiver UI can recognise it as a test artifact."""
+        base_url = self._api_base_url
+        domain = self._api_domain
+        token = self._api_token
+        verify_tls = self._api_verify_tls
+        if not base_url:
+            return {'success': False, 'error': 'API endpoint root is required.'}
+        if not domain:
+            return {'success': False, 'error': 'Domain is required.'}
+        if not token:
+            return {'success': False, 'error': 'Bearer token is required.'}
+
+        synthetic = {
+            'alert_type':      'test',
+            'serial_number':   'TEST-0000',
+            'detail':          'Synthetic alert generated by the Sparrow DroneID Send-Test action.',
+            'drone_lat':       0.0,
+            'drone_lon':       0.0,
+            'drone_height_agl': 0,
+            'vendor':          'Sparrow DroneID (test)',
+            'ua_type_name':    'Test',
+        }
+        payload = self._build_api_payload(synthetic, is_test=True)
+        url = base_url.rstrip('/') + '/v1/alerts'
+        headers = {
+            'Authorization': f'Bearer {token}',
+            'Content-Type':  'application/json',
+        }
+        try:
+            resp = _requests.post(url, json=payload, headers=headers,
+                                  timeout=10, verify=verify_tls)
+        except _requests.exceptions.SSLError as exc:
+            return {'success': False,
+                    'error': f'TLS verification failed: {exc}. '
+                             'Disable "Verify TLS" if the endpoint uses a '
+                             'self-signed or private-CA certificate.'}
+        except _requests.exceptions.ConnectionError as exc:
+            return {'success': False,
+                    'error': f'Could not reach the server: {exc}.'}
+        except _requests.exceptions.Timeout:
+            return {'success': False, 'error': 'Request timed out after 10s.'}
+        except _requests.RequestException as exc:
+            return {'success': False, 'error': f'Request error: {exc}'}
+
+        if resp.status_code == 201:
+            try:
+                alert_id = resp.json().get('alert_id', '?')
+            except ValueError:
+                alert_id = '?'
+            return {'success': True,
+                    'message': f'Test alert accepted (alert_id={alert_id}).'}
+        if resp.status_code == 200:
+            try:
+                if resp.json().get('status') == 'dropped':
+                    return {'success': False,
+                            'error': f"Server accepted the request but "
+                                     f"reports domain '{domain}' is disabled "
+                                     f"upstream — alert dropped."}
+            except ValueError:
+                pass
+        if resp.status_code == 401:
+            return {'success': False,
+                    'error': 'Authentication failed (401) — check domain and token.'}
+        if resp.status_code == 400:
+            return {'success': False,
+                    'error': f'Server rejected payload (400): {resp.text[:200]}'}
+        if resp.status_code == 503:
+            return {'success': False,
+                    'error': 'Server reported temporary unavailability (503).'}
+        return {'success': False,
+                'error': f'Unexpected response status {resp.status_code}: '
+                         f'{resp.text[:200]}'}

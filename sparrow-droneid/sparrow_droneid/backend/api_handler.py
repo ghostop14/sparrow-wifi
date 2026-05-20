@@ -558,6 +558,7 @@ def _coerce_settings(raw: Dict[str, str]) -> Dict[str, Any]:
         'https_enabled', 'cot_enabled',
         'alert_audio_enabled', 'alert_visual_enabled', 'alert_script_enabled',
         'alert_slack_enabled', 'alert_friendly_enabled',
+        'alert_api_enabled', 'alert_api_verify_tls',
         'tile_cache_enabled',
         'wifi_ssid_enabled',
         'es_enabled', 'es_verify_tls', 'es_dashboards_verify_tls',
@@ -568,6 +569,7 @@ def _coerce_settings(raw: Dict[str, str]) -> Dict[str, Any]:
     # Sensitive fields: show '(set)' if non-empty, '' if empty — never reveal value.
     sensitive_keys = {
         'auth_token',
+        'alert_api_token',
         'es_password', 'es_api_key',
         'es_dashboards_password', 'es_dashboards_api_key',
     }
@@ -1242,6 +1244,117 @@ def api_alerts_slack_test(req: RequestHandler):
     webhook_url = req.json_data.get('webhook_url', '')
     display_name = req.json_data.get('display_name', 'Sparrow DroneID')
     result = AlertEngine.test_slack(webhook_url, display_name)
+    req._send_ok(result)
+
+
+def _resolve_api_test_token(submitted: str) -> str:
+    """Resolve the bearer token from a test-form submission.
+
+    The settings GET endpoint masks the stored token as '(set)'; if that
+    placeholder comes back to us in a test submission it means the user
+    didn't retype the token and wants us to use the stored value.
+    """
+    if submitted and submitted != '(set)':
+        return submitted
+    if _db is None:
+        return ''
+    return _db.get_setting('alert_api_token', '') or ''
+
+
+@router.route('POST', '/api/v1/alerts/api-test', spec={
+    'summary': 'Verify API-based alerting credentials',
+    'tags': ['Alerts'],
+    'requestBody': json_body_inline(
+        {'base_url':   {'type': 'string', 'description': 'Full API endpoint root URL (e.g. http://MY_API_HOST:PORT/API_ROOT)'},
+         'domain':     {'type': 'string', 'description': 'API alert domain'},
+         'token':      {'type': 'string', 'description': 'Bearer token (use "(set)" to test the stored value)'},
+         'verify_tls': {'type': 'boolean', 'description': 'Verify the server\'s TLS certificate'}},
+        required_props=['base_url', 'domain'],
+        description='API alert verification parameters',
+    ),
+    'responses': {
+        '200': response_inline(
+            {'success': {'type': 'boolean'},
+             'message': {'type': 'string'},
+             'error':   {'type': 'string'}},
+            'Verification result',
+        ),
+    },
+})
+def api_alerts_api_test(req: RequestHandler):
+    """Verify the configured API alerting credentials by calling the
+    upstream /v1/alerts/verify endpoint.  Does NOT send any alert."""
+    if req.json_data is None:
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'JSON body required')
+        return
+    base_url   = (req.json_data.get('base_url', '') or '').strip()
+    domain     = (req.json_data.get('domain', '') or '').strip()
+    token      = _resolve_api_test_token(req.json_data.get('token', '') or '')
+    verify_tls = bool(req.json_data.get('verify_tls', True))
+    result = AlertEngine._api_verify_request(base_url, domain, token, verify_tls)
+    req._send_ok(result)
+
+
+@router.route('POST', '/api/v1/alerts/api-send-test', spec={
+    'summary': 'Send a synthetic test alert to the configured API endpoint',
+    'tags': ['Alerts'],
+    'requestBody': json_body_inline(
+        {'base_url':   {'type': 'string'},
+         'domain':     {'type': 'string'},
+         'token':      {'type': 'string', 'description': 'Bearer token (use "(set)" to send with the stored value)'},
+         'verify_tls': {'type': 'boolean'}},
+        required_props=['base_url', 'domain'],
+        description='API alert send-test parameters',
+    ),
+    'responses': {
+        '200': response_inline(
+            {'success': {'type': 'boolean'},
+             'message': {'type': 'string'},
+             'error':   {'type': 'string'}},
+            'Send-test result',
+        ),
+    },
+})
+def api_alerts_api_send_test(req: RequestHandler):
+    """Build a synthetic test alert and POST it to the configured endpoint.
+
+    Uses rule.category='test' and a sentinel serial ('TEST-0000') so the
+    receiving system can recognise it as a test artifact and exclude it
+    from operational dashboards.
+    """
+    if req.json_data is None:
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'JSON body required')
+        return
+    if _alert_engine is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE,
+                        'Alert engine not available')
+        return
+    # Persist the submitted credentials to a temporary engine state so
+    # _build_api_payload + test_api_send see the form values, not the
+    # last-saved values.  We snapshot/restore around the test so live
+    # config is unaffected.
+    base_url   = (req.json_data.get('base_url', '') or '').strip()
+    domain     = (req.json_data.get('domain', '') or '').strip()
+    token      = _resolve_api_test_token(req.json_data.get('token', '') or '')
+    verify_tls = bool(req.json_data.get('verify_tls', True))
+
+    snapshot = (
+        _alert_engine._api_base_url,
+        _alert_engine._api_domain,
+        _alert_engine._api_token,
+        _alert_engine._api_verify_tls,
+    )
+    try:
+        _alert_engine._api_base_url   = base_url
+        _alert_engine._api_domain     = domain
+        _alert_engine._api_token      = token
+        _alert_engine._api_verify_tls = verify_tls
+        result = _alert_engine.test_api_send()
+    finally:
+        (_alert_engine._api_base_url,
+         _alert_engine._api_domain,
+         _alert_engine._api_token,
+         _alert_engine._api_verify_tls) = snapshot
     req._send_ok(result)
 
 
@@ -2026,6 +2139,8 @@ _SETTINGS_WRITABLE = frozenset({
     'alert_script_enabled', 'alert_script_path',
     'alert_friendly_enabled',
     'alert_slack_enabled', 'alert_slack_webhook_url', 'alert_slack_display_name',
+    'alert_api_enabled', 'alert_api_base_url', 'alert_api_domain',
+    'alert_api_token', 'alert_api_verify_tls',
     'tile_cache_enabled',
     'monitor_interface',
     'operator_name',
