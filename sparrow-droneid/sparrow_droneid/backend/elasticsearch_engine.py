@@ -77,6 +77,15 @@ def _suppress_urllib3_warnings() -> None:
         _URLLIB3_WARNINGS_SUPPRESSED = True
 
 
+# Raise the underlying HTTP library loggers to ERROR at import time so that
+# connection failures during ad-hoc client use (Test Cluster, Test
+# Dashboards, ILM refresh, etc.) don't dump tracebacks to the console
+# before the engine ever calls start().  The engine's own logging is
+# concise and handles retry/backoff itself.
+for _lib_logger_name in ("opensearch", "elasticsearch", "urllib3.connectionpool"):
+    logging.getLogger(_lib_logger_name).setLevel(logging.ERROR)
+
+
 def _utc_now_iso() -> str:
     """Return current UTC time as ISO 8601 with Z suffix.
 
@@ -1355,13 +1364,6 @@ class ElasticsearchEngine:
             logger.warning("ES engine not starting: %s", validation_error)
             self._status.record_error(f"not_configured: {validation_error}")
             return
-
-        # Suppress noisy tracebacks from the underlying HTTP libraries.
-        # Connection errors are expected when the cluster is temporarily
-        # unreachable; this engine already logs concise status messages
-        # and handles retry/backoff itself.
-        for lib_logger_name in ("opensearch", "elasticsearch", "urllib3.connectionpool"):
-            logging.getLogger(lib_logger_name).setLevel(logging.ERROR)
 
         # Create client
         try:
