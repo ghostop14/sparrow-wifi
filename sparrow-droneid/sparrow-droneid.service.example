@@ -1,0 +1,20 @@
+# /etc/systemd/system/sparrow-droneid.service
+[Unit]
+Description=sparrow-droneid
+After=network-online.target NetworkManager-wait-online.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=<path to sparrow-wifi>/sparrow-droneid/sparrow_droneid
+ExecStart=/usr/bin/python3 app.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+KillMode=mixed
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sparrow-droneid
+
+[Install]
+WantedBy=multi-user.target
