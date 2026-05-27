@@ -694,7 +694,7 @@ const SettingsManager = (() => {
                   <div class="mb-3">
                     <label class="form-label" for="s_es_dashboards_url">URL</label>
                     <input type="url" class="form-control form-control-sm" id="s_es_dashboards_url"
-                      value="${_esc(s.es_dashboards_url || 'https://localhost:5601')}" placeholder="https://localhost:5601">
+                      value="${_esc(s.es_dashboards_url || 'http://localhost:5601')}" placeholder="http://localhost:5601">
                     <small class="text-muted">Kibana or OpenSearch Dashboards URL</small>
                   </div>
 
