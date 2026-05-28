@@ -910,6 +910,7 @@ def api_drone_detail(req: RequestHandler, serial: str):
 # ---------------------------------------------------------------------------
 
 _VALID_DISPOSITIONS = frozenset({'friendly', 'threat', 'unknown'})
+_VALID_FLAGS = frozenset({'military', 'law_enforcement'})
 
 
 @router.route('PUT', '/api/v1/drones/{serial}/disposition', spec={
@@ -997,6 +998,125 @@ def api_drone_disposition_history(req: RequestHandler, serial: str):
     limit = req._qparam_int('limit', 500)
     try:
         rows = _require_db().get_disposition_history(drone_key=serial, limit=limit)
+    except Exception as e:
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
+        return
+    req._send_ok({'drone_key': serial, 'history': rows})
+
+
+# ---------------------------------------------------------------------------
+# Flags (military / law_enforcement)
+# ---------------------------------------------------------------------------
+
+@router.route('PUT', '/api/v1/drones/{serial}/flags', spec={
+    'summary': 'Set one or more flag tags for a drone (military, law_enforcement)',
+    'tags': ['Detections'],
+    'parameters': [path_param('serial', 'string', 'Drone key (URL-encoded)')],
+    'requestBody': json_body_inline(
+        {
+            'military': {'type': 'boolean', 'description': 'Military flag'},
+            'law_enforcement': {'type': 'boolean', 'description': 'Law enforcement flag'},
+            'changed_by': {'type': 'string', 'description': 'Operator identifier'},
+        },
+        required_props=[],
+        description='Partial flag update — provide at least one of military/law_enforcement',
+    ),
+    'responses': {
+        '200': response_inline(
+            {'drone_key': {'type': 'string'},
+             'military': {'type': 'boolean'},
+             'law_enforcement': {'type': 'boolean'}},
+            'Updated flag state',
+        ),
+        '400': {'description': 'Validation error — unknown key, missing flags, or non-boolean value'},
+        '503': {'description': 'Engine not available'},
+    },
+})
+def api_drone_set_flags(req: RequestHandler, serial: str):
+    if _droneid_engine is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Engine not available')
+        return
+
+    serial = unquote(serial)
+    body = req.json_data or {}
+
+    # Reject unknown body keys
+    unknown = set(body.keys()) - _VALID_FLAGS - {'changed_by'}
+    if unknown:
+        req._send_error(400, ErrorCode.VALIDATION_ERROR,
+                        f"Unknown field(s): {', '.join(sorted(unknown))}")
+        return
+
+    # Require at least one flag field
+    flag_keys = [k for k in body if k in _VALID_FLAGS]
+    if not flag_keys:
+        req._send_error(400, ErrorCode.VALIDATION_ERROR,
+                        f"At least one of {sorted(_VALID_FLAGS)} must be present")
+        return
+
+    # Validate each flag value is boolean
+    for k in flag_keys:
+        if not isinstance(body[k], bool):
+            req._send_error(400, ErrorCode.VALIDATION_ERROR,
+                            f"Field '{k}' must be a boolean (true/false)")
+            return
+
+    changed_by = str(body.get('changed_by', ''))
+
+    for flag_name in flag_keys:
+        try:
+            _droneid_engine.set_flag(serial, flag_name, bool(body[flag_name]),
+                                     changed_by=changed_by)
+        except ValueError as e:
+            req._send_error(400, ErrorCode.VALIDATION_ERROR, str(e))
+            return
+
+    result = _droneid_engine.get_flags(serial)
+    req._send_ok({'drone_key': serial, **result})
+
+
+@router.route('GET', '/api/v1/flags', spec={
+    'summary': 'Get flag event history across all drones',
+    'tags': ['Detections'],
+    'parameters': [
+        qparam('limit', 'integer', 'Maximum events to return (default 500)', default=500),
+    ],
+    'responses': {
+        '200': response_inline(
+            {'flags': {'type': 'array', 'items': {'type': 'object'}}},
+            'Flag event history',
+        ),
+    },
+})
+def api_flags_all(req: RequestHandler):
+    limit = req._qparam_int('limit', 500)
+    try:
+        rows = _require_db().get_flag_history(limit=limit)
+    except Exception as e:
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
+        return
+    req._send_ok({'flags': rows})
+
+
+@router.route('GET', '/api/v1/drones/{serial}/flags/history', spec={
+    'summary': 'Get flag event history for a single drone',
+    'tags': ['Detections'],
+    'parameters': [
+        path_param('serial', 'string', 'Drone key (URL-encoded)'),
+        qparam('limit', 'integer', 'Maximum events to return (default 500)', default=500),
+    ],
+    'responses': {
+        '200': response_inline(
+            {'drone_key': {'type': 'string'}, 'history': {'type': 'array', 'items': {'type': 'object'}}},
+            'Per-drone flag history',
+        ),
+    },
+})
+def api_drone_flag_history(req: RequestHandler, serial: str):
+    serial = unquote(serial)
+    limit = req._qparam_int('limit', 500)
+    try:
+        rows = _require_db().get_flag_history(drone_key=serial, limit=limit)
     except Exception as e:
         req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
         return

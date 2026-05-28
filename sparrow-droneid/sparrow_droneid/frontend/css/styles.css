@@ -1098,6 +1098,18 @@ html, body {
 .disposition-unknown { color: inherit; }
 .disposition-dot { display: inline-block; font-size: 10px; margin-right: 4px; }
 
+/* ---- Flag color classes ---- */
+.flag-military { color: #4d7c0f; }
+.flag-le { color: #2563eb; }
+
+/* ---- Flag chips (table rows, detail sidebar, map popups) ---- */
+.flag-chip { display: inline-block; font-size: 9px; font-weight: 700; line-height: 1; padding: 1px 3px; margin-right: 3px; border-radius: 3px; color: #fff; }
+.flag-chip.flag-military { background: #4d7c0f; color: #fff; }
+.flag-chip.flag-le { background: #2563eb; color: #fff; }
+
+/* ---- Map marker flag badge overlay ---- */
+.map-flag-badges { position: absolute; top: -4px; right: -4px; display: flex; flex-direction: column; gap: 1px; pointer-events: none; }
+
 /* ---- Compass rose ---- */
 .compass-container {
   position: absolute;

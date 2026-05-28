@@ -263,6 +263,10 @@ class DroneIDDevice:
     # Operator disposition tag — set by operator, not from RF frames
     disposition: str = "unknown"
 
+    # Operator-assigned classification flags — independent booleans, not an enum
+    military: bool = False
+    law_enforcement: bool = False
+
     def get_key(self) -> str:
         """Primary key for tracking: prefer serial, fall back to registration or MAC."""
         if self.serial_number:

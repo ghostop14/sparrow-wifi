@@ -644,6 +644,18 @@ const MapManager = (() => {
     return _compassVisible;
   }
 
+  // ---- Flag badges helper ----
+  // Returns an absolutely-positioned chip block (top-right corner of marker).
+  // Inject inside a position:relative wrapper.
+  function flagBadgesHtml(drone) {
+    const mil = drone && drone.military;
+    const le  = drone && drone.law_enforcement;
+    if (!mil && !le) return '';
+    const chips = (mil ? '<span class="flag-chip flag-military" title="Military" style="text-shadow:0 0 2px #000,0 0 2px #000;">MIL</span>' : '')
+      + (le  ? '<span class="flag-chip flag-le" title="Law Enforcement" style="text-shadow:0 0 2px #000,0 0 2px #000;">LE</span>' : '');
+    return `<div class="map-flag-badges">${chips}</div>`;
+  }
+
   // ---- Disposition color helper ----
   function dispositionColor(drone, fallback) {
     const disp = drone && drone.disposition;
@@ -693,7 +705,7 @@ const MapManager = (() => {
             <line x1="18" y1="13" x2="18" y2="7" stroke="#fff" stroke-width="1.5" stroke-linecap="round" opacity="0.9"/>
           </svg>
         </div>
-        ${labelHtml}
+        ${flagBadgesHtml(drone)}${labelHtml}
       </div>`;
 
     return L.divIcon({
@@ -734,7 +746,7 @@ const MapManager = (() => {
             <circle cx="8" cy="13.5" r="1"/>
           </svg>
         </div>
-        ${labelHtml}
+        ${flagBadgesHtml(drone)}${labelHtml}
       </div>`;
 
     return L.divIcon({
@@ -747,15 +759,18 @@ const MapManager = (() => {
 
   function makeOperatorIcon(drone) {
     const opColor = dispositionColor(drone, '#14B8A6');
-    const html = `<div style="
-      display:flex;align-items:center;justify-content:center;
-      width:22px;height:22px;
-      background:${opColor};
-      border-radius:50%;
-      border:2px solid rgba(0,0,0,0.4);
-      box-shadow:0 0 6px ${opColor}88;
-      color:#fff;font-size:12px;
-    "><i class="bi bi-controller"></i></div>`;
+    const html = `<div style="position:relative;width:22px;height:22px;">
+      <div style="
+        display:flex;align-items:center;justify-content:center;
+        width:22px;height:22px;
+        background:${opColor};
+        border-radius:50%;
+        border:2px solid rgba(0,0,0,0.4);
+        box-shadow:0 0 6px ${opColor}88;
+        color:#fff;font-size:12px;
+      "><i class="bi bi-controller"></i></div>
+      ${flagBadgesHtml(drone)}
+    </div>`;
     return L.divIcon({ className: '', html, iconSize: [22,22], iconAnchor: [11,11] });
   }
 
@@ -805,11 +820,16 @@ const MapManager = (() => {
     const serial = drone.serial_number || drone.mac_address || '?';
     const disp = drone.disposition || 'unknown';
     const dispHtml = `<span class="disposition-${esc(disp)}" style="font-weight:600;">${esc(disp.charAt(0).toUpperCase() + disp.slice(1))}</span>`;
+    const opFlagHtml = (drone.military || drone.law_enforcement)
+      ? (drone.military ? '<span class="flag-chip flag-military" title="Military">MIL</span>' : '')
+        + (drone.law_enforcement ? '<span class="flag-chip flag-le" title="Law Enforcement">LE</span>' : '')
+      : null;
 
     const rows = [
       _popupRow('Drone', esc(serial)),
       _popupRow('Operator ID', esc(opId)),
       _popupRow('Disposition', dispHtml),
+      opFlagHtml ? _popupRow('Flags', opFlagHtml) : null,
       _popupRow('Position', esc(`${opLat}, ${opLon}`)),
       _popupRow('Alt', esc(Utils.formatAlt(drone.operator_alt))),
       _popupRow('Pilot dist', esc(_bvlosStr(drone))),
@@ -881,11 +901,16 @@ const MapManager = (() => {
     const typeStr = [drone.vendor, uaType].filter(Boolean).join(' ') || (drone.protocol === 'wifi_ssid' ? 'WiFi SSID Detection' : '—');
     const disp = drone.disposition || 'unknown';
     const dispHtml = `<span class="disposition-${esc(disp)}" style="font-weight:600;">${esc(disp.charAt(0).toUpperCase() + disp.slice(1))}</span>`;
+    const flagHtml = (drone.military || drone.law_enforcement)
+      ? (drone.military ? '<span class="flag-chip flag-military" title="Military">MIL</span>' : '')
+        + (drone.law_enforcement ? '<span class="flag-chip flag-le" title="Law Enforcement">LE</span>' : '')
+      : null;
     const idRows = [
       _popupRow('Serial', esc(drone.serial_number || '—')),
       _popupRow('Type', esc(typeStr)),
       _popupRow('Operator', esc(drone.operator_id)),
       _popupRow('Disposition', dispHtml),
+      flagHtml ? _popupRow('Flags', flagHtml) : null,
     ].filter(Boolean).join('');
 
     // Kinematics block
@@ -1398,6 +1423,7 @@ const MapManager = (() => {
     // Disposition is a property of the physical drone; tagging from the
     // controller marker updates the same record the drone marker would.
     buildDispositionMenu(drone, _tagDroneFromMap).forEach(i => items.push(i));
+    buildFlagsMenu(drone, _toggleFlagFromMap).forEach(i => items.push(i));
 
     return items;
   }
@@ -1416,6 +1442,7 @@ const MapManager = (() => {
       items.push({ separator: true });
     }
     buildDispositionMenu(drone, _tagDroneFromMap).forEach(i => items.push(i));
+    buildFlagsMenu(drone, _toggleFlagFromMap).forEach(i => items.push(i));
     return items;
   }
 
@@ -1441,6 +1468,17 @@ const MapManager = (() => {
     if (!key) return;
     Api.putDisposition(key, disposition).catch(() => {});
     drone.disposition = disposition;
+    if (typeof App !== 'undefined' && App.pollDronesNow) {
+      App.pollDronesNow();
+    }
+  }
+
+  // ---- Flag toggling from map context menu ----
+  function _toggleFlagFromMap(drone, name, value) {
+    const key = drone.drone_key || drone.serial_number || drone.registration_id || drone.mac_address;
+    if (!key) return;
+    Api.putFlags(key, { [name]: value }).catch(() => {});
+    drone[name] = value;
     if (typeof App !== 'undefined' && App.pollDronesNow) {
       App.pollDronesNow();
     }

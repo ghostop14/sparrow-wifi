@@ -977,6 +977,10 @@ class DroneIDEngine:
         self._dispositions: Dict[str, str] = {}
         self._load_dispositions()
 
+        # Flags cache — nested dict: {drone_key: {flag_name: True}}; absent means False
+        self._flags: Dict[str, Dict[str, bool]] = {}
+        self._load_flags()
+
         # Monitoring state
         self._monitoring = False
         self._interface = ""
@@ -1226,6 +1230,7 @@ class DroneIDEngine:
         # Update active drones dict; collect migration info to act on outside lock
         migration = None
         disp_migration = None
+        flag_migration = None
         with self._lock:
             if key in self._active_drones:
                 existing = self._active_drones[key]
@@ -1253,6 +1258,9 @@ class DroneIDEngine:
 
             device.last_seen = now
             device.disposition, disp_migration = self._recover_disposition(device, key)
+            flags, flag_migration = self._recover_flags(device, key)
+            device.military = flags.get('military', False)
+            device.law_enforcement = flags.get('law_enforcement', False)
             self._active_drones[key] = device
 
             # RSSI history
@@ -1262,15 +1270,26 @@ class DroneIDEngine:
             if len(self._rssi_history[key]) > 10:
                 self._rssi_history[key] = self._rssi_history[key][-10:]
 
-        # Persist disposition migration to DB outside the lock
+        # Persist disposition/flags migration to DB outside the lock.
+        # migration is (old_key, new_key, had_disp, had_flags) or None.
         if migration:
-            try:
-                self._db.migrate_disposition_key(migration[0], migration[1])
-            except Exception:
-                import logging as _logging
-                _logging.getLogger(__name__).warning(
-                    'migrate_disposition_key %s→%s failed; in-memory state already updated',
-                    migration[0], migration[1])
+            old_key_m, new_key_m, had_disp_m, had_flags_m = migration
+            if had_disp_m:
+                try:
+                    self._db.migrate_disposition_key(old_key_m, new_key_m)
+                except Exception:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        'migrate_disposition_key %s→%s failed; in-memory state already updated',
+                        old_key_m, new_key_m)
+            if had_flags_m:
+                try:
+                    self._db.migrate_flags_key(old_key_m, new_key_m)
+                except Exception:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        'migrate_flags_key %s→%s failed; in-memory state already updated',
+                        old_key_m, new_key_m)
 
         # Persist legacy-keyed disposition recovery to DB outside the lock
         if disp_migration:
@@ -1281,6 +1300,16 @@ class DroneIDEngine:
                 _logging.getLogger(__name__).warning(
                     'disposition recovery %s→%s failed; in-memory state already updated',
                     disp_migration[0], disp_migration[1])
+
+        # Persist legacy-keyed flags recovery to DB outside the lock
+        if flag_migration:
+            try:
+                self._db.migrate_flags_key(flag_migration[0], flag_migration[1])
+            except Exception:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    'flags recovery %s→%s failed; in-memory state already updated',
+                    flag_migration[0], flag_migration[1])
 
         # Persist to database
         rx_lat, rx_lon, rx_alt = self._gps.get_receiver_position()
@@ -1311,6 +1340,7 @@ class DroneIDEngine:
         is_new = False
         migration = None
         disp_migration = None
+        flag_migration = None
 
         with self._lock:
             if key in self._active_drones:
@@ -1353,6 +1383,9 @@ class DroneIDEngine:
 
             device.last_seen = now
             device.disposition, disp_migration = self._recover_disposition(device, key)
+            flags, flag_migration = self._recover_flags(device, key)
+            device.military = flags.get('military', False)
+            device.law_enforcement = flags.get('law_enforcement', False)
             self._active_drones[key] = device
 
             # RSSI history
@@ -1363,14 +1396,26 @@ class DroneIDEngine:
                 self._rssi_history[key] = self._rssi_history[key][-10:]
 
         # Persist disposition migration to DB outside the lock
+        # Persist disposition/flags migration to DB outside the lock.
+        # migration is (old_key, new_key, had_disp, had_flags) or None.
         if migration:
-            try:
-                self._db.migrate_disposition_key(migration[0], migration[1])
-            except Exception:
-                import logging as _logging
-                _logging.getLogger(__name__).warning(
-                    'migrate_disposition_key %s→%s failed; in-memory state already updated',
-                    migration[0], migration[1])
+            old_key_m, new_key_m, had_disp_m, had_flags_m = migration
+            if had_disp_m:
+                try:
+                    self._db.migrate_disposition_key(old_key_m, new_key_m)
+                except Exception:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        'migrate_disposition_key %s→%s failed; in-memory state already updated',
+                        old_key_m, new_key_m)
+            if had_flags_m:
+                try:
+                    self._db.migrate_flags_key(old_key_m, new_key_m)
+                except Exception:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        'migrate_flags_key %s→%s failed; in-memory state already updated',
+                        old_key_m, new_key_m)
 
         # Persist legacy-keyed disposition recovery to DB outside the lock
         if disp_migration:
@@ -1381,6 +1426,16 @@ class DroneIDEngine:
                 _logging.getLogger(__name__).warning(
                     'disposition recovery %s→%s failed; in-memory state already updated',
                     disp_migration[0], disp_migration[1])
+
+        # Persist legacy-keyed flags recovery to DB outside the lock
+        if flag_migration:
+            try:
+                self._db.migrate_flags_key(flag_migration[0], flag_migration[1])
+            except Exception:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    'flags recovery %s→%s failed; in-memory state already updated',
+                    flag_migration[0], flag_migration[1])
 
         # Throttle DB writes and alert callbacks to avoid flooding.
         # The in-memory state (above) is always up-to-date for API queries.
@@ -1638,12 +1693,15 @@ class DroneIDEngine:
             drone_dict['rssi_trend'] = calc_rssi_trend(self._rssi_history.get(resolved, []))
             drone_dict['drone_key'] = resolved
         else:
-            # Try from DB; attach current disposition (detections table has none)
+            # Try from DB; attach current disposition + flags (detections table has none)
             row = self._db.get_drone_by_serial(serial)
             if row:
                 drone_dict = row
                 with self._lock:
                     drone_dict['disposition'] = self._dispositions.get(serial, 'unknown')
+                    _flags_sub = self._flags.get(serial, {})
+                    drone_dict['military'] = _flags_sub.get('military', False)
+                    drone_dict['law_enforcement'] = _flags_sub.get('law_enforcement', False)
                 drone_dict['drone_key'] = serial
 
         track = self._db.get_drone_track(serial, track_minutes)
@@ -1763,6 +1821,15 @@ class DroneIDEngine:
         with self._lock:
             self._dispositions = loaded
 
+    def _load_flags(self):
+        """Populate flags cache from DB at startup."""
+        try:
+            loaded = self._db.get_current_flags()
+        except Exception:
+            loaded = {}
+        with self._lock:
+            self._flags = loaded
+
     def _recover_disposition(self, device: DroneIDDevice, active_key: str):
         """Look up cached disposition for a device, migrating from legacy keys.
 
@@ -1801,6 +1868,35 @@ class DroneIDEngine:
 
         return 'unknown', None
 
+    def _recover_flags(self, device: DroneIDDevice, active_key: str):
+        """Look up cached flags for a device, migrating from legacy keys.
+
+        Must be called under self._lock.
+
+        Returns (flags_dict_copy, migration_tuple_or_None).  The returned dict
+        maps flag_name -> True for set flags only.  Caller handles DB write
+        outside the lock when migration_tuple is not None.
+        """
+        # Fast path: cache already keyed correctly
+        flags = self._flags.get(active_key)
+        if flags:
+            return dict(flags), None
+
+        # Try fallback identities from the device itself
+        fallback_keys = []
+        for cand in (device.serial_number, device.registration_id, device.mac_address):
+            if cand and cand != active_key and cand not in fallback_keys:
+                fallback_keys.append(cand)
+
+        for old_key in fallback_keys:
+            old_flags = self._flags.get(old_key)
+            if old_flags:
+                # Migrate the cache entry forward to the active key
+                self._flags[active_key] = self._flags.pop(old_key)
+                return dict(self._flags[active_key]), (old_key, active_key)
+
+        return {}, None
+
     def _resolve_active_key(self, passed_key: str) -> str:
         """Resolve a caller-provided key to the actual _active_drones dict key.
 
@@ -1823,11 +1919,13 @@ class DroneIDEngine:
         return passed_key
 
     def _maybe_migrate_key(self, new_device: DroneIDDevice, new_key: str):
-        """If a prior entry shares the same MAC but a different key, migrate its disposition.
+        """If a prior entry shares the same MAC but a different key, migrate its tags.
 
         Called under self._lock. Updates in-memory state immediately; returns
-        (old_key, new_key) if a disposition DB migration is needed so the caller
-        can execute the DB write outside the lock. Returns None if no migration.
+        (old_key, new_key, had_disposition, had_flags) if a DB migration is
+        needed so the caller can execute the DB writes outside the lock. The two
+        booleans let the caller migrate disposition and flags independently.
+        Returns None if no migration.
         """
         old_key = None
         for k, existing in self._active_drones.items():
@@ -1842,9 +1940,13 @@ class DroneIDEngine:
 
         # Update in-memory disposition state under the lock
         old_disp = self._dispositions.get(old_key)
-        migration_needed = bool(old_disp)
-        if migration_needed:
+        if old_disp:
             self._dispositions[new_key] = self._dispositions.pop(old_key)
+
+        # Update in-memory flags state under the lock
+        had_flags = old_key in self._flags
+        if had_flags:
+            self._flags[new_key] = self._flags.pop(old_key)
 
         # Transfer carry-over state and remove the old entry
         old_device = self._active_drones.pop(old_key)
@@ -1852,7 +1954,10 @@ class DroneIDEngine:
         # Preserve first_seen from the older entry
         new_device.first_seen = old_device.first_seen
 
-        return (old_key, new_key) if migration_needed else None
+        # Return (old_key, new_key, had_disp, had_flags) so callers can make
+        # targeted DB writes only for whatever actually existed.
+        migration_needed = bool(old_disp) or had_flags
+        return (old_key, new_key, bool(old_disp), had_flags) if migration_needed else None
 
     def set_disposition(self, drone_key: str, disposition: str, changed_by: str = '') -> None:
         """Tag a drone with a disposition. Persists to DB and updates in-memory state."""
@@ -1870,6 +1975,32 @@ class DroneIDEngine:
     def get_disposition(self, drone_key: str) -> str:
         with self._lock:
             return self._dispositions.get(drone_key, 'unknown')
+
+    def set_flag(self, drone_key: str, flag_name: str,
+                 value: bool, changed_by: str = '') -> None:
+        """Set a flag for a drone.  Persists to DB and updates in-memory state."""
+        with self._lock:
+            resolved = self._resolve_active_key(drone_key)
+        self._db.add_flag_event(resolved, flag_name, value, changed_by=changed_by)
+        with self._lock:
+            sub = self._flags.setdefault(resolved, {})
+            if value:
+                sub[flag_name] = True
+            else:
+                sub.pop(flag_name, None)
+                if not sub:
+                    self._flags.pop(resolved, None)
+            if resolved in self._active_drones:
+                setattr(self._active_drones[resolved], flag_name, value)
+
+    def get_flags(self, drone_key: str) -> Dict[str, bool]:
+        """Return {military: bool, law_enforcement: bool} for drone_key."""
+        with self._lock:
+            sub = self._flags.get(drone_key, {})
+            return {
+                'military': sub.get('military', False),
+                'law_enforcement': sub.get('law_enforcement', False),
+            }
 
 
 def check_prerequisites():

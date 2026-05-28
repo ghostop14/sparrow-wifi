@@ -158,7 +158,10 @@ const TableManager = (() => {
         const serial = tr.dataset.serial;
         const drone = _drones.find(d => d.serial_number === serial);
         if (!drone) return;
-        ContextMenu.show(e.clientX, e.clientY, buildDispositionMenu(drone, _tagDrone));
+        ContextMenu.show(e.clientX, e.clientY, [
+          ...buildDispositionMenu(drone, _tagDrone),
+          ...buildFlagsMenu(drone, _toggleFlag),
+        ]);
       });
     });
 
@@ -186,9 +189,11 @@ const TableManager = (() => {
     const dispDot = disp !== 'unknown'
       ? `<span class="disposition-dot disposition-${disp}" title="${disp}">&#9679;</span>`
       : '';
+    const flagChips = (drone.military ? '<span class="flag-chip flag-military" title="Military">MIL</span>' : '')
+      + (drone.law_enforcement ? '<span class="flag-chip flag-le" title="Law Enforcement">LE</span>' : '');
 
     return `<tr data-serial="${_esc(drone.serial_number)}" class="${stateClass} ${selected}">
-      <td title="${_esc(drone.serial_number)}">${dispDot}${_esc(Utils.shortSerial(drone.serial_number))}</td>
+      <td title="${_esc(drone.serial_number)}">${dispDot}${flagChips}${_esc(Utils.shortSerial(drone.serial_number))}</td>
       <td>${typeCell}</td>
       <td>${Utils.formatAlt(drone.drone_height_agl)}</td>
       <td>${Utils.formatSpeed(drone.speed)}</td>
@@ -254,6 +259,12 @@ const TableManager = (() => {
       <span class="disposition-${disp}" style="font-size:12px;font-weight:600;">${disp.charAt(0).toUpperCase() + disp.slice(1)}</span>
     </div>`;
 
+    const flagBadges = (drone.military || drone.law_enforcement) ? `
+      <div style="display:flex;align-items:center;gap:4px;margin-bottom:8px;">
+        ${drone.military ? '<span class="flag-chip flag-military" title="Military">MIL</span>' : ''}
+        ${drone.law_enforcement ? '<span class="flag-chip flag-le" title="Law Enforcement">LE</span>' : ''}
+      </div>` : '';
+
     // All RemoteID-sourced string fields pass through _esc() — a hostile
     // drone can embed HTML/JS in serial_number, self_id_text, operator_id,
     // ua_type_name, id_type_name, or protocol and the detail sidebar
@@ -261,7 +272,7 @@ const TableManager = (() => {
     let html = `
       <div class="detail-state-bar ${state}"></div>
       <div class="detail-serial">${_esc(drone.serial_number) || '—'}</div>
-      ${dispBadge}`;
+      ${dispBadge}${flagBadges}`;
 
     if (drone.self_id_text) {
       html += `<div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;font-style:italic;">"${_esc(drone.self_id_text)}"</div>`;
@@ -388,6 +399,19 @@ const TableManager = (() => {
     Api.putDisposition(key, disposition).catch(() => {});
     // Optimistically update local state so the UI refreshes immediately
     drone.disposition = disposition;
+    _render();
+    if (typeof App !== 'undefined' && App.pollDronesNow) {
+      App.pollDronesNow();
+    }
+  }
+
+  // ---- Flag toggling ----
+  function _toggleFlag(drone, name, value) {
+    const key = drone.drone_key || drone.serial_number || drone.registration_id || drone.mac_address;
+    if (!key) return;
+    Api.putFlags(key, { [name]: value }).catch(() => {});
+    // Optimistically update local state so the UI refreshes immediately
+    drone[name] = value;
     _render();
     if (typeof App !== 'undefined' && App.pollDronesNow) {
       App.pollDronesNow();

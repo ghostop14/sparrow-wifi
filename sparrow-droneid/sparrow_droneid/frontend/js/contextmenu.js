@@ -196,3 +196,26 @@ function buildDispositionMenu(drone, onTag) {
     ],
   }];
 }
+
+// Shared helper — builds the flags submenu items for a drone.
+// Two independent boolean toggles: Military (MIL) and Law Enforcement (LE).
+// Used by both table.js and map.js.
+function buildFlagsMenu(drone, onToggle) {
+  return [{
+    label: 'Flags',
+    submenu: [
+      {
+        label: 'Military (MIL)',
+        checked: !!drone.military,
+        colorClass: 'flag-military',
+        onClick: () => onToggle(drone, 'military', !drone.military),
+      },
+      {
+        label: 'Law Enforcement (LE)',
+        checked: !!drone.law_enforcement,
+        colorClass: 'flag-le',
+        onClick: () => onToggle(drone, 'law_enforcement', !drone.law_enforcement),
+      },
+    ],
+  }];
+}

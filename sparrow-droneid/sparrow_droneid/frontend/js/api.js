@@ -118,6 +118,22 @@ const Api = (() => {
     return get(`/drones/${encodeURIComponent(serial)}/disposition/history`, { limit });
   }
 
+  // ---- Flags ----
+
+  function putFlags(serial, flags, changedBy = '') {
+    const enc = encodeURIComponent(serial);
+    return put(`/drones/${enc}/flags`, { ...flags, changed_by: changedBy });
+  }
+
+  function getFlagsHistory(serial, limit = 500) {
+    const enc = encodeURIComponent(serial);
+    return get(`/drones/${enc}/flags/history`, { limit });
+  }
+
+  function getFlags(limit = 500) {
+    return get('/flags', { limit });
+  }
+
   // ---- History / Replay ----
 
   function getHistory(from, to, serial = null, limit = 10000, offset = 0) {
@@ -323,6 +339,9 @@ const Api = (() => {
     putDisposition,
     getDispositions,
     getDispositionHistory,
+    putFlags,
+    getFlagsHistory,
+    getFlags,
     getHistory,
     getHistorySerials,
     getHistoryTimeline,

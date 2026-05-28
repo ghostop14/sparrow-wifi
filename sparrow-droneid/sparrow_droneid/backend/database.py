@@ -153,6 +153,20 @@ class Database:
                 )
             """)
 
+            # Flags audit log — append-only; current value per (drone_key, flag_name)
+            # = latest row; flag_name in {'military','law_enforcement'}; value 0/1.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS drone_flags (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    drone_key TEXT NOT NULL,
+                    flag_name TEXT NOT NULL,
+                    value INTEGER NOT NULL,
+                    changed_at TEXT NOT NULL,
+                    changed_by TEXT DEFAULT '',
+                    notes TEXT DEFAULT ''
+                )
+            """)
+
             # Indexes for performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_detections_serial ON detections(serial_number)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_detections_timestamp ON detections(timestamp)")
@@ -162,6 +176,10 @@ class Database:
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_disposition_events_key_time
                     ON disposition_events(drone_key, changed_at DESC)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_drone_flags_key_name_time
+                    ON drone_flags(drone_key, flag_name, changed_at DESC)
             """)
 
             self._init_defaults(cursor)
@@ -649,6 +667,81 @@ class Database:
             return False
         self.add_disposition_event(new_key, disp, changed_by=changed_by,
                                    notes=f'migrated from {old_key}')
+        return True
+
+    # ==================== Flag Operations ====================
+
+    _VALID_FLAGS = frozenset({'military', 'law_enforcement'})
+
+    def add_flag_event(self, drone_key: str, flag_name: str,
+                       value: bool, changed_by: str = '', notes: str = '') -> int:
+        """Append a flag event row.  Returns the new row id."""
+        if flag_name not in self._VALID_FLAGS:
+            raise ValueError(
+                f"Invalid flag_name {flag_name!r}; must be one of {sorted(self._VALID_FLAGS)}")
+        int_value = int(bool(value))
+        now = _utcnow_iso_z()
+        with self.get_cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO drone_flags (drone_key, flag_name, value, changed_at, changed_by, notes)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (drone_key, flag_name, int_value, now, changed_by, notes))
+            return cursor.lastrowid or 0
+
+    def get_current_flags(self) -> Dict[str, Dict[str, bool]]:
+        """Return {drone_key: {flag_name: True}} for all flags whose latest value = 1.
+
+        Absent key or absent flag_name means False (sparse representation).
+        """
+        with self.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT drone_key, flag_name, value
+                FROM drone_flags
+                WHERE id IN (
+                    SELECT MAX(id) FROM drone_flags GROUP BY drone_key, flag_name
+                )
+                AND value = 1
+            """)
+            result: Dict[str, Dict[str, bool]] = {}
+            for row in cursor.fetchall():
+                result.setdefault(row['drone_key'], {})[row['flag_name']] = True
+            return result
+
+    def get_flag_history(self, drone_key: Optional[str] = None,
+                         limit: int = 500) -> List[Dict]:
+        """Return flag event rows, newest first, optionally filtered by drone_key."""
+        with self.get_cursor() as cursor:
+            if drone_key:
+                cursor.execute("""
+                    SELECT id, drone_key, flag_name, value, changed_at, changed_by, notes
+                    FROM drone_flags
+                    WHERE drone_key = ?
+                    ORDER BY changed_at DESC
+                    LIMIT ?
+                """, (drone_key, limit))
+            else:
+                cursor.execute("""
+                    SELECT id, drone_key, flag_name, value, changed_at, changed_by, notes
+                    FROM drone_flags
+                    ORDER BY changed_at DESC
+                    LIMIT ?
+                """, (limit,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def migrate_flags_key(self, old_key: str, new_key: str,
+                          changed_by: str = 'system:key-migration') -> bool:
+        """For each flag set True under old_key, append a new event under new_key.
+
+        Append-only — old rows are never deleted.
+        Returns True if any migration events were written.
+        """
+        current = self.get_current_flags()
+        flags = current.get(old_key)
+        if not flags:
+            return False
+        for flag_name in flags:
+            self.add_flag_event(new_key, flag_name, True, changed_by=changed_by,
+                                notes=f'migrated from {old_key}')
         return True
 
 

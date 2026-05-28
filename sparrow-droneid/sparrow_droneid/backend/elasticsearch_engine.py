@@ -144,6 +144,10 @@ class SearchClient(ABC):
         """Create or update a composable index template."""
 
     @abstractmethod
+    def put_mapping(self, index_or_alias: str, properties: Dict) -> None:
+        """Update the field mapping on a live index or alias."""
+
+    @abstractmethod
     def create_initial_index(self, index_name: str, alias_name: str) -> bool:
         """Create the first backing index with a write alias.
 
@@ -227,6 +231,10 @@ class ElasticsearchClient(SearchClient):
 
     def put_index_template(self, name: str, body: Dict) -> None:
         self._client.indices.put_index_template(name=name, body=body)
+
+    def put_mapping(self, index_or_alias: str, properties: Dict) -> None:
+        self._client.indices.put_mapping(index=index_or_alias,
+                                         body={"properties": properties})
 
     def create_initial_index(self, index_name: str, alias_name: str) -> bool:
         try:
@@ -325,6 +333,10 @@ class OpenSearchClient(SearchClient):
 
     def put_index_template(self, name: str, body: Dict) -> None:
         self._client.indices.put_index_template(name=name, body=body)
+
+    def put_mapping(self, index_or_alias: str, properties: Dict) -> None:
+        self._client.indices.put_mapping(index=index_or_alias,
+                                         body={"properties": properties})
 
     def create_initial_index(self, index_name: str, alias_name: str) -> bool:
         try:
@@ -653,6 +665,8 @@ class DocumentBuilder:
                 "last_seen": device.last_seen,
                 "time_in_area_s": time_in_area_s,
                 "disposition": getattr(device, "disposition", None) or "unknown",
+                "military": bool(getattr(device, "military", False)),
+                "law_enforcement": bool(getattr(device, "law_enforcement", False)),
             },
         }
 
@@ -727,6 +741,8 @@ class DocumentBuilder:
                     "state": "ACTIVE",
                 },
                 "disposition": getattr(device, "disposition", None) or "unknown" if device else "unknown",
+                "military": bool(getattr(device, "military", False)) if device else False,
+                "law_enforcement": bool(getattr(device, "law_enforcement", False)) if device else False,
             },
         }
 
@@ -1064,6 +1080,8 @@ def build_index_template(prefix: str, shards: int, replicas: int,
                             },
                             "state": {"type": "keyword"},
                             "disposition": {"type": "keyword"},
+                            "military": {"type": "boolean"},
+                            "law_enforcement": {"type": "boolean"},
                             "first_seen": {"type": "date"},
                             "last_seen": {"type": "date"},
                             "time_in_area_s": {"type": "integer"},
@@ -1715,6 +1733,23 @@ class ElasticsearchEngine:
                 else:
                     logger.debug("ES alias '%s' already exists (another sensor "
                                   "bootstrapped first)", alias_name)
+
+            # 4. Live mapping update — add military/law_enforcement boolean fields
+            # to existing indices that pre-date this release.  Non-fatal on failure.
+            try:
+                client.put_mapping(alias_name, {
+                    "droneid": {
+                        "properties": {
+                            "military": {"type": "boolean"},
+                            "law_enforcement": {"type": "boolean"},
+                        }
+                    }
+                })
+                logger.debug("ES mapping update for military/law_enforcement applied to '%s'",
+                              alias_name)
+            except Exception as exc:
+                logger.warning(
+                    "ES mapping update for flags failed (non-fatal): %s", exc)
 
             return True
 
