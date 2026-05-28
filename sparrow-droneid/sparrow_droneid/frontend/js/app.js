@@ -253,6 +253,68 @@ const App = (() => {
     }
   }
 
+  // Bluetooth Remote ID scanner indicator state.
+  // _ble_enabled tells us the scanner is up (adapter present); ble_adv_count
+  // is the radio-liveness signal (climbs whenever ANY advertisement arrives).
+  let _btLastAdv = -1;        // last seen ble_adv_count, -1 = unknown
+  let _btLastAdvTs = 0;       // when ble_adv_count last changed (ms)
+  let _btMonitorStartTs = 0;  // when the current monitoring session began (ms)
+  let _btWasMonitoring = false;
+
+  function _updateBluetoothUi(status) {
+    const badge = document.getElementById('statusBluetooth');
+    const label = document.getElementById('bluetoothLabel');
+    if (!badge || !label) return;
+
+    const now = Date.now();
+    if (_monitoring && !_btWasMonitoring) _btMonitorStartTs = now;
+    _btWasMonitoring = _monitoring;
+
+    badge.classList.remove('status-ok', 'status-warn', 'status-error');
+
+    // Not capturing — neutral, scanner isn't expected to run.
+    if (!_monitoring) {
+      label.textContent = 'BT: —';
+      badge.title = 'Bluetooth Remote ID scanner — idle (monitoring stopped)';
+      _btLastAdv = -1;
+      return;
+    }
+
+    const enabled = !!status.ble_enabled;
+    const adv = status.ble_adv_count || 0;
+    if (adv !== _btLastAdv) { _btLastAdv = adv; _btLastAdvTs = now; }
+    const sinceStart = now - _btMonitorStartTs;
+
+    if (!enabled) {
+      // Brief grace while the scanner spins up (bluetoothd/adapter warmup).
+      if (sinceStart < 15000) {
+        label.textContent = 'BT: …';
+        badge.title = 'Bluetooth scanner starting…';
+        badge.classList.add('status-warn');
+      } else {
+        label.textContent = 'BT: none';
+        badge.title = 'Bluetooth Remote ID scanner — no adapter / not scanning';
+        badge.classList.add('status-error');
+      }
+      return;
+    }
+
+    // Enabled but no advertisements for a while: quiet area or mid-recovery.
+    if (_btLastAdv >= 0 && (now - _btLastAdvTs) > 20000) {
+      label.textContent = 'BT: idle';
+      badge.title = 'Bluetooth scanning — no advertisements received (quiet area or recovering)';
+      badge.classList.add('status-warn');
+      return;
+    }
+
+    // Healthy: scanner up and receiving.
+    label.textContent = 'BT';
+    let t = 'Bluetooth Remote ID scanning — receiving';
+    if (status.ble_reset_count) t += ` (auto-recovered ${status.ble_reset_count}×)`;
+    badge.title = t;
+    badge.classList.add('status-ok');
+  }
+
   // ---- Status polling ----
   async function _pollStatus() {
     try {
@@ -267,6 +329,9 @@ const App = (() => {
       } else {
         _clearMonitorWarning();
       }
+
+      // Bluetooth Remote ID scanner indicator
+      _updateBluetoothUi(status);
     } catch (e) { /* ignore */ }
 
     // WiFi SSID scanner indicator

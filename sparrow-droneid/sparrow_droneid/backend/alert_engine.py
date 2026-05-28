@@ -556,12 +556,23 @@ class AlertEngine:
             return f"{mps * 2.23694:.1f} mph"
         return f"{mps:.1f} m/s"
 
-    def _format_slack_message(self, alert_dict: dict) -> str:
-        """Build a Slack-formatted alert message for operators.
+    def _format_alert_message(self, alert_dict: dict, slack: bool = True) -> str:
+        """Build a human-readable alert summary for operators.
 
         Prioritises actionable info: what kind of drone, where to look
         (range/bearing), altitude, speed — in that order.
+
+        When ``slack`` is True the text carries Slack mrkdwn (the siren
+        emoji, *bold*, `code`, _italics_).  When False it is plain text for
+        generic consumers (the outbound API / ECS), which render mrkdwn as
+        literal characters.
         """
+        # Markup helpers — apply Slack mrkdwn only when targeting Slack.
+        bold = (lambda s: f"*{s}*") if slack else (lambda s: s)
+        code = (lambda s: f"`{s}`") if slack else (lambda s: s)
+        ital = (lambda s: f"_{s}_") if slack else (lambda s: s)
+        siren = ":rotating_light: " if slack else ""
+
         imperial = self._get_display_units() == 'imperial'
 
         alert_type = alert_dict.get('alert_type', 'unknown')
@@ -592,7 +603,7 @@ class AlertEngine:
         header = type_labels.get(alert_type, alert_type.replace('_', ' ').title())
 
         # --- Build message ---
-        parts = [f":rotating_light: *{header}*"]
+        parts = [f"{siren}{bold(header)}"]
 
         # Identity block — what is it?
         id_parts = []
@@ -603,15 +614,15 @@ class AlertEngine:
         if id_parts:
             parts.append(' '.join(id_parts))
 
-        parts.append(f"Serial: `{serial}`")
+        parts.append(f"Serial: {code(serial)}")
         if op_id:
-            parts.append(f"Operator: `{op_id}`")
+            parts.append(f"Operator: {code(op_id)}")
         if reg_id:
-            parts.append(f"Reg: `{reg_id}`")
+            parts.append(f"Reg: {code(reg_id)}")
         if protocol_display:
             parts.append(f"Protocol: {protocol_display}")
         if self_id:
-            parts.append(f"Description: _{self_id}_")
+            parts.append(f"Description: {ital(self_id)}")
 
         # Where to look — range/bearing from sensor
         if range_m is not None and bearing_deg is not None:
@@ -634,13 +645,13 @@ class AlertEngine:
 
         # Detail (e.g. violation specifics) — only if it adds value
         if detail and alert_type != AlertType.NEW_DRONE.value:
-            parts.append(f"_{detail}_")
+            parts.append(ital(detail))
 
         return '\n'.join(parts)
 
     def _post_slack(self, alert_dict: dict) -> None:
         """Post an alert notification to Slack via webhook in a daemon thread."""
-        text = self._format_slack_message(alert_dict)
+        text = self._format_alert_message(alert_dict, slack=True)
         url = self._slack_webhook_url
         name = self._slack_display_name
 
@@ -726,9 +737,9 @@ class AlertEngine:
             rule_category = 'drone_detection'
             severity_num = self._API_SEVERITY_MAP.get(alert_type, 70)
             action = alert_type
-            # Reuse the operator-facing Slack message text body so the
-            # receiving system sees the same human-readable summary.
-            message = self._format_slack_message(alert_dict)
+            # Same human-readable summary as Slack, but plain text — the
+            # receiving system isn't Slack and would show mrkdwn literally.
+            message = self._format_alert_message(alert_dict, slack=False)
 
         observer: Dict = {
             'name': self._operator_name or 'Sparrow DroneID',

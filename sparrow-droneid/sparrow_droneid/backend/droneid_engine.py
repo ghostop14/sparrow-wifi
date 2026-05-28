@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 
 def _utcnow_iso_z() -> str:
     return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+import time
 from time import sleep
 from typing import Dict
 
@@ -1004,6 +1005,9 @@ class DroneIDEngine:
         self._ble_frame_count = 0
         self._ble_enabled = False    # True when BLE adapter was found and scan started
         self._ble_last_emit = {}     # MAC -> monotonic timestamp of last DB/alert emit
+        self._ble_adv_count = 0        # ALL advertisements seen (pre-ASTM filter) — radio liveness
+        self._ble_reset_count = 0      # watchdog-triggered btusb rebinds this session
+        self._ble_last_reset_at = None # datetime UTC of last watchdog reset, or None
 
         # Callback for alert engine
         self.on_detection = None
@@ -1032,6 +1036,9 @@ class DroneIDEngine:
 
         # Start BLE scan in a daemon thread with its own asyncio event loop
         self._ble_frame_count = 0
+        self._ble_adv_count = 0
+        self._ble_reset_count = 0
+        self._ble_last_reset_at = None
         self._ble_enabled = False
         self._ble_thread = threading.Thread(target=self._ble_thread_main, daemon=True,
                                             name='ble-scan')
@@ -1532,30 +1539,49 @@ class DroneIDEngine:
             )
             if 'Adapter1' not in probe.stdout:
                 logging.info("DroneID BLE: Adapter1 not on DBus — rebinding btusb driver")
-                # Find the USB device backing hci0
-                dev_link = os.readlink('/sys/class/bluetooth/hci0/device')
-                usb_id = os.path.basename(dev_link)  # e.g. "3-14:1.0"
-                unbind = f'/sys/bus/usb/drivers/btusb/unbind'
-                bind = f'/sys/bus/usb/drivers/btusb/bind'
-                with open(unbind, 'w') as f:
-                    f.write(usb_id)
-                sleep(2)
-                with open(bind, 'w') as f:
-                    f.write(usb_id)
-                sleep(3)
-
-                # Restart bluetoothd so it picks up the fresh adapter
-                subprocess.run(['killall', 'bluetoothd'],
-                               capture_output=True, timeout=3)
-                sleep(1)
-                daemon = _sh.which('bluetoothd') or '/usr/libexec/bluetooth/bluetoothd'
-                subprocess.Popen(
-                    [daemon], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                )
-                sleep(3)
+                DroneIDEngine._reset_bluetooth_adapter()
                 logging.info("DroneID BLE: btusb rebound, bluetoothd restarted")
         except Exception as exc:
             logging.debug("DroneID BLE: adapter init check failed: %s", exc)
+
+    @staticmethod
+    def _reset_bluetooth_adapter():
+        """Unbind and rebind the btusb USB driver, then restart bluetoothd.
+
+        Recovers both the hard-absent case (Adapter1 missing from DBus) and
+        the soft-wedged case (BlueZ reports Discovering but zero advertisements
+        arrive — a known coexistence failure mode on Intel AX210 combo cards).
+
+        This method is BLOCKING (~9 seconds total across unbind/bind/restart
+        sleeps).  When calling from an asyncio event loop, run it via
+        loop.run_in_executor(None, DroneIDEngine._reset_bluetooth_adapter).
+
+        WiFi-safe: the BT radio is attached via USB/btusb; the WiFi radio uses
+        PCIe/iwlwifi.  A btusb rebind does not touch the WiFi stack.
+        """
+        import shutil as _sh
+
+        # Discover the USB device-id backing hci0 dynamically
+        dev_link = os.readlink('/sys/class/bluetooth/hci0/device')
+        usb_id = os.path.basename(dev_link)  # e.g. "3-14:1.0"
+        unbind = '/sys/bus/usb/drivers/btusb/unbind'
+        bind   = '/sys/bus/usb/drivers/btusb/bind'
+        with open(unbind, 'w') as f:
+            f.write(usb_id)
+        sleep(2)
+        with open(bind, 'w') as f:
+            f.write(usb_id)
+        sleep(3)
+
+        # Restart bluetoothd so it picks up the fresh adapter
+        subprocess.run(['killall', 'bluetoothd'],
+                       capture_output=True, timeout=3)
+        sleep(1)
+        daemon = _sh.which('bluetoothd') or '/usr/libexec/bluetooth/bluetoothd'
+        subprocess.Popen(
+            [daemon], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        sleep(3)
 
     async def _ble_scan_loop(self):
         """Continuously scan for BLE Remote ID advertisements (ASTM F3411).
@@ -1583,6 +1609,8 @@ class DroneIDEngine:
             """Called by BleakScanner for every received BLE advertisement."""
             if not self._monitoring:
                 return
+
+            self._ble_adv_count += 1  # radio liveness counter — ALL ads, pre-ASTM filter
 
             # Only process advertisements that carry ASTM F3411 service data
             service_data = advertisement_data.service_data
@@ -1613,40 +1641,133 @@ class DroneIDEngine:
             self._ble_frame_count += 1
             self._track_ble_device(device)
 
-        # bluetoothd / DBus may not be ready at app startup — retry a few times
-        scanner = None
-        for attempt in range(6):
-            if not self._monitoring:
-                return
-            try:
-                scanner = BleakScanner(detection_callback=_on_advertisement)
-                await scanner.start()
-                break
-            except Exception as exc:
-                if attempt < 5:
-                    delay = 2 * (attempt + 1)
-                    logging.info(
-                        "DroneID BLE: adapter not ready (attempt %d/6), "
-                        "retrying in %ds: %s", attempt + 1, delay, exc
-                    )
-                    await asyncio.sleep(delay)
-                else:
-                    self._ble_enabled = False
-                    logging.warning(
-                        "DroneID BLE: no adapter after 6 attempts — "
-                        "BLE scanning disabled: %s", exc
-                    )
-                    return
+        async def _start_scanner():
+            """Attempt to create and start a BleakScanner, retrying up to 6 times.
 
+            Returns a started BleakScanner on success, or None if all attempts fail.
+            """
+            for attempt in range(6):
+                if not self._monitoring:
+                    return None
+                try:
+                    sc = BleakScanner(detection_callback=_on_advertisement)
+                    await sc.start()
+                    return sc
+                except Exception as exc:
+                    if attempt < 5:
+                        delay = 2 * (attempt + 1)
+                        logging.info(
+                            "DroneID BLE: adapter not ready (attempt %d/6), "
+                            "retrying in %ds: %s", attempt + 1, delay, exc
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        logging.warning(
+                            "DroneID BLE: no adapter after 6 attempts — "
+                            "BLE scanning disabled: %s", exc
+                        )
+            return None
+
+        # bluetoothd / DBus may not be ready at app startup — use _start_scanner()
+        scanner = await _start_scanner()
+        if scanner is None:
+            self._ble_enabled = False
+            return
         self._ble_enabled = True
         logging.info("DroneID BLE: scanner started")
+
+        # Watchdog constants — MONOTONIC clock windows, not tick counts
+        WATCHDOG_INITIAL = 30.0   # fast first check: catch a startup/monitor-mode coex wedge
+        WATCHDOG_FLOOR   = 75.0   # steady-state minimum after first healthy traffic
+        WATCHDOG_CAP     = 600.0  # maximum backoff after repeated resets
+
+        # Initialise window state AFTER scanner is confirmed started so the 30s
+        # initial window is measured from actual scan start (not from loop entry).
+        watchdog_window         = WATCHDOG_INITIAL
+        window_start            = time.monotonic()
+        count_at_window_start   = self._ble_adv_count
 
         try:
             while self._monitoring:
                 await asyncio.sleep(0.5)
+                if not self._monitoring:
+                    break
+
+                now = time.monotonic()
+
+                if self._ble_adv_count > count_at_window_start:
+                    # Radio is healthy — reset window to floor
+                    if watchdog_window != WATCHDOG_FLOOR:
+                        logging.info(
+                            "DroneID BLE: advertisements resumed — watchdog backoff reset"
+                        )
+                    watchdog_window       = WATCHDOG_FLOOR
+                    window_start          = now
+                    count_at_window_start = self._ble_adv_count
+                    continue
+
+                if (now - window_start) < watchdog_window:
+                    continue
+
+                # STALL detected — no advertisements in the current window
+                elapsed = int(now - window_start)
+                self._ble_reset_count += 1
+                logging.warning(
+                    "DroneID BLE: no advertisements for %ds — wedged radio suspected, "
+                    "rebinding btusb (reset #%d)",
+                    elapsed, self._ble_reset_count,
+                )
+
+                # Stop the stale scanner
+                try:
+                    await scanner.stop()
+                except Exception as stop_exc:
+                    logging.debug("DroneID BLE: scanner.stop() during reset: %s", stop_exc)
+                scanner = None
+                self._ble_enabled = False
+
+                # Run the blocking (~9s) btusb rebind off the event loop
+                loop = asyncio.get_running_loop()
+                try:
+                    await loop.run_in_executor(None, DroneIDEngine._reset_bluetooth_adapter)
+                except asyncio.CancelledError:
+                    # Shutdown mid-rebind — the executor thread may finish the
+                    # ~9s rebind after cancellation; this is harmless and
+                    # idempotent.  The stop() join timeout is the safety net.
+                    raise
+                except Exception as reset_exc:
+                    logging.warning(
+                        "DroneID BLE: btusb rebind failed: %s", reset_exc
+                    )
+
+                self._ble_last_reset_at = datetime.now(timezone.utc)
+
+                if not self._monitoring:
+                    break
+
+                # Restart the scanner on the freshly rebound adapter
+                scanner = await _start_scanner()
+                if scanner is None:
+                    self._ble_enabled = False
+                    logging.warning(
+                        "DroneID BLE: scanner failed to restart after btusb rebind — "
+                        "BLE scanning disabled"
+                    )
+                    return
+                self._ble_enabled = True
+                logging.info("DroneID BLE: scanner restarted after rebind")
+
+                # Back off the watchdog window, capped at WATCHDOG_CAP
+                watchdog_window       = min(watchdog_window * 2, WATCHDOG_CAP)
+                window_start          = time.monotonic()
+                count_at_window_start = self._ble_adv_count
+
         finally:
             if scanner is not None:
-                await scanner.stop()
+                try:
+                    await scanner.stop()
+                except Exception:
+                    pass
 
     # ----- Active drone queries -------------------------------------------
 
@@ -1793,6 +1914,9 @@ class DroneIDEngine:
             'monitor_warning': self._monitor_warning,
             'ble_enabled': self._ble_enabled,
             'ble_frame_count': self._ble_frame_count,
+            'ble_adv_count': self._ble_adv_count,
+            'ble_reset_count': self._ble_reset_count,
+            'ble_last_reset_at': self._ble_last_reset_at.isoformat().replace('+00:00', 'Z') if self._ble_last_reset_at else None,
         }
 
     def cleanup_stale(self, max_age=300):
