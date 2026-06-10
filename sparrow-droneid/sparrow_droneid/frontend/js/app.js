@@ -226,7 +226,8 @@ const App = (() => {
         _monitoring = true;
         Utils.toast(`Monitoring started on ${iface}.`, 'success');
       }
-      _updateMonitorUi();
+      // Pass null so the dot uses a sensible default until next status poll
+      _updateMonitorUi(null);
     } catch (e) {
       Utils.toast('Monitor error: ' + e.message, 'alert');
     } finally {
@@ -234,41 +235,57 @@ const App = (() => {
     }
   }
 
-  function _updateMonitorUi() {
+  function _updateMonitorUi(wifiHealth) {
     const btn = document.getElementById('btnMonitor');
     const label = document.getElementById('btnMonitorLabel');
     const dot = document.getElementById('monitorDot');
     const monLabel = document.getElementById('monitorLabel');
 
+    // Button state is driven by _monitoring (intent flag) so Start/Stop
+    // toggles reliably regardless of transient health state.
     if (_monitoring) {
       btn?.classList.add('monitoring');
       if (label) label.textContent = 'Stop';
-      dot?.classList.add('active');
-      if (monLabel) monLabel.textContent = 'Monitoring';
     } else {
       btn?.classList.remove('monitoring');
       if (label) label.textContent = 'Start';
-      dot?.classList.remove('active');
+    }
+
+    // Dot and label reflect the server-computed wifi_health enum so the
+    // operator sees real liveness, not just the intent flag.
+    if (dot) {
+      dot.classList.remove('active', 'warn', 'error');
+    }
+    const health = wifiHealth || (_monitoring ? 'idle' : 'stopped');
+    if (health === 'healthy') {
+      dot?.classList.add('active');
+      if (monLabel) monLabel.textContent = 'Monitoring';
+    } else if (health === 'idle' || health === 'idle_unverified') {
+      dot?.classList.add('active');
+      if (monLabel) monLabel.textContent = health === 'idle_unverified' ? 'Idle (quiet)' : 'Idle';
+    } else if (health === 'restarting') {
+      dot?.classList.add('warn');
+      if (monLabel) monLabel.textContent = 'Restarting…';
+    } else if (health === 'degraded') {
+      dot?.classList.add('warn');
+      if (monLabel) monLabel.textContent = 'Degraded';
+    } else if (health === 'down') {
+      dot?.classList.add('error');
+      if (monLabel) monLabel.textContent = 'Capture down';
+    } else {
+      // stopped / unknown
       if (monLabel) monLabel.textContent = 'Idle';
     }
   }
 
   // Bluetooth Remote ID scanner indicator state.
-  // _ble_enabled tells us the scanner is up (adapter present); ble_adv_count
-  // is the radio-liveness signal (climbs whenever ANY advertisement arrives).
-  let _btLastAdv = -1;        // last seen ble_adv_count, -1 = unknown
-  let _btLastAdvTs = 0;       // when ble_adv_count last changed (ms)
-  let _btMonitorStartTs = 0;  // when the current monitoring session began (ms)
-  let _btWasMonitoring = false;
+  // ble_health is the server-computed health enum from the Supervisor.
+  // ble_reset_count is preserved in the tooltip so recovery history is visible.
 
   function _updateBluetoothUi(status) {
     const badge = document.getElementById('statusBluetooth');
     const label = document.getElementById('bluetoothLabel');
     if (!badge || !label) return;
-
-    const now = Date.now();
-    if (_monitoring && !_btWasMonitoring) _btMonitorStartTs = now;
-    _btWasMonitoring = _monitoring;
 
     badge.classList.remove('status-ok', 'status-warn', 'status-error');
 
@@ -276,43 +293,41 @@ const App = (() => {
     if (!_monitoring) {
       label.textContent = 'BT: —';
       badge.title = 'Bluetooth Remote ID scanner — idle (monitoring stopped)';
-      _btLastAdv = -1;
       return;
     }
 
-    const enabled = !!status.ble_enabled;
-    const adv = status.ble_adv_count || 0;
-    if (adv !== _btLastAdv) { _btLastAdv = adv; _btLastAdvTs = now; }
-    const sinceStart = now - _btMonitorStartTs;
+    // Use the server-computed ble_health enum (falls back to ble_enabled heuristic
+    // for backward compat with servers that haven't yet been updated).
+    const health = status.ble_health || (status.ble_enabled ? 'idle' : 'down');
+    const resets = status.ble_reset_count || 0;
+    const resetSuffix = resets ? ` (auto-recovered ${resets}×)` : '';
 
-    if (!enabled) {
-      // Brief grace while the scanner spins up (bluetoothd/adapter warmup).
-      if (sinceStart < 15000) {
-        label.textContent = 'BT: …';
-        badge.title = 'Bluetooth scanner starting…';
-        badge.classList.add('status-warn');
-      } else {
-        label.textContent = 'BT: none';
-        badge.title = 'Bluetooth Remote ID scanner — no adapter / not scanning';
-        badge.classList.add('status-error');
-      }
-      return;
-    }
-
-    // Enabled but no advertisements for a while: quiet area or mid-recovery.
-    if (_btLastAdv >= 0 && (now - _btLastAdvTs) > 20000) {
+    if (health === 'healthy') {
+      label.textContent = 'BT';
+      badge.title = 'Bluetooth Remote ID scanning — receiving' + resetSuffix;
+      badge.classList.add('status-ok');
+    } else if (health === 'idle' || health === 'idle_unverified') {
       label.textContent = 'BT: idle';
-      badge.title = 'Bluetooth scanning — no advertisements received (quiet area or recovering)';
+      badge.title = (health === 'idle_unverified'
+        ? 'Bluetooth scanning — quiet area (oracle: RF absent)' + resetSuffix
+        : 'Bluetooth scanning — no advertisements' + resetSuffix);
       badge.classList.add('status-warn');
-      return;
+    } else if (health === 'restarting' || health === 'degraded') {
+      label.textContent = 'BT: …';
+      badge.title = (health === 'degraded'
+        ? 'Bluetooth scanner degraded — repeated rebinds without recovery' + resetSuffix
+        : 'Bluetooth scanner restarting…' + resetSuffix);
+      badge.classList.add('status-warn');
+    } else if (health === 'down') {
+      label.textContent = 'BT: none';
+      badge.title = 'Bluetooth Remote ID scanner — down / no adapter';
+      badge.classList.add('status-error');
+    } else {
+      // Fallback: scanner starting up (e.g. 'idle' before first window)
+      label.textContent = 'BT: …';
+      badge.title = 'Bluetooth scanner starting…';
+      badge.classList.add('status-warn');
     }
-
-    // Healthy: scanner up and receiving.
-    label.textContent = 'BT';
-    let t = 'Bluetooth Remote ID scanning — receiving';
-    if (status.ble_reset_count) t += ` (auto-recovered ${status.ble_reset_count}×)`;
-    badge.title = t;
-    badge.classList.add('status-ok');
   }
 
   // ---- Status polling ----
@@ -320,7 +335,8 @@ const App = (() => {
     try {
       const status = await Api.getStatus();
       _monitoring = status.monitoring;
-      _updateMonitorUi();
+      // Pass wifi_health so the dot reflects real liveness, not just intent flag
+      _updateMonitorUi(status.wifi_health);
       // GPS UI is updated exclusively from the drones poll (has receiver.source)
 
       // Show monitor health warning if the adapter isn't delivering frames
@@ -330,7 +346,7 @@ const App = (() => {
         _clearMonitorWarning();
       }
 
-      // Bluetooth Remote ID scanner indicator
+      // Bluetooth Remote ID scanner indicator (driven by server ble_health enum)
       _updateBluetoothUi(status);
     } catch (e) { /* ignore */ }
 

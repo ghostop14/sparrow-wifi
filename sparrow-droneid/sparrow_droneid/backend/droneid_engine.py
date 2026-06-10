@@ -989,14 +989,20 @@ class DroneIDEngine:
         self._started_at = None
         self._capture_proc = None
         self._parse_thread = None
+        self._wifi_restart_lock = threading.Lock()  # serialises start/stop/restart
 
         # Counters
         self._frame_count = 0
         self._droneid_frame_count = 0
         self._capture_errors = 0
 
-        # Monitor mode health check
-        self._monitor_warning = ""  # Non-empty = problem detected
+        # Monitor mode health / heartbeat (written lock-free from hot path)
+        self._monitor_warning = ""          # Non-empty = problem detected by supervisor
+        self._wifi_last_frame_monotonic: float = 0.0   # updated by _parse_loop
+        self._wifi_capture_eof: bool = False            # set on any parse-loop exit
+        self._wifi_eof_reason: str = ""                 # human-readable exit reason
+        self._wifi_restart_count: int = 0               # incremented by restart_wifi_capture
+        self._wifi_last_restart_at = None               # datetime UTC of last restart
 
         # BLE scanning state
         self._ble_thread = None
@@ -1005,9 +1011,15 @@ class DroneIDEngine:
         self._ble_frame_count = 0
         self._ble_enabled = False    # True when BLE adapter was found and scan started
         self._ble_last_emit = {}     # MAC -> monotonic timestamp of last DB/alert emit
-        self._ble_adv_count = 0        # ALL advertisements seen (pre-ASTM filter) — radio liveness
-        self._ble_reset_count = 0      # watchdog-triggered btusb rebinds this session
-        self._ble_last_reset_at = None # datetime UTC of last watchdog reset, or None
+        self._ble_adv_count = 0         # ALL advertisements seen (pre-ASTM filter) — radio liveness
+        self._ble_reset_count = 0       # watchdog-triggered btusb rebinds this session
+        self._ble_last_reset_at = None  # datetime UTC of last watchdog reset, or None
+        self._ble_last_adv_monotonic: float = 0.0       # updated by advertisement callback
+        self._ble_scanner_started_at: float = 0.0       # set after _start_scanner success
+
+        # BLE rebind request channel (set by Supervisor via call_soon_threadsafe)
+        self._ble_rebind_pending: bool = False
+        self._ble_rebind_mode: str = ''
 
         # Callback for alert engine
         self.on_detection = None
@@ -1017,13 +1029,18 @@ class DroneIDEngine:
         return self._monitoring
 
     def start(self, interface, channel=6):
-        """Start monitoring on the given interface."""
+        """Start monitoring on the given interface.
+
+        Sets up the monitor VIF (once), then calls _start_wifi_capture() and
+        starts the BLE scan thread.  The Supervisor (started externally) will
+        detect stalls and call restart_wifi_capture() / request_ble_rebind()
+        as needed; there is no longer an inline monitor-health-check thread.
+        """
         if self._monitoring:
             raise RuntimeError("Already monitoring")
 
         self._interface = CaptureManager.start_monitor(interface, channel)
         self._channel = channel
-        self._capture_proc = CaptureManager.start_capture(self._interface)
         self._monitoring = True
         self._started_at = datetime.now(timezone.utc)
         self._frame_count = 0
@@ -1031,8 +1048,15 @@ class DroneIDEngine:
         self._capture_errors = 0
         self._monitor_warning = ""
 
-        self._parse_thread = threading.Thread(target=self._parse_loop, daemon=True)
-        self._parse_thread.start()
+        # WiFi heartbeat / restart counters — reset at session start
+        self._wifi_last_frame_monotonic = 0.0
+        self._wifi_capture_eof = False
+        self._wifi_eof_reason = ""
+        self._wifi_restart_count = 0
+        self._wifi_last_restart_at = None
+
+        # Start WiFi capture (proc + parse thread)
+        self._start_wifi_capture()
 
         # Start BLE scan in a daemon thread with its own asyncio event loop
         self._ble_frame_count = 0
@@ -1040,23 +1064,23 @@ class DroneIDEngine:
         self._ble_reset_count = 0
         self._ble_last_reset_at = None
         self._ble_enabled = False
+        self._ble_last_adv_monotonic = 0.0
+        self._ble_scanner_started_at = 0.0
+        self._ble_rebind_pending = False
+        self._ble_rebind_mode = ''
         self._ble_thread = threading.Thread(target=self._ble_thread_main, daemon=True,
                                             name='ble-scan')
         self._ble_thread.start()
 
-        # Background health check: verify frames are actually arriving
-        threading.Thread(target=self._monitor_health_check, daemon=True,
-                         name='monitor-health').start()
-
     def stop(self):
-        """Stop monitoring and restore interface."""
-        self._monitoring = False
-        CaptureManager.stop_capture(self._capture_proc)
-        self._capture_proc = None
+        """Stop monitoring and restore interface.
 
-        if self._parse_thread:
-            self._parse_thread.join(timeout=5)
-            self._parse_thread = None
+        Takes _wifi_restart_lock so restart_wifi_capture() can't race with
+        us on teardown.
+        """
+        with self._wifi_restart_lock:
+            self._monitoring = False
+            self._stop_wifi_capture()
 
         # Cancel the BLE scan task so its finally block can clean up the
         # scanner, then wait for the thread to finish.
@@ -1078,10 +1102,146 @@ class DroneIDEngine:
                 pass
             self._interface = ""
 
+    # ----- WiFi capture lifecycle (extracted helpers) -------------------------
+
+    def _start_wifi_capture(self):
+        """Launch tcpdump capture and parse thread.
+
+        Does NOT touch the monitor VIF — that is done once in start() or
+        optionally in restart_wifi_capture(mode='full').  Clears EOF flags
+        so the Supervisor can distinguish a fresh start from a stale state.
+        """
+        self._wifi_capture_eof = False
+        self._wifi_eof_reason = ""
+        self._capture_proc = CaptureManager.start_capture(self._interface)
+        self._parse_thread = threading.Thread(target=self._parse_loop, daemon=True,
+                                              name='wifi-parse')
+        self._parse_thread.start()
+
+    def _stop_wifi_capture(self):
+        """Terminate the tcpdump process and join the parse thread.
+
+        Idempotent — safe to call even if already stopped.
+        """
+        CaptureManager.stop_capture(self._capture_proc)
+        self._capture_proc = None
+        if self._parse_thread:
+            self._parse_thread.join(timeout=5)
+            self._parse_thread = None
+
+    def restart_wifi_capture(self, mode: str = 'quick') -> None:
+        """Restart WiFi packet capture without tearing down the monitor VIF.
+
+        Called by the Supervisor on the supervisor thread.  Serialised by
+        _wifi_restart_lock (shared with stop() and the API monitor/stop path).
+
+        mode='quick' — restarts only the tcpdump proc + parse thread.
+        mode='full'  — also tears down and re-creates the monitor VIF
+                       (used as the last attempt before escalation to exit).
+        """
+        with self._wifi_restart_lock:
+            if not self._monitoring:
+                return  # stop() raced us — don't restart
+
+            self._stop_wifi_capture()
+
+            if mode == 'full':
+                # Full reset: tear down mon VIF, re-enter monitor mode
+                if self._interface:
+                    try:
+                        CaptureManager.stop_monitor(self._interface)
+                    except Exception as exc:
+                        logging.warning("restart_wifi_capture full: stop_monitor error: %s", exc)
+                try:
+                    self._interface = CaptureManager.start_monitor(
+                        # Derive base interface from mon VIF name if applicable
+                        self._interface[:-3] if self._interface.endswith('mon') else self._interface,
+                        self._channel,
+                    )
+                except Exception as exc:
+                    logging.error("restart_wifi_capture full: start_monitor error: %s", exc)
+                    # Interface may be unavailable; note the error but proceed
+                    # so _start_wifi_capture sets the EOF flag on next parse failure
+
+            self._start_wifi_capture()
+            self._wifi_restart_count += 1
+            self._wifi_last_restart_at = datetime.now(timezone.utc)
+            logging.info(
+                "restart_wifi_capture: mode=%s restart_count=%d interface=%s",
+                mode, self._wifi_restart_count, self._interface,
+            )
+
+    def request_ble_rebind(self, mode: str) -> None:
+        """Ask the BLE scan loop to perform a btusb rebind + scanner restart.
+
+        Thread-safe: schedules the flag mutation on the BLE event loop via
+        call_soon_threadsafe so there is no race with asyncio callbacks.
+
+        mode: 'wedge_suspected' | 'idle_probe'
+        """
+        if self._ble_loop is None:
+            return
+
+        def _set():
+            self._ble_rebind_mode = mode
+            self._ble_rebind_pending = True
+
+        try:
+            self._ble_loop.call_soon_threadsafe(_set)
+        except RuntimeError:
+            pass  # Loop closed during shutdown
+
+    def wifi_health_inputs(self) -> dict:
+        """Return a snapshot of WiFi capture liveness for the Supervisor.
+
+        All reads are lock-free under the GIL (int/float/bool attributes).
+        """
+        proc = self._capture_proc
+        tcpdump_alive = (proc is not None and proc.poll() is None)
+        parse_alive = (self._parse_thread is not None and self._parse_thread.is_alive())
+        last_frame_age = (
+            (time.monotonic() - self._wifi_last_frame_monotonic)
+            if self._wifi_last_frame_monotonic > 0 else float('inf')
+        )
+        return {
+            'monitoring': self._monitoring,
+            'tcpdump_alive': tcpdump_alive,
+            'parse_alive': parse_alive,
+            'eof': self._wifi_capture_eof,
+            'eof_reason': self._wifi_eof_reason,
+            'last_frame_age': last_frame_age,
+            'frame_count': self._frame_count,
+            'restart_count': self._wifi_restart_count,
+            'last_restart_at': self._wifi_last_restart_at,
+            'driver': self._get_driver_name() or '',
+        }
+
+    def ble_health_inputs(self) -> dict:
+        """Return a snapshot of BLE scanner liveness for the Supervisor.
+
+        All reads are lock-free under the GIL.
+        """
+        scanner_alive = (self._ble_thread is not None and self._ble_thread.is_alive())
+        last_adv_age = (
+            (time.monotonic() - self._ble_last_adv_monotonic)
+            if self._ble_last_adv_monotonic > 0 else float('inf')
+        )
+        return {
+            'ble_enabled': self._ble_enabled,
+            'scanner_alive': scanner_alive,
+            'scanner_started_at': self._ble_scanner_started_at,
+            'adv_count': self._ble_adv_count,
+            'last_adv_age': last_adv_age,
+            'reset_count': self._ble_reset_count,
+            'last_reset_at': self._ble_last_reset_at,
+        }
+
     def _parse_loop(self):
         """Read raw pcap stream from tcpdump and parse ODID frames."""
         proc = self._capture_proc
         if proc is None or proc.stdout is None:
+            self._wifi_capture_eof = True
+            self._wifi_eof_reason = "no capture proc"
             return
 
         f = proc.stdout
@@ -1089,6 +1249,16 @@ class DroneIDEngine:
         # Read pcap global header (24 bytes)
         global_hdr = self._read_exact(f, 24)
         if global_hdr is None or len(global_hdr) < 24:
+            rc = proc.poll()
+            self._wifi_capture_eof = True
+            self._wifi_eof_reason = (
+                f"pcap header short read (tcpdump rc={rc})" if rc is not None
+                else "pcap header EOF"
+            )
+            from .supervisor import rate_log
+            rate_log.warning('wifi_eof',
+                             "DroneID WiFi: parse loop exiting — %s",
+                             self._wifi_eof_reason)
             return
 
         magic = struct.unpack_from('<I', global_hdr, 0)[0]
@@ -1097,33 +1267,71 @@ class DroneIDEngine:
         elif magic == 0xd4c3b2a1:
             endian = '>'
         else:
+            self._wifi_capture_eof = True
+            self._wifi_eof_reason = f"bad pcap magic 0x{magic:08x}"
             return  # Not a pcap stream
 
         link_type = struct.unpack_from(f'{endian}I', global_hdr, 20)[0]
         if link_type != 127:  # IEEE802_11_RADIO (radiotap + 802.11)
+            self._wifi_capture_eof = True
+            self._wifi_eof_reason = f"unexpected link type {link_type} (expected 127 IEEE802_11_RADIO)"
             return
 
         # Read packets
         while self._monitoring:
             rec_hdr = self._read_exact(f, 16)
             if rec_hdr is None or len(rec_hdr) < 16:
+                rc = proc.poll()
+                self._wifi_capture_eof = True
+                self._wifi_eof_reason = (
+                    f"record header short read (tcpdump rc={rc})" if rc is not None
+                    else "record header EOF"
+                )
+                from .supervisor import rate_log
+                rate_log.warning('wifi_eof',
+                                 "DroneID WiFi: parse loop exiting — %s",
+                                 self._wifi_eof_reason)
                 break
 
             incl_len = struct.unpack_from(f'{endian}I', rec_hdr, 8)[0]
 
             if incl_len == 0 or incl_len > 65536:
+                rc = proc.poll()
+                self._wifi_capture_eof = True
+                self._wifi_eof_reason = (
+                    f"invalid incl_len={incl_len} (tcpdump rc={rc})"
+                )
+                from .supervisor import rate_log
+                rate_log.warning('wifi_eof',
+                                 "DroneID WiFi: parse loop exiting — %s",
+                                 self._wifi_eof_reason)
                 break
 
             pkt_data = self._read_exact(f, incl_len)
             if pkt_data is None or len(pkt_data) < incl_len:
+                rc = proc.poll()
+                self._wifi_capture_eof = True
+                self._wifi_eof_reason = (
+                    f"packet data short read (tcpdump rc={rc})" if rc is not None
+                    else "packet data EOF"
+                )
+                from .supervisor import rate_log
+                rate_log.warning('wifi_eof',
+                                 "DroneID WiFi: parse loop exiting — %s",
+                                 self._wifi_eof_reason)
                 break
 
             self._frame_count += 1
+            self._wifi_last_frame_monotonic = time.monotonic()  # heartbeat
 
             try:
                 self._process_pcap_frame(pkt_data)
             except Exception:
                 self._capture_errors += 1
+                from .supervisor import rate_log
+                rate_log.warning('wifi_parse_exc',
+                                 "DroneID WiFi: frame processing error (capture_errors=%d)",
+                                 self._capture_errors)
 
     @staticmethod
     def _read_exact(f, n):
@@ -1322,15 +1530,21 @@ class DroneIDEngine:
         rx_lat, rx_lon, rx_alt = self._gps.get_receiver_position()
         try:
             self._db.insert_detection(device, rx_lat, rx_lon, rx_alt)
-        except Exception:
+        except Exception as exc:
             self._capture_errors += 1
+            from .supervisor import rate_log
+            rate_log.warning('insert_detection',
+                             "DroneID: insert_detection failed (capture_errors=%d): %s",
+                             self._capture_errors, exc)
 
         # Fire callback (alert engine, CoT engine)
         if self.on_detection:
             try:
                 self.on_detection(device)
-            except Exception:
-                pass
+            except Exception as exc:
+                from .supervisor import rate_log
+                rate_log.warning('on_detection_cb',
+                                 "DroneID: on_detection callback raised: %s", exc)
 
     def _track_ble_device(self, device: DroneIDDevice):
         """Track a BLE RemoteID device, merging individual messages by MAC.
@@ -1455,15 +1669,21 @@ class DroneIDEngine:
         rx_lat, rx_lon, rx_alt = self._gps.get_receiver_position()
         try:
             self._db.insert_detection(device, rx_lat, rx_lon, rx_alt)
-        except Exception:
+        except Exception as exc:
             self._capture_errors += 1
+            from .supervisor import rate_log
+            rate_log.warning('ble_insert_detection',
+                             "DroneID BLE: insert_detection failed (capture_errors=%d): %s",
+                             self._capture_errors, exc)
 
         # Fire callback (alert engine, CoT engine)
         if self.on_detection:
             try:
                 self.on_detection(device)
-            except Exception:
-                pass
+            except Exception as exc:
+                from .supervisor import rate_log
+                rate_log.warning('ble_on_detection_cb',
+                                 "DroneID BLE: on_detection callback raised: %s", exc)
 
     # ----- BLE scan -------------------------------------------------------
 
@@ -1611,6 +1831,7 @@ class DroneIDEngine:
                 return
 
             self._ble_adv_count += 1  # radio liveness counter — ALL ads, pre-ASTM filter
+            self._ble_last_adv_monotonic = time.monotonic()  # heartbeat for Supervisor
 
             # Only process advertisements that carry ASTM F3411 service data
             service_data = advertisement_data.service_data
@@ -1652,6 +1873,7 @@ class DroneIDEngine:
                 try:
                     sc = BleakScanner(detection_callback=_on_advertisement)
                     await sc.start()
+                    self._ble_scanner_started_at = time.monotonic()
                     return sc
                 except Exception as exc:
                     if attempt < 5:
@@ -1668,6 +1890,58 @@ class DroneIDEngine:
                         )
             return None
 
+        async def _do_rebind(scanner_ref):
+            """Execute the btusb rebind + scanner restart mechanism.
+
+            Called on the BLE event loop when the Supervisor has determined
+            that a rebind is warranted (wedge_suspected or idle_probe).
+            Returns the new scanner, or None if restart failed.
+            """
+            mode = self._ble_rebind_mode
+            self._ble_rebind_pending = False
+            self._ble_rebind_mode = ''
+
+            self._ble_reset_count += 1
+            logging.warning(
+                "DroneID BLE: rebind requested (mode=%s, reset #%d)",
+                mode, self._ble_reset_count,
+            )
+
+            # Stop the stale scanner
+            try:
+                await scanner_ref.stop()
+            except Exception as stop_exc:
+                logging.debug("DroneID BLE: scanner.stop() during rebind: %s", stop_exc)
+            self._ble_enabled = False
+
+            # Run the blocking (~9s) btusb rebind off the event loop
+            loop = asyncio.get_running_loop()
+            try:
+                await loop.run_in_executor(None, DroneIDEngine._reset_bluetooth_adapter)
+            except asyncio.CancelledError:
+                # Shutdown mid-rebind — executor thread finishes harmlessly.
+                raise
+            except Exception as reset_exc:
+                logging.warning("DroneID BLE: btusb rebind failed: %s", reset_exc)
+
+            self._ble_last_reset_at = datetime.now(timezone.utc)
+
+            if not self._monitoring:
+                return None
+
+            # Restart the scanner on the freshly rebound adapter
+            new_sc = await _start_scanner()
+            if new_sc is None:
+                self._ble_enabled = False
+                logging.warning(
+                    "DroneID BLE: scanner failed to restart after btusb rebind — "
+                    "BLE scanning disabled"
+                )
+            else:
+                self._ble_enabled = True
+                logging.info("DroneID BLE: scanner restarted after rebind (mode=%s)", mode)
+            return new_sc
+
         # bluetoothd / DBus may not be ready at app startup — use _start_scanner()
         scanner = await _start_scanner()
         if scanner is None:
@@ -1676,91 +1950,23 @@ class DroneIDEngine:
         self._ble_enabled = True
         logging.info("DroneID BLE: scanner started")
 
-        # Watchdog constants — MONOTONIC clock windows, not tick counts
-        WATCHDOG_INITIAL = 30.0   # fast first check: catch a startup/monitor-mode coex wedge
-        WATCHDOG_FLOOR   = 75.0   # steady-state minimum after first healthy traffic
-        WATCHDOG_CAP     = 600.0  # maximum backoff after repeated resets
-
-        # Initialise window state AFTER scanner is confirmed started so the 30s
-        # initial window is measured from actual scan start (not from loop entry).
-        watchdog_window         = WATCHDOG_INITIAL
-        window_start            = time.monotonic()
-        count_at_window_start   = self._ble_adv_count
-
+        # Main loop: keep the scanner running; yield to rebind requests from the
+        # Supervisor.  The Supervisor owns all watchdog policy (window timing,
+        # backoff, oracle evaluation); this loop only owns the mechanism
+        # (how to rebind).  Checking _ble_rebind_pending every 0.5s adds
+        # negligible latency vs. the 9s rebind itself.
         try:
             while self._monitoring:
                 await asyncio.sleep(0.5)
                 if not self._monitoring:
                     break
 
-                now = time.monotonic()
-
-                if self._ble_adv_count > count_at_window_start:
-                    # Radio is healthy — reset window to floor
-                    if watchdog_window != WATCHDOG_FLOOR:
-                        logging.info(
-                            "DroneID BLE: advertisements resumed — watchdog backoff reset"
-                        )
-                    watchdog_window       = WATCHDOG_FLOOR
-                    window_start          = now
-                    count_at_window_start = self._ble_adv_count
-                    continue
-
-                if (now - window_start) < watchdog_window:
-                    continue
-
-                # STALL detected — no advertisements in the current window
-                elapsed = int(now - window_start)
-                self._ble_reset_count += 1
-                logging.warning(
-                    "DroneID BLE: no advertisements for %ds — wedged radio suspected, "
-                    "rebinding btusb (reset #%d)",
-                    elapsed, self._ble_reset_count,
-                )
-
-                # Stop the stale scanner
-                try:
-                    await scanner.stop()
-                except Exception as stop_exc:
-                    logging.debug("DroneID BLE: scanner.stop() during reset: %s", stop_exc)
-                scanner = None
-                self._ble_enabled = False
-
-                # Run the blocking (~9s) btusb rebind off the event loop
-                loop = asyncio.get_running_loop()
-                try:
-                    await loop.run_in_executor(None, DroneIDEngine._reset_bluetooth_adapter)
-                except asyncio.CancelledError:
-                    # Shutdown mid-rebind — the executor thread may finish the
-                    # ~9s rebind after cancellation; this is harmless and
-                    # idempotent.  The stop() join timeout is the safety net.
-                    raise
-                except Exception as reset_exc:
-                    logging.warning(
-                        "DroneID BLE: btusb rebind failed: %s", reset_exc
-                    )
-
-                self._ble_last_reset_at = datetime.now(timezone.utc)
-
-                if not self._monitoring:
-                    break
-
-                # Restart the scanner on the freshly rebound adapter
-                scanner = await _start_scanner()
-                if scanner is None:
-                    self._ble_enabled = False
-                    logging.warning(
-                        "DroneID BLE: scanner failed to restart after btusb rebind — "
-                        "BLE scanning disabled"
-                    )
-                    return
-                self._ble_enabled = True
-                logging.info("DroneID BLE: scanner restarted after rebind")
-
-                # Back off the watchdog window, capped at WATCHDOG_CAP
-                watchdog_window       = min(watchdog_window * 2, WATCHDOG_CAP)
-                window_start          = time.monotonic()
-                count_at_window_start = self._ble_adv_count
+                if self._ble_rebind_pending:
+                    scanner = await _do_rebind(scanner)
+                    if scanner is None:
+                        # Failed to restart — loop exits, _ble_enabled stays False.
+                        # The Supervisor will detect this via ble_health_inputs().
+                        return
 
         finally:
             if scanner is not None:
@@ -1828,57 +2034,10 @@ class DroneIDEngine:
         track = self._db.get_drone_track(serial, track_minutes)
         return drone_dict, track
 
-    def _monitor_health_check(self):
-        """Background check: verify the adapter is actually delivering frames.
-
-        Some drivers (notably iwlwifi on Intel AX200/AX201/AX203/AX210) report
-        monitor mode as supported but the firmware silently drops all frames.
-        We wait a few seconds after capture starts and check if any raw 802.11
-        frames have arrived.  If not, set a warning for the user.
-
-        Continues checking periodically — if frames start flowing after the
-        warning was set, clears it.
-        """
-        warned = False
-
-        # Initial check: wait 8 seconds
-        for _ in range(16):
-            sleep(0.5)
-            if not self._monitoring:
-                return
-            if self._frame_count > 0:
-                driver = self._get_driver_name()
-                if driver:
-                    print(f"  Monitor:  Receiving frames on {self._interface} (driver: {driver})")
-                return
-
-        # Zero frames after 8 seconds — warn
-        driver = self._get_driver_name()
-        driver_hint = f" (driver: {driver})" if driver else ""
-        msg = (
-            f"WARNING: No frames received on {self._interface}{driver_hint} after 8 seconds. "
-            f"The adapter may not support monitor mode at the firmware level."
-        )
-        self._monitor_warning = msg
-        warned = True
-        print(f"  {msg}")
-
-        if driver and 'iwlwifi' in driver:
-            print(
-                "  NOTE: Intel iwlwifi adapters (AX200/AX201/AX203/AX210) often report "
-                "monitor mode as supported but the firmware filters all frames. "
-                "Use an external USB adapter (Alfa, Realtek RTL8812AU, Atheros) instead."
-            )
-
-        # Keep checking — clear warning if frames start arriving
-        while self._monitoring:
-            sleep(5)
-            if not self._monitoring:
-                return
-            if self._frame_count > 0 and warned:
-                self._monitor_warning = ""
-                warned = False
-                print(f"  Monitor:  Frames now flowing on {self._interface} — warning cleared")
+    # _monitor_health_check was removed in the watchdog refactor.
+    # Its firmware-no-frames hint logic is now handled by the Supervisor's
+    # idle_unverified path (see supervisor.py _supervise_wifi).  The
+    # Supervisor also clears _monitor_warning when frames start flowing.
 
     @staticmethod
     def _get_driver_name():
@@ -1897,10 +2056,25 @@ class DroneIDEngine:
         return None
 
     def get_status(self):
-        """Get monitoring status."""
+        """Get monitoring status including new heartbeat / health fields."""
         duration = 0
         if self._started_at and self._monitoring:
             duration = int((datetime.now(timezone.utc) - self._started_at).total_seconds())
+
+        proc = self._capture_proc
+        tcpdump_alive = proc is not None and proc.poll() is None
+        parse_alive = self._parse_thread is not None and self._parse_thread.is_alive()
+        ble_scanner_alive = self._ble_thread is not None and self._ble_thread.is_alive()
+        last_frame_age = round(
+            (time.monotonic() - self._wifi_last_frame_monotonic)
+            if self._wifi_last_frame_monotonic > 0 else -1.0,
+            1,
+        )
+        last_adv_age = round(
+            (time.monotonic() - self._ble_last_adv_monotonic)
+            if self._ble_last_adv_monotonic > 0 else -1.0,
+            1,
+        )
 
         return {
             'monitoring': self._monitoring,
@@ -1912,11 +2086,26 @@ class DroneIDEngine:
             'droneid_frame_count': self._droneid_frame_count,
             'capture_errors': self._capture_errors,
             'monitor_warning': self._monitor_warning,
+            # WiFi health fields
+            'wifi_restart_count': self._wifi_restart_count,
+            'wifi_last_restart_at': (
+                self._wifi_last_restart_at.isoformat().replace('+00:00', 'Z')
+                if self._wifi_last_restart_at else None
+            ),
+            'wifi_last_frame_age_s': last_frame_age,
+            'parse_thread_alive': parse_alive,
+            'tcpdump_alive': tcpdump_alive,
+            # BLE fields
             'ble_enabled': self._ble_enabled,
             'ble_frame_count': self._ble_frame_count,
             'ble_adv_count': self._ble_adv_count,
             'ble_reset_count': self._ble_reset_count,
-            'ble_last_reset_at': self._ble_last_reset_at.isoformat().replace('+00:00', 'Z') if self._ble_last_reset_at else None,
+            'ble_last_reset_at': (
+                self._ble_last_reset_at.isoformat().replace('+00:00', 'Z')
+                if self._ble_last_reset_at else None
+            ),
+            'ble_last_adv_age_s': last_adv_age,
+            'ble_scanner_alive': ble_scanner_alive,
         }
 
     def cleanup_stale(self, max_age=300):

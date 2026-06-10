@@ -7,7 +7,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=<path to sparrow-wifi>/sparrow-droneid/sparrow_droneid
-ExecStart=/usr/bin/python3 app.py
+ExecStart=/usr/bin/python3 -u app.py
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=10

@@ -1297,6 +1297,10 @@ class ElasticsearchEngine:
         self._stop_event = threading.Event()
         self._config_lock = threading.Lock()
 
+        # Heartbeat timestamp — updated by _flush_loop each iteration so the
+        # Supervisor can check that the flush thread is alive.
+        self._flush_last_tick: float = 0.0
+
         # Optional callback that returns heartbeat data dict.
         # Signature: get_heartbeat_data() -> dict with keys:
         #   active_drones, monitoring, interface, uptime_s, frame_count, gps_fix,
@@ -1551,6 +1555,7 @@ class ElasticsearchEngine:
     def _flush_loop(self) -> None:
         """Persistent flush thread: bootstrap → flush → health probe."""
         while not self._stop_event.is_set():
+            self._flush_last_tick = monotonic()  # heartbeat for Supervisor
             try:
                 self._flush_tick()
             except Exception as exc:

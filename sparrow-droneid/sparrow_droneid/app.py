@@ -30,6 +30,7 @@ from backend.cot_engine import CotEngine
 from backend.elasticsearch_engine import ElasticsearchEngine, _parse_iso_utc
 from backend.cert_manager import CertManager
 from backend.wifi_ssid_scanner import WifiSsidScanner
+from backend.supervisor import Supervisor
 from backend.api_handler import (
     MultithreadHTTPServer, RequestHandler, set_engines,
 )
@@ -51,6 +52,7 @@ class SparrowDroneID:
         self._shutdown_event = threading.Event()
         self._httpd = None
         self._maintenance_thread = None
+        self._maintenance_last_tick: float = 0.0   # heartbeat for health endpoint
 
         # Engine references
         self.db = None
@@ -61,6 +63,7 @@ class SparrowDroneID:
         self.es_engine = None
         self.cert_manager = None
         self.wifi_ssid_scanner = None
+        self.supervisor: Supervisor = None  # type: ignore[assignment]
 
     def _check_prerequisites(self):
         """Check root, tcpdump, iw. Exit on failure."""
@@ -89,6 +92,16 @@ class SparrowDroneID:
                 self.port = int(saved_port)
             except (ValueError, TypeError):
                 pass
+
+        # Honour DB log_level setting (overrides env var after DB is open).
+        # Only adjusts the numeric level on the already-configured root
+        # logger — basicConfig is NOT called again.
+        db_level_name = self.db.get_setting('log_level', '').strip().upper()
+        if db_level_name:
+            db_level = getattr(logging, db_level_name, None)
+            if isinstance(db_level, int):
+                logging.getLogger().setLevel(db_level)
+                log.debug("Log level set to %s from database setting", db_level_name)
 
         self._seed_vendor_codes()
         self._seed_ssid_patterns()
@@ -305,6 +318,8 @@ class SparrowDroneID:
                 self._shutdown_event.wait(60)
                 if self._shutdown_event.is_set():
                     break
+                import time as _time
+                self._maintenance_last_tick = _time.monotonic()
                 try:
                     # Retention purge
                     retention_days = int(self.db.get_setting('retention_days', '14'))
@@ -319,7 +334,7 @@ class SparrowDroneID:
                         snapshot = dict(self.droneid_engine._active_drones)
                     self.alert_engine.check_signal_lost(snapshot)
                 except Exception as e:
-                    print(f"Maintenance error: {e}")
+                    log.warning("Maintenance error: %s", e)
 
         self._maintenance_thread = threading.Thread(
             target=maintenance_loop, daemon=True, name='maintenance'
@@ -396,7 +411,20 @@ class SparrowDroneID:
                 os.path.dirname(os.path.abspath(__file__)), self.html_dir
             )
 
-        # Wire engines into API handler
+        # Build the Supervisor — knows how to get maintenance/flush ticks
+        def _get_maintenance_tick() -> float:
+            return self._maintenance_last_tick
+
+        def _get_flush_tick() -> float:
+            return getattr(self.es_engine, '_flush_last_tick', 0.0)
+
+        self.supervisor = Supervisor(
+            engine=self.droneid_engine,
+            get_maintenance_tick=_get_maintenance_tick,
+            get_flush_tick=_get_flush_tick,
+        )
+
+        # Wire engines into API handler (supervisor included so health endpoint can reach it)
         set_engines(
             droneid=self.droneid_engine,
             gps=self.gps_engine,
@@ -408,6 +436,7 @@ class SparrowDroneID:
             cert_manager=self.cert_manager,
             wifi_ssid_scanner=self.wifi_ssid_scanner,
             es_engine=self.es_engine,
+            supervisor=self.supervisor,
         )
 
         # Bind address
@@ -443,6 +472,10 @@ class SparrowDroneID:
         # Auto-start monitoring
         self._auto_start_monitoring()
 
+        # Start the Supervisor after monitoring is (potentially) running so its
+        # first tick sees accurate engine state rather than a cold zero baseline.
+        self.supervisor.start()
+
         # Banner
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         display_host = 'localhost' if bind_addr == '127.0.0.1' else bind_addr
@@ -462,7 +495,11 @@ class SparrowDroneID:
             if not self._shutdown_event.is_set():
                 print(f"Server error: {e}")
 
-        # Cleanup
+        # Cleanup — stop supervisor before the engine so it doesn't try to
+        # restart a capture that is intentionally being torn down.
+        if self.supervisor:
+            self.supervisor.stop()
+
         if self.droneid_engine.monitoring:
             print("Stopping monitor capture...")
             self.droneid_engine.stop()
@@ -479,7 +516,31 @@ class SparrowDroneID:
         print(f"[{ts}] Sparrow DroneID stopped.")
 
 
+def _configure_logging():
+    """Configure the root logger once, before any module logs anything.
+
+    Level resolution: env SPARROW_DRONEID_LOG_LEVEL → default INFO.
+    The DB log_level setting is applied after DB init via a root-logger
+    level override in _init_database (if set).
+
+    logging.basicConfig is idempotent — subsequent calls are no-ops if
+    the root logger already has handlers (e.g. when running under a test
+    harness that configures logging first).
+    """
+    level_name = os.environ.get('SPARROW_DRONEID_LOG_LEVEL', 'INFO').upper()
+    level = getattr(logging, level_name, logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s %(levelname)s %(name)s: %(message)s',
+        stream=sys.stdout,
+    )
+
+
 def main():
+    # Configure logging before ANYTHING else so that all subsequent
+    # logging.* calls in every module are captured from process start.
+    _configure_logging()
+
     parser = argparse.ArgumentParser(
         description='Sparrow DroneID — FAA Remote ID drone detection',
         formatter_class=argparse.RawDescriptionHelpFormatter,

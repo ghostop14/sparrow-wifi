@@ -35,6 +35,7 @@ from .database import Database
 from .export import generate_kml
 from .cert_manager import CertManager
 from .wifi_ssid_scanner import WifiSsidScanner
+from .supervisor import Supervisor
 from .openapi import (qparam, path_param, json_body, json_body_inline,
                       response_ref, response_inline, build_openapi_spec)
 from .errors import ErrorCode
@@ -58,6 +59,7 @@ _data_dir: Optional[str] = None
 _html_dir: Optional[str] = None
 _cert_manager: Optional[CertManager] = None
 _wifi_ssid_scanner: Optional[WifiSsidScanner] = None
+_supervisor: Optional[Supervisor] = None
 
 # Startup timestamp for uptime calculation
 _start_time: datetime = datetime.now(timezone.utc)
@@ -87,10 +89,11 @@ def set_engines(droneid: DroneIDEngine, gps: GPSEngine, alert: AlertEngine,
                 cot: CotEngine, db: Database, data_dir: str, html_dir: str,
                 cert_manager: Optional[CertManager] = None,
                 wifi_ssid_scanner: Optional[WifiSsidScanner] = None,
-                es_engine: Optional[ElasticsearchEngine] = None) -> None:
+                es_engine: Optional[ElasticsearchEngine] = None,
+                supervisor: Optional[Supervisor] = None) -> None:
     """Called by app.py at startup to wire engine references into this module."""
     global _droneid_engine, _gps_engine, _alert_engine, _cot_engine, _es_engine
-    global _db, _data_dir, _html_dir, _cert_manager, _wifi_ssid_scanner
+    global _db, _data_dir, _html_dir, _cert_manager, _wifi_ssid_scanner, _supervisor
     _droneid_engine = droneid
     _gps_engine = gps
     _alert_engine = alert
@@ -101,6 +104,7 @@ def set_engines(droneid: DroneIDEngine, gps: GPSEngine, alert: AlertEngine,
     _html_dir = html_dir
     _cert_manager = cert_manager
     _wifi_ssid_scanner = wifi_ssid_scanner
+    _supervisor = supervisor
 
 
 # ---------------------------------------------------------------------------
@@ -487,6 +491,13 @@ class RequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.parse_query_string()
         parsed_path = urlparse(self.path).path
+
+        # /healthz is unauthenticated and returns minimal body — must be
+        # checked BEFORE auth so it works even when a bearer token is set.
+        if parsed_path == '/healthz':
+            _handle_healthz(self)
+            return
+
         if parsed_path.startswith('/api/'):
             if not self.check_auth():
                 return
@@ -523,6 +534,32 @@ class RequestHandler(BaseHTTPRequestHandler):
 # ---------------------------------------------------------------------------
 # Auth helper — IP allowlist check
 # ---------------------------------------------------------------------------
+
+def _handle_healthz(req: 'RequestHandler') -> None:
+    """/healthz — unauthenticated liveness probe.
+
+    Returns 200 "ok" unless any detection path is in 'down' state → 503.
+    NEVER returns 503 for idle / idle_unverified (honours zero-RF constraint).
+    The response body is intentionally minimal — no sensitive config data.
+    """
+    overall = 'ok'
+    http_status = 200
+    if _supervisor is not None:
+        sup_status = _supervisor.get_status()
+        if sup_status.get('wifi_state') == 'down' or sup_status.get('ble_state') == 'down':
+            overall = 'down'
+            http_status = 503
+    body = overall.encode('utf-8')
+    try:
+        req.send_response(http_status)
+        req.send_header('Content-Type', 'text/plain; charset=utf-8')
+        req.send_header('Content-Length', str(len(body)))
+        req.send_header('Cache-Control', 'no-cache')
+        req.end_headers()
+        req.wfile.write(body)
+    except BrokenPipeError:
+        pass
+
 
 def _ip_is_allowed(client_ip: str, allowed_ips_raw: str) -> bool:
     """Return True if client_ip matches any entry in the comma-separated
@@ -617,6 +654,9 @@ def api_status(req: RequestHandler):
     unique_total = _require_db().get_unique_serial_count() if _db else 0
     retention = int(_require_db().get_setting_str('retention_days', '14') or '14') if _db else 14
 
+    # Build supervisor state for health fields (None when supervisor not started)
+    sup_status = _supervisor.get_status() if _supervisor is not None else {}
+
     req._send_ok({
         'version': '1.0.0',
         'monitoring': engine_status.get('monitoring', False),
@@ -624,11 +664,27 @@ def api_status(req: RequestHandler):
         'monitor_channel': engine_status.get('channel', 6),
         'monitor_duration_seconds': engine_status.get('duration_seconds', 0),
         'frame_count': engine_status.get('frame_count', 0),
+        # Previously omitted fields — now included (additive, backward-compatible)
+        'droneid_frame_count': engine_status.get('droneid_frame_count', 0),
+        'capture_errors': engine_status.get('capture_errors', 0),
+        'monitor_warning': engine_status.get('monitor_warning', ''),
+        # WiFi health
+        'wifi_health': sup_status.get('wifi_state', 'idle'),
+        'wifi_restart_count': engine_status.get('wifi_restart_count', 0),
+        'wifi_last_restart_at': engine_status.get('wifi_last_restart_at', None),
+        'wifi_last_frame_age_s': engine_status.get('wifi_last_frame_age_s', -1.0),
+        'parse_thread_alive': engine_status.get('parse_thread_alive', False),
+        'tcpdump_alive': engine_status.get('tcpdump_alive', False),
+        # BLE
         'ble_enabled': engine_status.get('ble_enabled', False),
         'ble_frame_count': engine_status.get('ble_frame_count', 0),
         'ble_adv_count': engine_status.get('ble_adv_count', 0),
         'ble_reset_count': engine_status.get('ble_reset_count', 0),
         'ble_last_reset_at': engine_status.get('ble_last_reset_at', None),
+        'ble_health': sup_status.get('ble_state', 'idle'),
+        'ble_last_adv_age_s': engine_status.get('ble_last_adv_age_s', -1.0),
+        'ble_scanner_alive': engine_status.get('ble_scanner_alive', False),
+        # Counts / GPS
         'active_drone_count': active_count,
         'total_drones_seen': unique_total,
         'gps_fix': gps_dict.get('fix', False),
@@ -798,6 +854,57 @@ def api_monitor_status(req: RequestHandler):
         return
     status = _droneid_engine.get_status()
     req._send_ok(status)
+
+
+@router.route('GET', '/api/v1/health', spec={
+    'summary': 'Detailed component health (authenticated)',
+    'tags': ['System'],
+    'responses': {
+        '200': response_inline(
+            {'status': {'type': 'string'},
+             'wifi': {'type': 'object'},
+             'ble': {'type': 'object'},
+             'threads': {'type': 'object'},
+             'generated_at': {'type': 'string'}},
+            'Detailed health breakdown',
+        ),
+        '503': {'description': 'One or more components down'},
+    },
+})
+def api_health(req: RequestHandler):
+    """Detailed component health status (requires auth, unlike /healthz)."""
+    engine_status = _droneid_engine.get_status() if _droneid_engine else {}
+    sup_status = _supervisor.get_status() if _supervisor is not None else {}
+    thread_ages = _supervisor.get_thread_ages() if _supervisor is not None else {}
+
+    wifi_state = sup_status.get('wifi_state', 'idle')
+    ble_state = sup_status.get('ble_state', 'idle')
+    overall_down = (wifi_state == 'down' or ble_state == 'down')
+    overall = 'down' if overall_down else (
+        'degraded' if (wifi_state == 'degraded' or ble_state == 'degraded') else 'ok'
+    )
+
+    payload = {
+        'status': overall,
+        'wifi': {
+            'state': wifi_state,
+            'last_frame_age_s': engine_status.get('wifi_last_frame_age_s', -1.0),
+            'restart_count': engine_status.get('wifi_restart_count', 0),
+            'tcpdump_alive': engine_status.get('tcpdump_alive', False),
+            'parse_alive': engine_status.get('parse_thread_alive', False),
+            'capture_errors': engine_status.get('capture_errors', 0),
+        },
+        'ble': {
+            'state': ble_state,
+            'last_adv_age_s': engine_status.get('ble_last_adv_age_s', -1.0),
+            'reset_count': engine_status.get('ble_reset_count', 0),
+            'scanner_alive': engine_status.get('ble_scanner_alive', False),
+        },
+        'threads': thread_ages,
+        'generated_at': _utcnow_iso_z(),
+    }
+    http_status = 503 if overall_down else 200
+    req._send_json(payload, status=http_status)
 
 
 # ---------------------------------------------------------------------------
