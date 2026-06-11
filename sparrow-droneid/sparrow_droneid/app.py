@@ -326,8 +326,10 @@ class SparrowDroneID:
                     if retention_days > 0:
                         self.db.run_retention_purge(retention_days)
 
-                    # Clean stale drones from memory
-                    self.droneid_engine.cleanup_stale(300)
+                    # Clean stale drones from memory, then forget their alert
+                    # state so a genuine reappearance re-arms the new_drone alert.
+                    evicted = self.droneid_engine.cleanup_stale(300)
+                    self.alert_engine.forget_drones(evicted)
 
                     # Check for signal-lost alerts
                     with self.droneid_engine._lock:

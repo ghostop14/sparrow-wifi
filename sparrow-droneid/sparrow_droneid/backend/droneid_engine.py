@@ -2109,7 +2109,11 @@ class DroneIDEngine:
         }
 
     def cleanup_stale(self, max_age=300):
-        """Remove drones from active tracking that haven't been seen recently."""
+        """Remove drones from active tracking that haven't been seen recently.
+
+        Returns the list of keys evicted, so the caller can drop matching
+        per-drone alert state (re-arming new_drone alerts on reappearance).
+        """
         now = datetime.now(timezone.utc)
         with self._lock:
             stale_keys = []
@@ -2123,6 +2127,7 @@ class DroneIDEngine:
             for key in stale_keys:
                 del self._active_drones[key]
                 self._rssi_history.pop(key, None)
+        return stale_keys
 
 
     def _load_dispositions(self):

@@ -398,6 +398,25 @@ class AlertEngine:
                 f"First detection of {key}",
             )
 
+    def forget_drones(self, keys) -> None:
+        """Drop all per-drone alert state for drones that have left tracking.
+
+        Called from the maintenance loop with the keys cleanup_stale() just
+        evicted from the engine's active set. Discarding from _known_serials
+        re-arms the new_drone alert so a genuine reappearance hours later
+        alerts again (rather than being silently treated as already-known for
+        the life of the process). Also bounds the otherwise-unbounded growth
+        of these sets.
+        """
+        if not keys:
+            return
+        with self._lock:
+            for key in keys:
+                self._known_serials.discard(key)
+                self._alerted_lost.discard(key)
+                self._alerted_violations.pop(key, None)
+                self._pending_new.pop(key, None)
+
     def get_pending_alerts(self) -> List[dict]:
         """Return and clear the list of pending alert dicts.
 
