@@ -199,6 +199,52 @@ class TestDocumentBuilder(unittest.TestCase):
         self.assertEqual(doc["droneid"]["alert"]["type"], "altitude_max")
         self.assertIn("geo", doc["source"])
 
+    def test_alert_document_carries_operator(self):
+        """An alert with a denormalized operator position publishes the
+        controller perspective (droneid.operator + droneid.range), mirroring
+        the detection path."""
+        device = self._make_device(operator_id="OP-77", operator_alt=92.0)
+        alert = AlertEvent(
+            id=2, timestamp="2026-03-31T14:36:00Z",
+            alert_type="new_drone", serial_number="TEST123",
+            detail="First detection of TEST123",
+            drone_lat=35.1234, drone_lon=-78.5678, drone_height_agl=150.0,
+            range_m=420.0, bearing_deg=100.5,
+            operator_lat=35.1200, operator_lon=-78.5700,
+            operator_range_m=1263.0, operator_bearing_deg=76.6,
+            receiver_lat=35.0, receiver_lon=-78.0,
+        )
+        doc = DocumentBuilder.build_alert(
+            alert, device, 35.0, -78.0, 100.0, "sensor-1", "rpi-01",
+        )
+        op = doc["droneid"]["operator"]
+        self.assertEqual(op["lat"], 35.1200)
+        self.assertEqual(op["lon"], -78.5700)
+        self.assertEqual(op["id"], "OP-77")
+        self.assertIn("location", op)               # operator geo_point present
+        self.assertIsNotNone(op["distance_m"])      # drone -> operator distance
+        rng = doc["droneid"]["range"]
+        self.assertEqual(rng["drone_m"], 420.0)
+        self.assertEqual(rng["operator_m"], 1263.0)
+        self.assertEqual(rng["operator_bearing_deg"], 76.6)
+        self.assertTrue(rng["operator_bearing_cardinal"])  # cardinal derived
+
+    def test_alert_document_no_operator_when_absent(self):
+        """No operator position -> operator object present but no geo_point,
+        and operator range fields are null."""
+        alert = AlertEvent(
+            id=3, timestamp="2026-03-31T14:37:00Z",
+            alert_type="altitude_max", serial_number="TEST123",
+            detail="x", drone_lat=35.12, drone_lon=-78.56,
+            drone_height_agl=450.0, range_m=300.0, bearing_deg=90.0,
+        )
+        doc = DocumentBuilder.build_alert(
+            alert, None, 35.0, -78.0, 100.0, "sensor-1", "rpi-01",
+        )
+        self.assertNotIn("location", doc["droneid"]["operator"])
+        self.assertIsNone(doc["droneid"]["range"]["operator_m"])
+        self.assertTrue(doc["droneid"]["operator"]["bvlos"])
+
     def test_event_category_intrusion_detection(self):
         doc = DocumentBuilder.build_detection(
             self._make_device(), 35.0, -78.0, 100.0,

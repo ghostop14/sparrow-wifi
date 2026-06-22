@@ -568,6 +568,8 @@ class AlertEngine:
         # Promote geo to alert_dict for Slack/script/API consumers
         if event_range_m is not None:
             alert_dict['bearing_cardinal'] = bearing_cardinal(event_bearing_deg)
+        if event_op_range_m is not None:
+            alert_dict['operator_bearing_cardinal'] = bearing_cardinal(event_op_bearing_deg)
 
         with self._lock:
             self._pending_alerts.append(alert_dict)
@@ -859,9 +861,19 @@ class AlertEngine:
                     'mac_address':       alert_dict.get('mac_address', ''),
                     'protocol':          alert_dict.get('protocol', ''),
                     'rssi':              alert_dict.get('rssi'),
+                    # Receiver -> drone
                     'range_m':           alert_dict.get('range_m'),
                     'bearing_deg':       alert_dict.get('bearing_deg'),
                     'bearing_cardinal':  alert_dict.get('bearing_cardinal', ''),
+                    # Receiver -> operator/controller (the pilot). The platform
+                    # alert map can't plot a second point, but these render in
+                    # the generic alert detail readout so an operator can call
+                    # out where the controller is, not just the drone.
+                    'operator_lat':              alert_dict.get('operator_lat'),
+                    'operator_lon':              alert_dict.get('operator_lon'),
+                    'operator_range_m':          alert_dict.get('operator_range_m'),
+                    'operator_bearing_deg':      alert_dict.get('operator_bearing_deg'),
+                    'operator_bearing_cardinal': alert_dict.get('operator_bearing_cardinal', ''),
                     'speed_mps':         alert_dict.get('speed'),
                     'direction_deg':     alert_dict.get('direction'),
                     'altitude_m_agl':    alert_dict.get('drone_height_agl'),

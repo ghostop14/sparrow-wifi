@@ -710,6 +710,29 @@ class DocumentBuilder:
 
         has_receiver_pos = receiver_lat != 0.0 or receiver_lon != 0.0
 
+        # Operator/controller geometry — denormalized onto the AlertEvent at
+        # creation (range/bearing from the sensor; position carried on the
+        # alert). Mirrors the detection doc's droneid.operator / droneid.range
+        # so the analytics platform sees the controller on the alert path too.
+        has_alert_drone_pos = alert.drone_lat != 0.0 or alert.drone_lon != 0.0
+        has_operator_pos = (alert.operator_lat is not None
+                            and alert.operator_lon is not None
+                            and (alert.operator_lat != 0.0
+                                 or alert.operator_lon != 0.0))
+
+        operator_distance_m = None  # drone -> operator (pilot-to-aircraft)
+        bvlos = True
+        if has_alert_drone_pos and has_operator_pos:
+            operator_distance_m = round(
+                haversine(alert.drone_lat, alert.drone_lon,
+                          alert.operator_lat, alert.operator_lon), 1)
+            bvlos = operator_distance_m > _BVLOS_THRESHOLD_M
+
+        drone_bearing_card = (bearing_cardinal(alert.bearing_deg)
+                              if alert.bearing_deg is not None else None)
+        operator_bearing_card = (bearing_cardinal(alert.operator_bearing_deg)
+                                 if alert.operator_bearing_deg is not None else None)
+
         doc: Dict[str, Any] = {
             "@timestamp": ts,
             "ecs": {"version": ECS_VERSION},
@@ -740,6 +763,23 @@ class DocumentBuilder:
                     "detail": alert.detail,
                     "state": "ACTIVE",
                 },
+                "operator": {
+                    "lat": alert.operator_lat,
+                    "lon": alert.operator_lon,
+                    "alt": getattr(device, "operator_alt", None) if device else None,
+                    "id": getattr(device, "operator_id", "") if device else "",
+                    "self_id_text": getattr(device, "self_id_text", "") if device else "",
+                    "distance_m": operator_distance_m,
+                    "bvlos": bvlos,
+                },
+                "range": {
+                    "drone_m": alert.range_m,
+                    "drone_bearing_deg": alert.bearing_deg,
+                    "drone_bearing_cardinal": drone_bearing_card,
+                    "operator_m": alert.operator_range_m,
+                    "operator_bearing_deg": alert.operator_bearing_deg,
+                    "operator_bearing_cardinal": operator_bearing_card,
+                },
                 "disposition": getattr(device, "disposition", None) or "unknown" if device else "unknown",
                 "military": bool(getattr(device, "military", False)) if device else False,
                 "law_enforcement": bool(getattr(device, "law_enforcement", False)) if device else False,
@@ -758,6 +798,14 @@ class DocumentBuilder:
                 "geo": {
                     "location": {"lat": alert.drone_lat, "lon": alert.drone_lon},
                 },
+            }
+
+        # Operator/controller geo_point — mirrors droneid.operator.location on
+        # the detection path. (The platform's alert MAP plots only source/
+        # observer; this surfaces the controller in the alert readout + index.)
+        if has_operator_pos:
+            doc["droneid"]["operator"]["location"] = {
+                "lat": alert.operator_lat, "lon": alert.operator_lon,
             }
 
         return doc
