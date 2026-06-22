@@ -889,6 +889,18 @@ class AlertEngine:
         if drone_lat and drone_lon and (drone_lat != 0.0 or drone_lon != 0.0):
             body['alert']['source'] = {'geo': {'location': {
                 'lat': float(drone_lat), 'lon': float(drone_lon)}}}
+
+        # Operator/controller geo_point.  The ECS alert schema has only two geo
+        # slots (source=drone, observer=sensor), so the pilot's position is
+        # nested under details.operator.geo.location — same {geo:{location}}
+        # shape as source/observer so a *.geo.location geo_point mapping catches
+        # it and the UI can plot the controller as a second marker. Emitted only
+        # when the operator position was broadcast (not all detections have it).
+        op_lat = alert_dict.get('operator_lat')
+        op_lon = alert_dict.get('operator_lon')
+        if op_lat and op_lon and (op_lat != 0.0 or op_lon != 0.0):
+            body['alert']['details']['operator'] = {'geo': {'location': {
+                'lat': float(op_lat), 'lon': float(op_lon)}}}
         return body
 
     def _post_api(self, alert_dict: dict) -> None:
