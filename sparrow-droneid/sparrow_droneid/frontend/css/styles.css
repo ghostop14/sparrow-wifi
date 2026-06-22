@@ -425,12 +425,14 @@ html, body {
 .alert-icon.new-drone  { color: var(--drone-active); }
 .alert-icon.altitude   { color: var(--alert-color); }
 .alert-icon.speed      { color: var(--alert-color); }
-.alert-icon.signal-lost{ color: var(--text-muted); }
+.alert-icon.signal-lost{ color: var(--text-secondary); }
 
 .alert-content { flex: 1; min-width: 0; }
 .alert-title   { font-weight: 600; font-size: 12px; color: var(--text-primary); }
 .alert-detail  { font-size: 11px; color: var(--text-secondary); }
-.alert-time    { font-size: 10px; color: var(--text-muted); white-space: nowrap; }
+/* Timestamp is a first-class field: full-emphasis (white), medium weight so it
+   reads as a primary numeric label without competing with the bold message. */
+.alert-time    { font-size: 11px; color: var(--text-primary); font-weight: 500; white-space: nowrap; }
 
 .alerts-empty { color: var(--text-muted); }
 
@@ -439,6 +441,29 @@ html, body {
 .alert-item.acked .alert-icon { color: var(--text-muted) !important; }
 .alert-item.resolved { opacity: 0.4; }
 .alert-item.resolved .alert-detail { text-decoration: line-through; }
+
+/* Expanded-alert visual container — make each alert (row + its detail) read as
+   one block, clearly bounded from the next alert as the operator scrolls. */
+.alert-item.expanded {
+  background: var(--bg-tertiary);
+  border-left: 3px solid var(--accent-blue);
+  padding-left: 11px;            /* 14px - 3px border keeps content aligned */
+}
+.alert-item.expanded:hover { background: var(--bg-tertiary); }  /* no hover flicker */
+
+.alert-detail-panel.open {
+  background: var(--bg-primary);              /* darker interior than the list */
+  border-left: 3px solid var(--accent-blue);  /* accent stripe continues onto detail */
+  border-bottom: 2px solid var(--border-color); /* explicit end-of-alert marker */
+}
+.alert-detail-inner { padding: 10px 14px 14px 11px; }
+
+/* Section rhythm inside the expanded detail — subtle separators so section
+   boundaries stay scannable while scrolling. */
+.alert-detail-inner .detail-section + .detail-section {
+  border-top: 1px solid rgba(51, 65, 85, 0.4);
+  padding-top: 10px;
+}
 
 /* Per-alert acknowledge button */
 .btn-ack {

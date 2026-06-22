@@ -190,7 +190,7 @@ const AlertsManager = (() => {
          </button>`;
 
       // Detail panel — rendered collapsed unless this ID is in _expandedIds
-      const detailPanel = `<div class="alert-detail-panel" id="alertDetail_${a.id}" style="${isExpanded ? '' : 'display:none;'}">
+      const detailPanel = `<div class="alert-detail-panel${isExpanded ? ' open' : ''}" id="alertDetail_${a.id}" style="${isExpanded ? '' : 'display:none;'}">
         <div class="alert-detail-inner" id="alertDetailInner_${a.id}">
           <div class="text-secondary text-center py-2" style="font-size:12px;">
             <i class="bi bi-arrow-repeat spin me-1"></i>Loading…
@@ -202,7 +202,7 @@ const AlertsManager = (() => {
       // Everything else (where-to-look, serial, detail) lives in the expanded
       // panel; keeping the row to a single line stops alerts being pushed down.
       return `
-        <div class="alert-item ${stateClass}" data-alert-id="${a.id}">
+        <div class="alert-item ${stateClass}${isExpanded ? ' expanded' : ''}" data-alert-id="${a.id}">
           <i class="bi ${icon} alert-icon"></i>
           <div class="alert-content" style="display:flex;align-items:baseline;gap:8px;min-width:0;">
             <span class="alert-time" style="flex-shrink:0;">${_esc(Utils.formatLocal(a.timestamp))}</span>
@@ -254,16 +254,21 @@ const AlertsManager = (() => {
   function _toggleExpand(alertId) {
     const panel = document.getElementById(`alertDetail_${alertId}`);
     if (!panel) return;
+    const item = document.querySelector(`.alert-item[data-alert-id="${alertId}"]`);
 
     if (_expandedIds.has(alertId)) {
       _expandedIds.delete(alertId);
       panel.style.display = 'none';
+      panel.classList.remove('open');
+      if (item) item.classList.remove('expanded');
       // Update chevron icon on the expand button
       const btn = document.querySelector(`[data-alert-expand="${alertId}"] i`);
       if (btn) { btn.className = 'bi bi-chevron-down'; }
     } else {
       _expandedIds.add(alertId);
       panel.style.display = '';
+      panel.classList.add('open');
+      if (item) item.classList.add('expanded');
       const btn = document.querySelector(`[data-alert-expand="${alertId}"] i`);
       if (btn) { btn.className = 'bi bi-chevron-up'; }
 
@@ -339,7 +344,7 @@ const AlertsManager = (() => {
            </button>`
         : '';
 
-      inner.innerHTML = `<div style="padding:8px 4px 2px;">${calloutBlock}${detailHtml}${replayBtn}</div>`;
+      inner.innerHTML = `${calloutBlock}${detailHtml}${replayBtn}`;
 
       // Wire callout copy button
       const copyBtnEl = document.getElementById(`calloutCopy_${alertId}`);
