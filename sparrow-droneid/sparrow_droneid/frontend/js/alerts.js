@@ -198,37 +198,15 @@ const AlertsManager = (() => {
         </div>
       </div>`;
 
-      // ---- Where-to-look lines (collapsed row) ----
-      // Guard on != null, NOT truthiness — 0 is a valid bearing/range value.
-      let whereLines = '';
-      if (a.range_m != null && a.bearing_deg != null) {
-        const card = Utils.bearingCardinal(a.bearing_deg);
-        whereLines += `<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">
-          &#9992; ${_esc(Utils.formatRangeDual(a.range_m))} &middot; brg ${Math.round(a.bearing_deg)}&deg; (${_esc(card)})
-        </div>`;
-      }
-      if (a.operator_range_m != null && a.operator_bearing_deg != null) {
-        const opCard = Utils.bearingCardinal(a.operator_bearing_deg);
-        whereLines += `<div style="font-size:11px;color:var(--text-secondary);margin-top:1px;">
-          &#128100; Pilot ${_esc(Utils.formatRangeDual(a.operator_range_m))} &middot; brg ${Math.round(a.operator_bearing_deg)}&deg; (${_esc(opCard)})
-        </div>`;
-      }
-
+      // ---- Collapsed row: one line — local date/time + message (elk-ui look) ----
+      // Everything else (where-to-look, serial, detail) lives in the expanded
+      // panel; keeping the row to a single line stops alerts being pushed down.
       return `
         <div class="alert-item ${stateClass}" data-alert-id="${a.id}">
           <i class="bi ${icon} alert-icon"></i>
-          <div class="alert-content">
-            <div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;margin-bottom:1px;">
-              <span class="alert-time" style="flex-shrink:0;">${_esc(Utils.formatZulu(a.timestamp))}</span>
-              <span class="alert-time" style="font-size:10px;opacity:0.65;">${_esc(Utils.relativeTime(a.timestamp))}</span>
-              <span class="alert-title" style="flex:1;">${_esc(_alertTitle(a.alert_type))}${stateExtra}</span>
-            </div>
-            ${whereLines}
-            <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
-              ${_esc(Utils.shortSerial(a.serial_number))}
-              ${a.drone_height_agl ? ` &mdash; ${_esc(Utils.formatAltDual(a.drone_height_agl, 'AGL'))}` : ''}
-            </div>
-            <div class="alert-detail" style="font-size:11px;color:var(--text-secondary);margin-top:1px;">${_esc(_localizeDetail(a.detail || ''))}</div>
+          <div class="alert-content" style="display:flex;align-items:baseline;gap:8px;min-width:0;">
+            <span class="alert-time" style="flex-shrink:0;">${_esc(Utils.formatLocal(a.timestamp))}</span>
+            <span class="alert-title text-truncate" style="flex:1;min-width:0;">${_esc(_alertTitle(a.alert_type))}${stateExtra}</span>
           </div>
           <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
             ${ackBtn}${deleteBtn}${chevronBtn}
@@ -347,9 +325,10 @@ const AlertsManager = (() => {
       // ---- §4 Callout block at top ----
       const calloutBlock = _buildCalloutBlock(alertId, alertRow, ctx.drone);
 
-      // ---- §7 Use buildDetailHtml with whereToLookFirst:true for alert panel ----
+      // Alert view: labeled ID + quick-look (kind + where-to-look) lead, then
+      // the full reference detail in natural order.
       const detailHtml = (typeof TableManager !== 'undefined' && TableManager.renderDetailHtml)
-        ? TableManager.renderDetailHtml(ctx.drone, ctx.track || [], { whereToLookFirst: true })
+        ? TableManager.renderDetailHtml(ctx.drone, ctx.track || [], { alertSummary: true })
         : '<div class="text-secondary py-2">Detail renderer unavailable.</div>';
 
       const ts = alertRow.timestamp || ctx.drone.first_seen || '';

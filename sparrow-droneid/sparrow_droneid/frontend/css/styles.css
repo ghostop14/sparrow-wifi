@@ -583,6 +583,42 @@ html, body {
 .detail-state-bar.aging  { background: var(--drone-active); }
 .detail-state-bar.stale  { background: var(--drone-stale); }
 
+/* Alert expanded: labeled ID line + quick-look summary (most actionable first) */
+.detail-id-line {
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.detail-id-label { color: var(--text-secondary); font-weight: 600; }
+.detail-id-value {
+  font-family: 'Courier New', monospace;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+.alert-quicklook {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 6px 9px;
+  margin-bottom: 10px;
+}
+.alert-quicklook .ql-kind {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 3px;
+}
+.alert-quicklook .ql-where {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+.alert-quicklook .ql-selfid {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-secondary);
+  margin-top: 3px;
+}
+
 .btn-detail-track {
   width: 100%;
   background: rgba(59,130,246,0.12);

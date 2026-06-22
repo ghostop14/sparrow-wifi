@@ -29,6 +29,15 @@ const Utils = (() => {
     return d.toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' });
   }
 
+  /** Local date+time matching elk-ui's alert format exactly (Date.toLocaleString()
+   *  with no options → e.g. "6/21/2026, 6:50:07 PM" in en-US, locale-aware). */
+  function formatLocal(isoString) {
+    if (!isoString) return '—';
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return '—';
+    try { return d.toLocaleString(); } catch (e) { return isoString; }
+  }
+
   /** Format an ISO timestamp as HH:MM:SSZ using UTC getters (never local time). */
   function formatZulu(isoString) {
     if (!isoString) return '—';
@@ -516,6 +525,7 @@ const Utils = (() => {
     relativeTime,
     formatTime,
     formatDateTime,
+    formatLocal,
     formatZulu,
     toLocalDatetimeInput,
     fromLocalDatetimeInput,

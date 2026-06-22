@@ -277,17 +277,55 @@ const TableManager = (() => {
         ${drone.law_enforcement ? '<span class="flag-chip flag-le" title="Law Enforcement">LE</span>' : ''}
       </div>` : '';
 
+    // Quick-look summary (alert panel only): the most actionable info first —
+    // what kind of drone (friend/foe) and where to look — before the full
+    // reference detail below.
+    const alertView = opts && opts.alertSummary;
+    function _quickLook() {
+      const disp = drone.disposition || 'unknown';
+      const dispChip = `<span class="disposition-${disp}" style="font-size:11px;font-weight:600;">${disp.charAt(0).toUpperCase() + disp.slice(1)}</span>`;
+      const flags = `${drone.military ? '<span class="flag-chip flag-military" title="Military">MIL</span>' : ''}${drone.law_enforcement ? '<span class="flag-chip flag-le" title="Law Enforcement">LE</span>' : ''}`;
+      const vendorStr = drone.vendor ? _esc(drone.vendor) + ' ' : '';
+      const uaType = (drone.ua_type_name && drone.ua_type_name !== 'None / Not Declared') ? _esc(drone.ua_type_name) : 'Drone';
+      let where = '';
+      if (drone.drone_height_agl != null) {
+        where += `<div>&#9650; ${_esc(Utils.formatAltDual(drone.drone_height_agl, 'AGL'))}</div>`;
+      }
+      if (d.range_m != null) {
+        const card = d.bearing_cardinal || Utils.bearingCardinal(d.bearing_deg);
+        where += `<div>&#9992; ${_esc(Utils.formatRangeDual(d.range_m))} &middot; brg ${Math.round(d.bearing_deg)}&deg; (${_esc(card)})</div>`;
+      }
+      if (d.operator_range_m != null) {
+        const opCard = d.operator_bearing_cardinal || Utils.bearingCardinal(d.operator_bearing_deg);
+        where += `<div>&#128100; Pilot ${_esc(Utils.formatRangeDual(d.operator_range_m))} &middot; brg ${Math.round(d.operator_bearing_deg)}&deg; (${_esc(opCard)})</div>`;
+      }
+      const selfId = drone.self_id_text
+        ? `<div class="ql-selfid">"${_esc(drone.self_id_text)}"</div>` : '';
+      return `<div class="alert-quicklook">
+        <div class="ql-kind">${vendorStr}${uaType} ${dispChip} ${flags}</div>
+        ${where ? `<div class="ql-where">${where}</div>` : ''}
+        ${selfId}
+      </div>`;
+    }
+
     // All RemoteID-sourced string fields pass through _esc() — a hostile
     // drone can embed HTML/JS in serial_number, self_id_text, operator_id,
     // ua_type_name, id_type_name, or protocol and the detail sidebar
     // interpolates into innerHTML.
-    let html = `
-      <div class="detail-state-bar ${state}"></div>
-      <div class="detail-serial">${_esc(drone.serial_number) || '—'}</div>
-      ${dispBadge}${flagBadges}`;
-
-    if (drone.self_id_text) {
-      html += `<div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;font-style:italic;">"${_esc(drone.self_id_text)}"</div>`;
+    let html = '';
+    if (alertView) {
+      // Labeled ID + quick-look. No green state bar (it read as a dead
+      // divider/timeline) and no oversized unlabeled serial.
+      html += `<div class="detail-id-line"><span class="detail-id-label">ID:</span> <span class="detail-id-value">${_esc(drone.serial_number) || '—'}</span></div>`;
+      html += _quickLook();
+    } else {
+      html += `
+        <div class="detail-state-bar ${state}"></div>
+        <div class="detail-serial">${_esc(drone.serial_number) || '—'}</div>
+        ${dispBadge}${flagBadges}`;
+      if (drone.self_id_text) {
+        html += `<div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;font-style:italic;">"${_esc(drone.self_id_text)}"</div>`;
+      }
     }
 
     const idRows = [];
