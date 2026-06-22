@@ -257,6 +257,26 @@ class AlertEngine:
                 self._alerted_violations.pop(key, None)
             return
 
+        # Register a brand-new drone into the deferred-announce buffer BEFORE
+        # evaluating the threshold rules. Doing it here (rather than inside the
+        # new_drone rule branch) lets a co-occurring violation force the
+        # identity alert to be emitted first — see _announce_new_drone_now() —
+        # regardless of the order rules happen to be iterated in. Gated on the
+        # new_drone rule being enabled, mirroring the original behavior where
+        # registration only ran when that rule was active.
+        new_drone_enabled = any(
+            r.enabled and r.type == AlertType.NEW_DRONE.value for r in self._rules
+        )
+        if new_drone_enabled:
+            with self._lock:
+                if key not in self._known_serials:
+                    self._known_serials.add(key)
+                    # Defer: wait for more frames to fill in fields.
+                    self._pending_new[key] = (time.monotonic(), device)
+                elif key in self._pending_new:
+                    # Update with latest (merged) device data.
+                    self._pending_new[key] = (self._pending_new[key][0], device)
+
         for rule in self._rules:
             if not rule.enabled:
                 continue
@@ -264,17 +284,8 @@ class AlertEngine:
             rtype = rule.type
 
             if rtype == AlertType.NEW_DRONE.value:
-                with self._lock:
-                    is_new = key not in self._known_serials
-                    if is_new:
-                        self._known_serials.add(key)
-                        # Defer: wait for more frames to fill in fields
-                        self._pending_new[key] = (time.monotonic(), device)
-                    elif key in self._pending_new:
-                        # Update with latest (merged) device data
-                        self._pending_new[key] = (self._pending_new[key][0], device)
-
-                # Flush any pending new-drone alerts whose delay has elapsed
+                # Registration happened above; here we only flush pending
+                # new-drone alerts whose deferral window has elapsed.
                 self._flush_pending_new()
 
             elif rtype == AlertType.ALTITUDE_MAX.value:
@@ -286,6 +297,10 @@ class AlertEngine:
                         if not already:
                             violations.add(AlertType.ALTITUDE_MAX.value)
                     if not already:
+                        # Identity before condition: emit a still-pending
+                        # new_drone for this drone first so the operator sees
+                        # "new drone" ahead of its altitude violation.
+                        self._announce_new_drone_now(key, device)
                         self._fire_alert(
                             AlertType.ALTITUDE_MAX.value, device,
                             f"AGL {device.drone_height_agl:.1f} m exceeds limit {max_alt} m",
@@ -309,6 +324,8 @@ class AlertEngine:
                         if not already:
                             violations.add(AlertType.SPEED_MAX.value)
                     if not already:
+                        # Identity before condition (see altitude branch).
+                        self._announce_new_drone_now(key, device)
                         self._fire_alert(
                             AlertType.SPEED_MAX.value, device,
                             f"Speed {device.speed:.1f} m/s exceeds limit {max_spd} m/s",
@@ -381,6 +398,27 @@ class AlertEngine:
                     AlertType.SIGNAL_LOST.value, device,
                     f"No signal for {int(age)} s (timeout {int(timeout)} s)",
                 )
+
+    def _announce_new_drone_now(self, key: str, device: DroneIDDevice) -> None:
+        """Force-emit a still-pending new_drone alert for ``key`` immediately,
+        bypassing the deferral window, so a co-occurring threshold alert never
+        precedes the drone's identity announcement.
+
+        No-op when the drone isn't pending — i.e. it was already announced, or
+        the new_drone rule is disabled (the key was never buffered). Uses the
+        buffered (merged) device if present, else the caller's current frame.
+        """
+        fire = False
+        with self._lock:
+            pending = self._pending_new.pop(key, None)
+            if pending is not None:
+                device = pending[1] or device
+                fire = True
+        if fire:
+            self._fire_alert(
+                AlertType.NEW_DRONE.value, device,
+                f"First detection of {key}",
+            )
 
     def _flush_pending_new(self) -> None:
         """Fire new-drone alerts for drones that have been pending long enough."""
