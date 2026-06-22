@@ -418,6 +418,12 @@ const TableManager = (() => {
     }
   }
 
+  /** Return the detail HTML string for a drone + track without touching the
+   *  sidebar DOM.  Used by AlertsManager to render context into inline panels. */
+  function renderDetailHtml(drone, track) {
+    return buildDetailHtml(drone, track);
+  }
+
   return {
     init,
     update,
@@ -426,5 +432,6 @@ const TableManager = (() => {
     showDetailSidebar,
     hideDetailSidebar,
     refreshUnits,
+    renderDetailHtml,
   };
 })();

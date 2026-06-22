@@ -908,25 +908,42 @@ html, body {
 .sparrow-toast.toast-warning { border-left: 3px solid var(--drone-active); }
 .sparrow-toast.toast-danger  { border-left: 3px solid var(--alert-color); }
 
-/* ---- Replay activity bar (timeline density indicator) ---- */
+/* ---- Replay activity bar (kept for backward compat; no longer populated) ---- */
 .replay-activity-bar {
-  height: 20px;
+  display: none;
+}
+
+/* ---- Replay detection bands: slider-aligned click-to-seek overlay ---- */
+/* The .replay-slider-wrap must have position:relative for absolute children */
+.replay-slider-wrap {
   position: relative;
-  margin-bottom: 2px;
-  display: flex;
-  align-items: flex-end;
-  gap: 1px;
 }
 
-.replay-activity-bucket {
-  flex: 1;
-  background: rgba(59,130,246,0.35);
-  border-radius: 1px 1px 0 0;
-  min-height: 2px;
+.replay-detection-bands {
+  position: absolute;
+  /* Inset 8px each side to match the range-input thumb travel range */
+  left: 8px;
+  right: 8px;
+  top: 0;
+  height: 6px;
+  pointer-events: none; /* individual bands re-enable pointer-events */
+  z-index: 1;
+}
+
+.replay-detection-band {
+  position: absolute;
+  height: 6px;
+  background: rgba(59, 130, 246, 0.45);
+  border-radius: 1px;
+  cursor: pointer;
+  pointer-events: all;
   transition: background 0.1s;
+  min-width: 2px;
 }
 
-.replay-activity-bucket:hover { background: rgba(59,130,246,0.7); }
+.replay-detection-band:hover {
+  background: rgba(59, 130, 246, 0.85);
+}
 
 /* ---- Unit toggle button ---- */
 .btn-unit-toggle {

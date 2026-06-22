@@ -133,6 +133,11 @@ const AlertsManager = (() => {
   // 'active' shows only ACTIVE alerts; 'all' shows everything
   let _filterMode = 'active';
 
+  // ---- Expand state: set of alert IDs whose inline detail panel is open ----
+  const _expandedIds = new Set();
+  // ---- Context cache: map of alert ID → fetched context (or null = unavailable) ----
+  const _contextCache = new Map();
+
   // ---- Render alert list ----
 
   function _renderAlertList() {
@@ -157,6 +162,7 @@ const AlertsManager = (() => {
     const html = visible.map(a => {
       const state = a.state || 'ACTIVE';
       const icon = _alertIcon(a.alert_type);
+      const isExpanded = _expandedIds.has(a.id);
 
       let stateClass = '';
       let stateExtra = '';
@@ -169,13 +175,31 @@ const AlertsManager = (() => {
       }
 
       const ackBtn = state === 'ACTIVE'
-        ? `<button class="btn-ack" title="Acknowledge" onclick="AlertsManager._ackOne(${a.id})">
+        ? `<button class="btn-ack" title="Acknowledge" data-alert-ack="${a.id}">
              <i class="bi bi-check-lg"></i>
            </button>`
         : '';
 
+      const deleteBtn = `<button class="btn-ack" title="Delete alert" style="color:var(--alert-color);" data-alert-del="${a.id}">
+           <i class="bi bi-trash"></i>
+         </button>`;
+
+      const chevronIcon = isExpanded ? 'bi-chevron-up' : 'bi-chevron-down';
+      const chevronBtn = `<button class="btn-ack" title="${isExpanded ? 'Collapse' : 'Expand'} detail" data-alert-expand="${a.id}">
+           <i class="bi ${chevronIcon}"></i>
+         </button>`;
+
+      // Detail panel — rendered collapsed unless this ID is in _expandedIds
+      const detailPanel = `<div class="alert-detail-panel" id="alertDetail_${a.id}" style="${isExpanded ? '' : 'display:none;'}">
+        <div class="alert-detail-inner" id="alertDetailInner_${a.id}">
+          <div class="text-secondary text-center py-2" style="font-size:12px;">
+            <i class="bi bi-arrow-repeat spin me-1"></i>Loading…
+          </div>
+        </div>
+      </div>`;
+
       return `
-        <div class="alert-item ${stateClass}">
+        <div class="alert-item ${stateClass}" data-alert-id="${a.id}">
           <i class="bi ${icon} alert-icon"></i>
           <div class="alert-content">
             <div class="alert-title">
@@ -187,16 +211,167 @@ const AlertsManager = (() => {
               ${a.drone_height_agl ? ` &mdash; ${Utils.formatAlt(a.drone_height_agl)} AGL` : ''}
             </div>
           </div>
-          <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
-            <span class="alert-time">${Utils.relativeTime(a.timestamp)}</span>
-            ${ackBtn}
+          <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:1px;margin-right:2px;">
+              <span class="alert-time">${Utils.formatDateTime(a.timestamp)}</span>
+              <span class="alert-time" style="font-size:10px;opacity:0.65;">${Utils.relativeTime(a.timestamp)}</span>
+            </div>
+            ${ackBtn}${deleteBtn}${chevronBtn}
           </div>
-        </div>`;
+        </div>
+        ${detailPanel}`;
     }).join('');
 
     list.innerHTML = html;
     // Badge shows count of ACTIVE (unacknowledged) alerts regardless of filter
     _updateTabBadge(_alerts.filter(a => (a.state || 'ACTIVE') === 'ACTIVE').length);
+
+    // Wire up delegated event listeners
+    list.querySelectorAll('[data-alert-ack]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        _ackOne(parseInt(btn.dataset.alertAck, 10));
+      });
+    });
+
+    list.querySelectorAll('[data-alert-del]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        _deleteOne(parseInt(btn.dataset.alertDel, 10));
+      });
+    });
+
+    list.querySelectorAll('[data-alert-expand]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        _toggleExpand(parseInt(btn.dataset.alertExpand, 10));
+      });
+    });
+
+    // Restore expanded panels from _expandedIds (fill them if cached)
+    _expandedIds.forEach(id => {
+      if (_contextCache.has(id)) {
+        _fillDetailPanel(id, _contextCache.get(id));
+      }
+    });
+  }
+
+  // ---- Expand / collapse inline detail panel ----
+
+  function _toggleExpand(alertId) {
+    const panel = document.getElementById(`alertDetail_${alertId}`);
+    if (!panel) return;
+
+    if (_expandedIds.has(alertId)) {
+      _expandedIds.delete(alertId);
+      panel.style.display = 'none';
+      // Update chevron icon on the expand button
+      const btn = document.querySelector(`[data-alert-expand="${alertId}"] i`);
+      if (btn) { btn.className = 'bi bi-chevron-down'; }
+    } else {
+      _expandedIds.add(alertId);
+      panel.style.display = '';
+      const btn = document.querySelector(`[data-alert-expand="${alertId}"] i`);
+      if (btn) { btn.className = 'bi bi-chevron-up'; }
+
+      if (_contextCache.has(alertId)) {
+        _fillDetailPanel(alertId, _contextCache.get(alertId));
+      } else {
+        _loadContext(alertId);
+      }
+    }
+  }
+
+  async function _loadContext(alertId) {
+    // Find the alert to get stored lat/lon/AGL as fallback
+    const alert = _alerts.find(a => a.id === alertId);
+    try {
+      const ctx = await Api.getAlertContext(alertId);
+      _contextCache.set(alertId, ctx);
+      if (_expandedIds.has(alertId)) {
+        _fillDetailPanel(alertId, ctx);
+      }
+    } catch (e) {
+      // Store null to avoid repeated failing fetches on re-expand
+      _contextCache.set(alertId, null);
+      if (_expandedIds.has(alertId)) {
+        _fillDetailPanel(alertId, null, alert);
+      }
+    }
+  }
+
+  function _fillDetailPanel(alertId, ctx, fallbackAlert) {
+    const inner = document.getElementById(`alertDetailInner_${alertId}`);
+    if (!inner) return;
+
+    if (ctx && ctx.detection_found && ctx.drone) {
+      // Use buildDetailHtml via the thin wrapper on TableManager
+      const detailHtml = (typeof TableManager !== 'undefined' && TableManager.renderDetailHtml)
+        ? TableManager.renderDetailHtml(ctx.drone, ctx.track || [])
+        : '<div class="text-secondary py-2">Detail renderer unavailable.</div>';
+
+      const ts = (fallbackAlert || {}).timestamp || ctx.drone.first_seen || '';
+      const replayBtn = ts
+        ? `<button class="btn btn-xs btn-outline-secondary mt-2" id="alertReplay_${alertId}"
+             style="font-size:11px;">
+             <i class="bi bi-clock-history me-1"></i>View in Replay
+           </button>`
+        : '';
+
+      inner.innerHTML = `<div style="padding:8px 4px 2px;">${detailHtml}${replayBtn}</div>`;
+
+      // buildDetailHtml stamps id="btnDetailShowTrack" which collides when
+      // multiple panels are open.  Remove the global ID and wire the handler
+      // via container-relative querySelector so each panel stays independent.
+      const trackBtnEl = inner.querySelector('#btnDetailShowTrack');
+      if (trackBtnEl) {
+        trackBtnEl.removeAttribute('id');
+        const track = ctx.track || [];
+        if (track.length > 0) {
+          trackBtnEl.addEventListener('click', () => {
+            if (typeof MapManager !== 'undefined') MapManager.showTrack(track);
+            // Switch to the drones tab so the map is visible
+            const dronesTab = document.getElementById('tab-drones');
+            if (dronesTab) bootstrap.Tab.getOrCreateInstance(dronesTab).show();
+          });
+        }
+      }
+
+      // Wire "View in Replay" button
+      const replayBtnEl = document.getElementById(`alertReplay_${alertId}`);
+      if (replayBtnEl && ts) {
+        const serial = ctx.drone.serial_number || '';
+        replayBtnEl.addEventListener('click', () => {
+          if (typeof ReplayManager !== 'undefined' && ReplayManager.loadAndSeekTo) {
+            ReplayManager.loadAndSeekTo(ts, serial);
+          }
+          // Switch to the replay tab
+          const replayTab = document.getElementById('tab-replay');
+          if (replayTab) {
+            const bsTab = bootstrap.Tab.getOrCreateInstance(replayTab);
+            bsTab.show();
+          }
+        });
+      }
+    } else {
+      // Fallback: show stored alert position info
+      const fa = fallbackAlert || _alerts.find(a => a.id === alertId);
+      let fallbackHtml = '<div style="color:var(--text-secondary);font-size:12px;padding:8px 4px;">Detail unavailable (detection may have been purged).</div>';
+      if (fa) {
+        const latStr = fa.drone_lat ? fa.drone_lat.toFixed(6) : '—';
+        const lonStr = fa.drone_lon ? fa.drone_lon.toFixed(6) : '—';
+        const aglStr = fa.drone_height_agl ? Utils.formatAlt(fa.drone_height_agl) : '—';
+        fallbackHtml = `<div style="color:var(--text-secondary);font-size:12px;padding:8px 4px;">
+          Detection data unavailable.
+          <div style="margin-top:6px;display:grid;grid-template-columns:auto 1fr;gap:2px 10px;">
+            <span style="opacity:0.6;">Lat</span><span>${_esc(latStr)}</span>
+            <span style="opacity:0.6;">Lon</span><span>${_esc(lonStr)}</span>
+            <span style="opacity:0.6;">AGL</span><span>${_esc(aglStr)}</span>
+          </div>
+        </div>`;
+      }
+      inner.innerHTML = fallbackHtml;
+    }
   }
 
   function _updateTabBadge(count) {
@@ -290,6 +465,19 @@ const AlertsManager = (() => {
       await _repoll();
     } catch (e) {
       Utils.toast('Acknowledge failed: ' + e.message, 'alert');
+    }
+  }
+
+  async function _deleteOne(alertId) {
+    if (!confirm('Permanently delete this alert? This cannot be undone.')) return;
+    try {
+      await Api.deleteAlert(alertId);
+      // Evict from expand/cache state
+      _expandedIds.delete(alertId);
+      _contextCache.delete(alertId);
+      await _repoll();
+    } catch (e) {
+      Utils.toast('Delete failed: ' + e.message, 'alert');
     }
   }
 
@@ -533,5 +721,6 @@ const AlertsManager = (() => {
     _testAudio,
     _ackOne,
     _ackAll,
+    _deleteOne,
   };
 })();

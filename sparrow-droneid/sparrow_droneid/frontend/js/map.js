@@ -1259,25 +1259,78 @@ const MapManager = (() => {
     // Draw markers
     Object.values(bySerial).forEach(rec => {
       if (!rec.drone_lat || !rec.drone_lon) return;
+
+      // Compute derived geo fields client-side from the record's own receiver pos
+      const rlat = rec.receiver_lat || 0;
+      const rlon = rec.receiver_lon || 0;
+      const dlat = rec.drone_lat || 0;
+      const dlon = rec.drone_lon || 0;
+      const olat = rec.operator_lat || 0;
+      const olon = rec.operator_lon || 0;
+      const receiverPresent = rlat !== 0 || rlon !== 0;
+
+      const derived = { state: 'active' };
+      if (receiverPresent && (dlat !== 0 || dlon !== 0)) {
+        const d_rng = Utils.haversine(rlat, rlon, dlat, dlon);
+        const d_brg = Utils.bearing(rlat, rlon, dlat, dlon);
+        derived.range_m = Math.round(d_rng * 10) / 10;
+        derived.bearing_deg = Math.round(d_brg * 10) / 10;
+        derived.bearing_cardinal = Utils.bearingCardinal(d_brg);
+      }
+      if (receiverPresent && (olat !== 0 || olon !== 0)) {
+        const o_rng = Utils.haversine(rlat, rlon, olat, olon);
+        const o_brg = Utils.bearing(rlat, rlon, olat, olon);
+        derived.operator_range_m = Math.round(o_rng * 10) / 10;
+        derived.operator_bearing_deg = Math.round(o_brg * 10) / 10;
+        derived.operator_bearing_cardinal = Utils.bearingCardinal(o_brg);
+      }
+
       const fakeDrone = {
-        serial_number: rec.serial_number,
-        ua_type_name: '',
-        drone_lat: rec.drone_lat,
-        drone_lon: rec.drone_lon,
+        serial_number:   rec.serial_number,
+        ua_type:         rec.ua_type,
+        ua_type_name:    '',          // no display_name in history records; buildDetailHtml degrades
+        protocol:        rec.protocol || '',
+        mac_address:     '',
+        operator_id:     '',
+        registration_id: '',
+        self_id_text:    '',
+        drone_lat:       dlat,
+        drone_lon:       dlon,
         drone_height_agl: rec.drone_height_agl,
-        speed: rec.speed,
-        direction: rec.direction,
-        operator_lat: rec.operator_lat,
-        operator_lon: rec.operator_lon,
-        takeoff_lat: rec.takeoff_lat,
-        takeoff_lon: rec.takeoff_lon,
-        rssi: rec.rssi,
-        last_seen: rec.timestamp,
-        derived: { state: 'active' },
+        drone_alt_geo:   null,
+        drone_alt_baro:  null,
+        speed:           rec.speed,
+        vertical_speed:  null,
+        direction:       rec.direction,
+        operator_lat:    olat,
+        operator_lon:    olon,
+        takeoff_lat:     rec.takeoff_lat,
+        takeoff_lon:     rec.takeoff_lon,
+        rssi:            rec.rssi,
+        first_seen:      rec.timestamp,
+        last_seen:       rec.timestamp,
+        derived,
       };
 
-      const latLng = [rec.drone_lat, rec.drone_lon];
-      const marker = L.marker(latLng, { icon: makeDroneIcon(fakeDrone), zIndexOffset: 200 }).addTo(_map);
+      const latLng = [dlat, dlon];
+      const marker = L.marker(latLng, { icon: makeDroneIcon(fakeDrone), zIndexOffset: 200, title: rec.serial_number }).addTo(_map);
+      marker.bindPopup(buildPopupContent(fakeDrone), { maxWidth: 300, minWidth: 220 });
+
+      // Collect track records for this serial to pass to the sidebar
+      const serialTrack = relevantRecords
+        .filter(r => r.serial_number === rec.serial_number && r.drone_lat && r.drone_lon)
+        .map(r => ({ drone_lat: r.drone_lat, drone_lon: r.drone_lon, timestamp: r.timestamp }));
+
+      marker.on('click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        if (_measureActive) { _onMeasureLeftClick(e); return; }
+        // In replay mode the live sidebar is safe to use because live polling
+        // is paused (app.js _inReplay guard) — no live-selection conflict.
+        if (typeof TableManager !== 'undefined' && TableManager.showDetailSidebar) {
+          TableManager.showDetailSidebar(fakeDrone, serialTrack);
+        }
+      });
+
       let operatorMarker = null;
       let takeoffMarker = null;
       let line = null;
@@ -1293,7 +1346,7 @@ const MapManager = (() => {
         takeoffMarker.bindPopup(buildTakeoffPopup(fakeDrone), { maxWidth: 260, minWidth: 200 });
       }
 
-      _droneMarkers[rec.serial_number] = { marker, operatorMarker, takeoffMarker, line, track: null };
+      _droneMarkers[rec.serial_number] = { marker, operatorMarker, takeoffMarker, line, track: null, drone: fakeDrone };
     });
 
     // Draw tracks per serial — only up to currentTimeMs

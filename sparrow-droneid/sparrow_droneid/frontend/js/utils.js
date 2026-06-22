@@ -267,6 +267,39 @@ const Utils = (() => {
     div.addEventListener('hidden.bs.toast', () => div.remove());
   }
 
+  // ---- Geo helpers (JS mirrors of models.py haversine/bearing/bearing_cardinal) ----
+  // These implement the same formulas as the Python backend so derived fields
+  // (range, bearing) can be computed client-side for replay records that carry
+  // receiver_lat/lon.  Keep in sync if the Python versions change.
+
+  const _EARTH_RADIUS_M = 6371000;
+  const _CARDINAL_POINTS = [
+    'N','NNE','NE','ENE','E','ESE','SE','SSE',
+    'S','SSW','SW','WSW','W','WNW','NW','NNW',
+  ];
+
+  function haversine(lat1, lon1, lat2, lon2) {
+    const toRad = d => d * Math.PI / 180;
+    const dlat = toRad(lat2 - lat1);
+    const dlon = toRad(lon2 - lon1);
+    const a = Math.sin(dlat / 2) ** 2
+            + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dlon / 2) ** 2;
+    return _EARTH_RADIUS_M * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  function bearing(lat1, lon1, lat2, lon2) {
+    const toRad = d => d * Math.PI / 180;
+    const rlat1 = toRad(lat1), rlat2 = toRad(lat2);
+    const dlon  = toRad(lon2 - lon1);
+    const x = Math.sin(dlon) * Math.cos(rlat2);
+    const y = Math.cos(rlat1) * Math.sin(rlat2) - Math.sin(rlat1) * Math.cos(rlat2) * Math.cos(dlon);
+    return (Math.atan2(x, y) * 180 / Math.PI + 360) % 360;
+  }
+
+  function bearingCardinal(deg) {
+    return _CARDINAL_POINTS[Math.round(deg / 22.5) % 16];
+  }
+
   // ---- HTML / attribute escaping ----
   //
   // Remote-ID string fields (serial, operator_id, self_id_text, MAC, vendor)
@@ -332,5 +365,8 @@ const Utils = (() => {
     shortSerial,
     altBadge,
     escapeHtml,
+    haversine,
+    bearing,
+    bearingCardinal,
   };
 })();

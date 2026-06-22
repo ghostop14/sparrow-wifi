@@ -163,42 +163,87 @@ const ReplayManager = (() => {
         }
         // Re-render tags to update active state
         _renderSerials();
+        // Re-render detection bands to reflect the new serial filter
+        _renderDetectionBands();
         // Re-seek to refresh the map with the filter applied
         _seekToPos(_sliderPos);
       });
     });
   }
 
-  // ---- Fix #19: Activity bar showing drone count per time bucket ----
+  // ---- Detection bands: precise slider-aligned overlay derived from _records ----
+  // Replaces the old _renderActivityBar which used the timeline endpoint with
+  // mismatched field names (b.count/b.time_bucket vs API's active_drones/timestamp).
+
   function _renderActivityBar() {
-    // Find or create the activity bar container above the slider
-    let barEl = document.getElementById('replayActivityBar');
-    if (!barEl) {
-      const sliderWrap = document.querySelector('.replay-slider-wrap');
-      if (!sliderWrap) return;
-      barEl = document.createElement('div');
-      barEl.id = 'replayActivityBar';
-      barEl.className = 'replay-activity-bar';
-      sliderWrap.insertBefore(barEl, sliderWrap.firstChild);
-    }
+    // Remove old activity bar if it exists (field-name mismatch means it was broken)
+    const oldBar = document.getElementById('replayActivityBar');
+    if (oldBar) oldBar.remove();
 
-    if (_buckets.length === 0) {
-      barEl.innerHTML = '';
-      return;
-    }
+    _renderDetectionBands();
+  }
 
-    // Normalize bucket counts to bar heights (max 20px)
-    const maxCount = Math.max(..._buckets.map(b => b.count || 0), 1);
-    const html = _buckets.map(b => {
-      const count = b.count || 0;
-      const heightPct = Math.max(10, Math.round((count / maxCount) * 100));
-      return `<div class="replay-activity-bucket"
-                   style="height:${heightPct}%"
-                   title="${Utils.formatDateTime(b.time_bucket)}: ${count} record${count !== 1 ? 's' : ''}">
-              </div>`;
-    }).join('');
+  function _renderDetectionBands() {
+    const sliderWrap = document.querySelector('.replay-slider-wrap');
+    if (!sliderWrap) return;
 
-    barEl.innerHTML = html;
+    // Remove any previous overlay
+    let overlay = document.getElementById('replayDetectionBands');
+    if (overlay) overlay.remove();
+
+    if (_records.length === 0 || _rangeToMs <= _rangeFromMs) return;
+
+    const span = _rangeToMs - _rangeFromMs;
+    // Bin width: coarser of REPLAY_WINDOW_MS or span/300 (aim for ≤300 bins)
+    const binMs = Math.max(REPLAY_WINDOW_MS, span / 300);
+
+    // Determine which records to bin (apply serial filter if active)
+    const source = _filteredSerial
+      ? _records.filter(r => r.serial_number === _filteredSerial)
+      : _records;
+
+    // Count records per bin
+    const binCounts = {};
+    source.forEach(r => {
+      const t = new Date(r.timestamp).getTime();
+      if (t < _rangeFromMs || t > _rangeToMs) return;
+      const binIdx = Math.floor((t - _rangeFromMs) / binMs);
+      binCounts[binIdx] = (binCounts[binIdx] || 0) + 1;
+    });
+
+    if (Object.keys(binCounts).length === 0) return;
+
+    // Slider thumb radius ≈ 8px — inset left/right so band percentages align
+    // with the thumb's travel range rather than the element's full width.
+    overlay = document.createElement('div');
+    overlay.id = 'replayDetectionBands';
+    overlay.className = 'replay-detection-bands';
+
+    Object.entries(binCounts).forEach(([idxStr, count]) => {
+      const idx = parseInt(idxStr, 10);
+      const binStart = _rangeFromMs + idx * binMs;
+      const binEnd   = Math.min(binStart + binMs, _rangeToMs);
+      const leftPct  = ((binStart - _rangeFromMs) / span) * 100;
+      const widthPct = ((binEnd - binStart) / span) * 100;
+      const binLabel = Utils.formatDateTime(new Date(binStart).toISOString());
+
+      const band = document.createElement('div');
+      band.className = 'replay-detection-band';
+      band.style.left  = `${leftPct}%`;
+      band.style.width = `${widthPct}%`;
+      band.title = `${binLabel}: ${count} record${count !== 1 ? 's' : ''}`;
+
+      band.addEventListener('click', e => {
+        const rect = sliderWrap.getBoundingClientRect();
+        const pos  = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+        skipTo(pos);
+      });
+
+      overlay.appendChild(band);
+    });
+
+    // Insert before slider's firstChild so it sits above the track visually
+    sliderWrap.insertBefore(overlay, sliderWrap.firstChild);
   }
 
   // ---- Controls enable/disable ----
@@ -345,9 +390,49 @@ const ReplayManager = (() => {
     const timeLabel = document.getElementById('replayCurrentTime');
     if (timeLabel) timeLabel.textContent = '—';
 
-    // Clear activity bar
-    const barEl = document.getElementById('replayActivityBar');
-    if (barEl) barEl.innerHTML = '';
+    // Clear old activity bar and new detection-band overlay
+    const oldBar = document.getElementById('replayActivityBar');
+    if (oldBar) oldBar.remove();
+    const bandsEl = document.getElementById('replayDetectionBands');
+    if (bandsEl) bandsEl.remove();
+  }
+
+  /** Navigate to a specific timestamp in replay, optionally filtering to one serial.
+   *
+   * Called from AlertsManager "View in Replay" button.
+   * Sets the time range to isoTs ± 5 minutes, loads data, then seeks to isoTs.
+   * If serial is provided it is pre-selected in the serial filter.
+   */
+  async function loadAndSeekTo(isoTs, serial) {
+    if (!isoTs) return;
+
+    const centreMs = new Date(isoTs).getTime();
+    const WINDOW_MS = 5 * 60 * 1000; // ±5 minutes
+    const fromMs = centreMs - WINDOW_MS;
+    const toMs   = centreMs + WINDOW_MS;
+
+    const fromEl = document.getElementById('replayFrom');
+    const toEl   = document.getElementById('replayTo');
+    if (fromEl) fromEl.value = Utils.toLocalDatetimeInput(new Date(fromMs).toISOString());
+    if (toEl)   toEl.value   = Utils.toLocalDatetimeInput(new Date(toMs).toISOString());
+
+    await loadRange();
+
+    // loadRange() resets _filteredSerial to null, so apply the serial filter
+    // AFTER the load and re-render the serial tags / bands to isolate the drone.
+    if (serial && _isLoaded) {
+      _filteredSerial = serial;
+      _renderSerials();
+      _renderDetectionBands();
+    }
+
+    // After load, seek to the alert's exact timestamp
+    if (_isLoaded && _rangeToMs > _rangeFromMs) {
+      const pos = Math.max(0, Math.min(100,
+        ((centreMs - _rangeFromMs) / (_rangeToMs - _rangeFromMs)) * 100
+      ));
+      skipTo(pos);
+    }
   }
 
   function isPlaying() { return _playing; }
@@ -356,6 +441,7 @@ const ReplayManager = (() => {
   return {
     init,
     loadRange,
+    loadAndSeekTo,
     stop,
     reset,
     isPlaying,

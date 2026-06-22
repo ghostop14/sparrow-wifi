@@ -185,6 +185,14 @@ const Api = (() => {
     return put('/alerts/acknowledge', { operator });
   }
 
+  function deleteAlert(id) {
+    return request('DELETE', `/alerts/${id}`);
+  }
+
+  function getAlertContext(id) {
+    return get(`/alerts/${id}/context`);
+  }
+
   // ---- Geozones ----
 
   function getGeozoneAirports(lat, lon, radiusMi = 50) {
@@ -351,6 +359,8 @@ const Api = (() => {
     getAlertLog,
     acknowledgeAlert,
     acknowledgeAllAlerts,
+    deleteAlert,
+    getAlertContext,
     getGeozoneAirports,
     getGeozoneNofly,
     getGps,

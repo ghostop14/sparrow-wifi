@@ -17,7 +17,7 @@ import os
 import re
 import shutil
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from typing import Optional, Dict, Any, Tuple, Callable
@@ -1590,6 +1590,111 @@ def api_alerts_api_send_test(req: RequestHandler):
     req._send_ok(result)
 
 
+# ---------------------------------------------------------------------------
+# Alert detail adapter — single source of truth for detection row → detail dict
+# ---------------------------------------------------------------------------
+
+def _detection_row_to_detail(row: Dict) -> Dict:
+    """Map a raw detections row to the shape buildDetailHtml (table.js) expects.
+
+    Computes derived geo fields (range/bearing from receiver to drone/operator)
+    using the row's own receiver_lat/lon.  Treats lat==0 AND lon==0 as absent
+    for any position so that JS truthiness checks (`if (drone.operator_lat …)`)
+    degrade gracefully when the data is missing.
+    """
+    from .models import (UAType, IdType,
+                         haversine as _haversine,
+                         bearing as _bearing,
+                         bearing_cardinal as _bearing_cardinal,
+                         altitude_class as _altitude_class)
+
+    ua_type = int(row.get('ua_type') or 0)
+    try:
+        ua_type_name = UAType(ua_type).display_name
+    except (ValueError, KeyError):
+        ua_type_name = 'Unknown'
+
+    id_type = int(row.get('id_type') or 0)
+    try:
+        id_type_name = IdType(id_type).display_name
+    except (ValueError, KeyError):
+        id_type_name = 'Unknown'
+
+    serial = row.get('serial_number', '') or ''
+    mac = row.get('mac_address', '') or ''
+    protocol = row.get('protocol', '') or ''
+
+    vendor = None
+    if _alert_engine is not None:
+        try:
+            vendor = _alert_engine.resolve_vendor(serial=serial, mac=mac, protocol=protocol)
+        except Exception:
+            pass
+
+    # Treat 0.0 coords as absent (SQLite DEFAULT 0.0 means "not provided")
+    rlat = float(row.get('receiver_lat') or 0.0)
+    rlon = float(row.get('receiver_lon') or 0.0)
+    dlat = float(row.get('drone_lat') or 0.0)
+    dlon = float(row.get('drone_lon') or 0.0)
+    olat = float(row.get('operator_lat') or 0.0)
+    olon = float(row.get('operator_lon') or 0.0)
+
+    derived: Dict[str, Any] = {'state': 'active'}
+    receiver_present = rlat != 0.0 or rlon != 0.0
+    if receiver_present and (dlat != 0.0 or dlon != 0.0):
+        d_rng = _haversine(rlat, rlon, dlat, dlon)
+        d_brg = _bearing(rlat, rlon, dlat, dlon)
+        derived['range_m'] = round(d_rng, 1)
+        derived['bearing_deg'] = round(d_brg, 1)
+        derived['bearing_cardinal'] = _bearing_cardinal(d_brg)
+    if receiver_present and (olat != 0.0 or olon != 0.0):
+        o_rng = _haversine(rlat, rlon, olat, olon)
+        o_brg = _bearing(rlat, rlon, olat, olon)
+        derived['operator_range_m'] = round(o_rng, 1)
+        derived['operator_bearing_deg'] = round(o_brg, 1)
+        derived['operator_bearing_cardinal'] = _bearing_cardinal(o_brg)
+
+    height_agl = float(row.get('drone_height_agl') or 0.0)
+    try:
+        derived['altitude_class'] = _altitude_class(height_agl).value
+    except Exception:
+        pass
+
+    ts = row.get('timestamp', '') or ''
+    tlat = float(row.get('takeoff_lat') or 0.0)
+    tlon = float(row.get('takeoff_lon') or 0.0)
+
+    return {
+        'serial_number':   serial,
+        'vendor':          vendor,
+        'ua_type_name':    ua_type_name,
+        'id_type_name':    id_type_name,
+        'protocol':        protocol,
+        'mac_address':     mac,
+        'operator_id':     row.get('operator_id', '') or '',
+        'drone_lat':       dlat,
+        'drone_lon':       dlon,
+        'drone_height_agl': row.get('drone_height_agl'),
+        'drone_alt_geo':   row.get('drone_alt_geo'),
+        'drone_alt_baro':  row.get('drone_alt_baro'),
+        'speed':           row.get('speed'),
+        'vertical_speed':  row.get('vertical_speed'),
+        'direction':       row.get('direction'),
+        # 0.0 is falsy in JS, so the operator/takeoff section is naturally hidden
+        'operator_lat':    olat,
+        'operator_lon':    olon,
+        'operator_alt':    row.get('operator_alt'),
+        'takeoff_lat':     tlat,
+        'takeoff_lon':     tlon,
+        'rssi':            row.get('rssi'),
+        'self_id_text':    row.get('self_id_text', '') or '',
+        'registration_id': row.get('registration_id', '') or '',
+        'first_seen':      ts,
+        'last_seen':       ts,
+        'derived':         derived,
+    }
+
+
 @router.route('GET', '/api/v1/alerts/log', spec={
     'summary': 'Query alert event log',
     'tags': ['Alerts'],
@@ -1712,6 +1817,124 @@ def api_alert_acknowledge(req: RequestHandler, alert_id: str):
         return
 
     req._send_ok({})
+
+
+@router.route('DELETE', '/api/v1/alerts/{alert_id}', spec={
+    'summary': 'Permanently delete a single alert by ID',
+    'tags': ['Alerts'],
+    'parameters': [
+        path_param('alert_id', 'integer', 'Alert row ID'),
+    ],
+    'responses': {
+        '200': response_inline(
+            {'deleted': {'type': 'boolean'}, 'id': {'type': 'integer'}},
+            'Deletion confirmation',
+        ),
+        '404': {'description': 'Alert not found', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+        '503': {'description': 'Database not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
+def api_alert_delete(req: RequestHandler, alert_id: str):
+    """Permanently delete a single alert record by ID."""
+    if _db is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
+        return
+
+    try:
+        aid = int(alert_id)
+    except (ValueError, TypeError):
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'alert_id must be an integer')
+        return
+
+    try:
+        deleted = _require_db().delete_alert(aid)
+    except Exception as e:
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
+        return
+
+    if not deleted:
+        req._send_error(404, ErrorCode.NOT_FOUND, f'Alert {aid} not found')
+        return
+
+    req._send_ok({'deleted': True, 'id': aid})
+
+
+@router.route('GET', '/api/v1/alerts/{alert_id}/context', spec={
+    'summary': 'Get detection context for an alert',
+    'tags': ['Alerts'],
+    'parameters': [
+        path_param('alert_id', 'integer', 'Alert row ID'),
+    ],
+    'responses': {
+        '200': response_inline(
+            {'drone': {'description': 'Detail dict (null if detection purged)'},
+             'track': {'type': 'array', 'description': 'Short track around alert time (±5 min, ≤500 points)'},
+             'detection_found': {'type': 'boolean', 'description': 'False when detection was purged from DB'}},
+            'Alert detection context',
+        ),
+        '404': {'description': 'Alert not found', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+        '503': {'description': 'Database not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
+def api_alert_context(req: RequestHandler, alert_id: str):
+    """Return the detection nearest to this alert's timestamp for rich UI display.
+
+    The response shape matches getDroneDetail so the frontend can pass it
+    directly to buildDetailHtml / renderDetailHtml.
+    """
+    if _db is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
+        return
+
+    try:
+        aid = int(alert_id)
+    except (ValueError, TypeError):
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'alert_id must be an integer')
+        return
+
+    try:
+        alert = _require_db().get_alert(aid)
+    except Exception as e:
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
+        return
+
+    if alert is None:
+        req._send_error(404, ErrorCode.NOT_FOUND, f'Alert {aid} not found')
+        return
+
+    serial = alert.get('serial_number', '') or ''
+    ts = alert.get('timestamp', '') or ''
+
+    # No serial on alert (e.g. system events) — return empty context
+    if not serial:
+        req._send_ok({'drone': None, 'track': [], 'detection_found': False})
+        return
+
+    try:
+        row = _require_db().get_detection_nearest(serial, ts)
+    except Exception as e:
+        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
+        return
+
+    if row is None:
+        # Detection may have been purged by retention policy
+        req._send_ok({'drone': None, 'track': [], 'detection_found': False})
+        return
+
+    drone_detail = _detection_row_to_detail(row)
+
+    # Build short ±5 min track around alert timestamp
+    track_records: list = []
+    if ts:
+        try:
+            ts_dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+            from_ts = (ts_dt - timedelta(minutes=5)).isoformat().replace('+00:00', 'Z')
+            to_ts = (ts_dt + timedelta(minutes=5)).isoformat().replace('+00:00', 'Z')
+            track_records, _ = _require_db().get_history(from_ts, to_ts, serial=serial, limit=500)
+        except Exception:
+            track_records = []
+
+    req._send_ok({'drone': drone_detail, 'track': track_records, 'detection_found': True})
 
 
 # ---------------------------------------------------------------------------

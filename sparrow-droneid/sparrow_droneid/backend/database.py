@@ -503,6 +503,35 @@ class Database:
             """, (now, alert_id))
             return cursor.rowcount > 0
 
+    def delete_alert(self, alert_id: int) -> bool:
+        """Permanently delete an alert by ID. Returns True if a row was deleted."""
+        with self.get_cursor() as cursor:
+            cursor.execute("DELETE FROM alerts WHERE id = ?", (alert_id,))
+            return cursor.rowcount > 0
+
+    def get_alert(self, alert_id: int) -> Optional[Dict]:
+        """Fetch a single alert row by ID. Returns dict or None if not found."""
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_detection_nearest(self, serial: str, ts: str) -> Optional[Dict]:
+        """Find the detection for *serial* closest in time to *ts*.
+
+        Uses SQLite's julianday() for sub-second resolution.  Returns the full
+        row as a dict, or None if no detection exists for that serial.
+        """
+        with self.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT * FROM detections
+                WHERE serial_number = ?
+                ORDER BY ABS(julianday(timestamp) - julianday(?))
+                LIMIT 1
+            """, (serial, ts))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
     # ==================== Settings Operations ====================
 
     def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
