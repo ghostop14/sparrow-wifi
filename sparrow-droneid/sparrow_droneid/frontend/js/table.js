@@ -237,11 +237,23 @@ const TableManager = (() => {
   }
 
   // ---- Detail sidebar content builder ----
-  function buildDetailHtml(drone, track) {
+  /**
+   * Build the detail HTML for a drone + track.
+   *
+   * @param {Object} drone   Full drone object from the API
+   * @param {Array}  track   Array of track-point objects
+   * @param {Object} [opts]  Optional rendering options:
+   *   opts.whereToLookFirst {boolean} — when true, render "From Receiver" and
+   *     "Operator" sections ABOVE Identity/Position/Motion (alert panel only).
+   *     When absent/false, uses the standard sidebar order.
+   * @returns {string}  HTML string
+   */
+  function buildDetailHtml(drone, track, opts) {
     if (!drone) return '<div class="text-secondary text-center py-4">No drone selected</div>';
 
     const d = drone.derived || {};
     const state = d.state || 'active';
+    const whereFirst = opts && opts.whereToLookFirst;
 
     const section = (title, rows) => `
       <div class="detail-section">
@@ -291,12 +303,64 @@ const TableManager = (() => {
     if (drone.operator_id) idRows.push(['Operator ID', _esc(drone.operator_id)]);
     html += section('Identity', idRows);
 
+    // Helper: build a lat/lon coordinate block with MGRS sibling
+    function _coordRows(lat, lon) {
+      // Treat null/undefined and the 0,0 SQLite default as "absent" — the
+      // convention used throughout the codebase. mgrs.forward([0,0]) otherwise
+      // succeeds and emits a bogus Gulf-of-Guinea grid square.
+      const present = lat != null && lon != null && (lat !== 0 || lon !== 0);
+      if (!present) {
+        return [['Lat', '—'], ['Lon', '—']];
+      }
+      const mgrsStr = Utils.toMGRS(lat, lon);
+      const rows = [
+        ['Lat', lat.toFixed(6)],
+        ['Lon', lon.toFixed(6)],
+      ];
+      if (mgrsStr) {
+        rows.push(['MGRS',
+          `<span style="font-family:monospace;">${_esc(mgrsStr)}</span>` +
+          ` <button class="btn-copy-inline" title="Copy MGRS" ` +
+          `onclick="Utils.copyToClipboard('${_esc(mgrsStr)}', 'MGRS copied')">` +
+          `<i class="bi bi-clipboard" style="font-size:10px;"></i></button>`
+        ]);
+      }
+      return rows;
+    }
+
+    // ---- "From Receiver" and "Operator" sections (reusable) ----
+    const fromReceiverHtml = d.range_m != null ? section('From Receiver', [
+      ['Range', Utils.formatRange(d.range_m)],
+      ['Bearing', Utils.formatBearing(d.bearing_deg, d.bearing_cardinal)],
+    ]) : '';
+
+    let operatorHtml = '';
+    if (drone.operator_lat && drone.operator_lon) {
+      operatorHtml = section('Operator', [
+        ..._coordRows(drone.operator_lat, drone.operator_lon),
+        ['Range', Utils.formatRange(d.operator_range_m)],
+        ['Bearing', Utils.formatBearing(d.operator_bearing_deg, d.operator_bearing_cardinal)],
+      ]);
+    } else if (drone.takeoff_lat && drone.takeoff_lon) {
+      // French RemoteID: no live operator position, only launch point.
+      operatorHtml = section('Takeoff Point', [
+        ['Lat', drone.takeoff_lat.toFixed(6)],
+        ['Lon', drone.takeoff_lon.toFixed(6)],
+        ['Note', '<span style="color:#9CA3AF;font-style:italic;">Launch location, not pilot position</span>'],
+      ]);
+    }
+
+    // When whereToLookFirst: render Receiver + Operator sections ABOVE Identity
+    if (whereFirst) {
+      html += fromReceiverHtml;
+      html += operatorHtml;
+    }
+
     html += section('Position', [
-      ['Lat', drone.drone_lat != null ? drone.drone_lat.toFixed(6) : '—'],
-      ['Lon', drone.drone_lon != null ? drone.drone_lon.toFixed(6) : '—'],
-      ['Alt AGL', Utils.formatAlt(drone.drone_height_agl)],
-      ['Alt Geo', Utils.formatAlt(drone.drone_alt_geo)],
-      ['Alt Baro', Utils.formatAlt(drone.drone_alt_baro)],
+      ..._coordRows(drone.drone_lat, drone.drone_lon),
+      ['AGL (height above takeoff)', Utils.formatAlt(drone.drone_height_agl)],
+      ['Alt Geo', Utils.formatAltOrAbsent(drone.drone_alt_geo)],
+      ['Alt Baro', Utils.formatAltOrAbsent(drone.drone_alt_baro)],
       ['Altitude Class', Utils.altBadge(d.altitude_class)],
     ]);
 
@@ -307,27 +371,10 @@ const TableManager = (() => {
       ['Heading', drone.direction != null ? `${Math.round(drone.direction)}°` : '—'],
     ]);
 
-    if (d.range_m != null) {
-      html += section('From Receiver', [
-        ['Range', Utils.formatRange(d.range_m)],
-        ['Bearing', Utils.formatBearing(d.bearing_deg, d.bearing_cardinal)],
-      ]);
-    }
-
-    if (drone.operator_lat && drone.operator_lon) {
-      html += section('Operator', [
-        ['Lat', drone.operator_lat.toFixed(6)],
-        ['Lon', drone.operator_lon.toFixed(6)],
-        ['Range', Utils.formatRange(d.operator_range_m)],
-        ['Bearing', Utils.formatBearing(d.operator_bearing_deg, d.operator_bearing_cardinal)],
-      ]);
-    } else if (drone.takeoff_lat && drone.takeoff_lon) {
-      // French RemoteID: no live operator position, only launch point.
-      html += section('Takeoff Point', [
-        ['Lat', drone.takeoff_lat.toFixed(6)],
-        ['Lon', drone.takeoff_lon.toFixed(6)],
-        ['Note', '<span style="color:#9CA3AF;font-style:italic;">Launch location, not pilot position</span>'],
-      ]);
+    // Standard order: Receiver + Operator appear after Motion (unless whereFirst overrode)
+    if (!whereFirst) {
+      html += fromReceiverHtml;
+      html += operatorHtml;
     }
 
     html += section('Signal', [
@@ -419,9 +466,13 @@ const TableManager = (() => {
   }
 
   /** Return the detail HTML string for a drone + track without touching the
-   *  sidebar DOM.  Used by AlertsManager to render context into inline panels. */
-  function renderDetailHtml(drone, track) {
-    return buildDetailHtml(drone, track);
+   *  sidebar DOM.  Used by AlertsManager to render context into inline panels.
+   *  @param {Object} drone
+   *  @param {Array}  track
+   *  @param {Object} [opts]  Passed through to buildDetailHtml (e.g. {whereToLookFirst:true})
+   */
+  function renderDetailHtml(drone, track, opts) {
+    return buildDetailHtml(drone, track, opts);
   }
 
   return {

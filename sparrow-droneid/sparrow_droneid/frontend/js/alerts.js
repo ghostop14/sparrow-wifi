@@ -198,24 +198,39 @@ const AlertsManager = (() => {
         </div>
       </div>`;
 
+      // ---- Where-to-look lines (collapsed row) ----
+      // Guard on != null, NOT truthiness — 0 is a valid bearing/range value.
+      let whereLines = '';
+      if (a.range_m != null && a.bearing_deg != null) {
+        const card = Utils.bearingCardinal(a.bearing_deg);
+        whereLines += `<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">
+          &#9992; ${_esc(Utils.formatRangeDual(a.range_m))} &middot; brg ${Math.round(a.bearing_deg)}&deg; (${_esc(card)})
+        </div>`;
+      }
+      if (a.operator_range_m != null && a.operator_bearing_deg != null) {
+        const opCard = Utils.bearingCardinal(a.operator_bearing_deg);
+        whereLines += `<div style="font-size:11px;color:var(--text-secondary);margin-top:1px;">
+          &#128100; Pilot ${_esc(Utils.formatRangeDual(a.operator_range_m))} &middot; brg ${Math.round(a.operator_bearing_deg)}&deg; (${_esc(opCard)})
+        </div>`;
+      }
+
       return `
         <div class="alert-item ${stateClass}" data-alert-id="${a.id}">
           <i class="bi ${icon} alert-icon"></i>
           <div class="alert-content">
-            <div class="alert-title">
-              ${_esc(_alertTitle(a.alert_type))}${stateExtra}
+            <div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;margin-bottom:1px;">
+              <span class="alert-time" style="flex-shrink:0;">${_esc(Utils.formatZulu(a.timestamp))}</span>
+              <span class="alert-time" style="font-size:10px;opacity:0.65;">${_esc(Utils.relativeTime(a.timestamp))}</span>
+              <span class="alert-title" style="flex:1;">${_esc(_alertTitle(a.alert_type))}${stateExtra}</span>
             </div>
-            <div class="alert-detail">${_esc(_localizeDetail(a.detail || ''))}</div>
+            ${whereLines}
             <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
               ${_esc(Utils.shortSerial(a.serial_number))}
-              ${a.drone_height_agl ? ` &mdash; ${Utils.formatAlt(a.drone_height_agl)} AGL` : ''}
+              ${a.drone_height_agl ? ` &mdash; ${_esc(Utils.formatAltDual(a.drone_height_agl, 'AGL'))}` : ''}
             </div>
+            <div class="alert-detail" style="font-size:11px;color:var(--text-secondary);margin-top:1px;">${_esc(_localizeDetail(a.detail || ''))}</div>
           </div>
           <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
-            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:1px;margin-right:2px;">
-              <span class="alert-time">${Utils.formatDateTime(a.timestamp)}</span>
-              <span class="alert-time" style="font-size:10px;opacity:0.65;">${Utils.relativeTime(a.timestamp)}</span>
-            </div>
             ${ackBtn}${deleteBtn}${chevronBtn}
           </div>
         </div>
@@ -300,17 +315,44 @@ const AlertsManager = (() => {
     }
   }
 
+  function _buildCalloutBlock(alertId, alertRow, liveCtx) {
+    const calloutText = Utils.buildCallout(alertRow, liveCtx);
+    if (!calloutText) return '';
+    const copyId = `calloutCopy_${alertId}`;
+    return `<div style="
+        background:rgba(37,99,235,0.1);
+        border:1px solid rgba(37,99,235,0.3);
+        border-radius:6px;
+        padding:8px 10px;
+        margin-bottom:10px;
+        font-size:11px;
+        line-height:1.5;
+      ">
+      <div style="display:flex;align-items:flex-start;gap:6px;">
+        <div style="flex:1;font-family:monospace;word-break:break-word;">${_esc(calloutText)}</div>
+        <button id="${copyId}" class="btn-ack" title="Copy callout" style="flex-shrink:0;padding:2px 5px;">
+          <i class="bi bi-clipboard" style="font-size:11px;"></i>
+        </button>
+      </div>
+    </div>`;
+  }
+
   function _fillDetailPanel(alertId, ctx, fallbackAlert) {
     const inner = document.getElementById(`alertDetailInner_${alertId}`);
     if (!inner) return;
 
+    const alertRow = fallbackAlert || _alerts.find(a => a.id === alertId) || {};
+
     if (ctx && ctx.detection_found && ctx.drone) {
-      // Use buildDetailHtml via the thin wrapper on TableManager
+      // ---- §4 Callout block at top ----
+      const calloutBlock = _buildCalloutBlock(alertId, alertRow, ctx.drone);
+
+      // ---- §7 Use buildDetailHtml with whereToLookFirst:true for alert panel ----
       const detailHtml = (typeof TableManager !== 'undefined' && TableManager.renderDetailHtml)
-        ? TableManager.renderDetailHtml(ctx.drone, ctx.track || [])
+        ? TableManager.renderDetailHtml(ctx.drone, ctx.track || [], { whereToLookFirst: true })
         : '<div class="text-secondary py-2">Detail renderer unavailable.</div>';
 
-      const ts = (fallbackAlert || {}).timestamp || ctx.drone.first_seen || '';
+      const ts = alertRow.timestamp || ctx.drone.first_seen || '';
       const replayBtn = ts
         ? `<button class="btn btn-xs btn-outline-secondary mt-2" id="alertReplay_${alertId}"
              style="font-size:11px;">
@@ -318,7 +360,17 @@ const AlertsManager = (() => {
            </button>`
         : '';
 
-      inner.innerHTML = `<div style="padding:8px 4px 2px;">${detailHtml}${replayBtn}</div>`;
+      inner.innerHTML = `<div style="padding:8px 4px 2px;">${calloutBlock}${detailHtml}${replayBtn}</div>`;
+
+      // Wire callout copy button
+      const copyBtnEl = document.getElementById(`calloutCopy_${alertId}`);
+      if (copyBtnEl) {
+        const calloutText = Utils.buildCallout(alertRow, ctx.drone);
+        copyBtnEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          Utils.copyToClipboard(calloutText, 'Callout copied');
+        });
+      }
 
       // buildDetailHtml stamps id="btnDetailShowTrack" which collides when
       // multiple panels are open.  Remove the global ID and wire the handler
@@ -354,23 +406,52 @@ const AlertsManager = (() => {
         });
       }
     } else {
-      // Fallback: show stored alert position info
-      const fa = fallbackAlert || _alerts.find(a => a.id === alertId);
+      // ---- §4 Callout from denormalized alert columns (purged fallback) ----
+      const calloutBlock = _buildCalloutBlock(alertId, alertRow, null);
+
+      const fa = alertRow;
       let fallbackHtml = '<div style="color:var(--text-secondary);font-size:12px;padding:8px 4px;">Detail unavailable (detection may have been purged).</div>';
-      if (fa) {
-        const latStr = fa.drone_lat ? fa.drone_lat.toFixed(6) : '—';
-        const lonStr = fa.drone_lon ? fa.drone_lon.toFixed(6) : '—';
-        const aglStr = fa.drone_height_agl ? Utils.formatAlt(fa.drone_height_agl) : '—';
-        fallbackHtml = `<div style="color:var(--text-secondary);font-size:12px;padding:8px 4px;">
-          Detection data unavailable.
-          <div style="margin-top:6px;display:grid;grid-template-columns:auto 1fr;gap:2px 10px;">
+      if (fa && (fa.drone_lat || fa.drone_lon || fa.range_m != null)) {
+        const latStr = fa.drone_lat ? fa.drone_lat.toFixed(5) : '—';
+        const lonStr = fa.drone_lon ? fa.drone_lon.toFixed(5) : '—';
+        const aglStr = fa.drone_height_agl ? Utils.formatAltDual(fa.drone_height_agl, 'AGL') : '—';
+        const rangeStr = fa.range_m != null ? Utils.formatRangeDual(fa.range_m) : null;
+        const brgStr = fa.bearing_deg != null
+          ? `${Math.round(fa.bearing_deg)}&deg; (${_esc(Utils.bearingCardinal(fa.bearing_deg))})`
+          : null;
+        const opRangeStr = fa.operator_range_m != null ? Utils.formatRangeDual(fa.operator_range_m) : null;
+        const opBrgStr = fa.operator_bearing_deg != null
+          ? `${Math.round(fa.operator_bearing_deg)}&deg; (${_esc(Utils.bearingCardinal(fa.operator_bearing_deg))})`
+          : null;
+
+        let geoRows = `
             <span style="opacity:0.6;">Lat</span><span>${_esc(latStr)}</span>
             <span style="opacity:0.6;">Lon</span><span>${_esc(lonStr)}</span>
-            <span style="opacity:0.6;">AGL</span><span>${_esc(aglStr)}</span>
+            <span style="opacity:0.6;">AGL</span><span>${_esc(aglStr)}</span>`;
+        if (rangeStr) geoRows += `<span style="opacity:0.6;">Range</span><span>${_esc(rangeStr)}</span>`;
+        if (brgStr) geoRows += `<span style="opacity:0.6;">Bearing</span><span>${brgStr}</span>`;
+        if (opRangeStr) geoRows += `<span style="opacity:0.6;">Pilot range</span><span>${_esc(opRangeStr)}</span>`;
+        if (opBrgStr) geoRows += `<span style="opacity:0.6;">Pilot brg</span><span>${opBrgStr}</span>`;
+
+        fallbackHtml = `<div style="color:var(--text-secondary);font-size:12px;padding:8px 4px;">
+          Detection data unavailable (may have been purged).
+          <div style="margin-top:6px;display:grid;grid-template-columns:auto 1fr;gap:2px 10px;">
+            ${geoRows}
           </div>
         </div>`;
       }
-      inner.innerHTML = fallbackHtml;
+
+      inner.innerHTML = calloutBlock + fallbackHtml;
+
+      // Wire callout copy button
+      const copyBtnEl = document.getElementById(`calloutCopy_${alertId}`);
+      if (copyBtnEl) {
+        const calloutText = Utils.buildCallout(alertRow, null);
+        copyBtnEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          Utils.copyToClipboard(calloutText, 'Callout copied');
+        });
+      }
     }
   }
 

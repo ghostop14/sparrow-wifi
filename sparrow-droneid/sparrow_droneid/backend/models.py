@@ -362,6 +362,16 @@ class AlertEvent:
     drone_lat: float = 0.0
     drone_lon: float = 0.0
     drone_height_agl: float = 0.0
+    # Geo columns added in iteration 2 — all default None so pre-feature rows
+    # and signal_lost alerts without known position stay distinguishable from 0.
+    range_m: Optional[float] = None
+    bearing_deg: Optional[float] = None
+    operator_lat: Optional[float] = None
+    operator_lon: Optional[float] = None
+    operator_range_m: Optional[float] = None
+    operator_bearing_deg: Optional[float] = None
+    receiver_lat: Optional[float] = None
+    receiver_lon: Optional[float] = None
 
     def to_dict(self) -> dict:
         return asdict(self)

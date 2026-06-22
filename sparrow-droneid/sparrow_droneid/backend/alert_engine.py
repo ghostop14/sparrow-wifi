@@ -447,6 +447,33 @@ class AlertEngine:
 
     def _fire_alert(self, alert_type: str, device: DroneIDDevice, detail: str) -> None:
         """Create an AlertEvent, persist it, enqueue for frontend, and run script."""
+        # ---- Resolve receiver position once ----
+        rx_lat = rx_lon = None
+        if self._gps:
+            _rl, _rn, _ra = self._gps.get_receiver_position()
+            # Treat (0, 0) as absent — same convention used throughout the file.
+            if _rl != 0.0 or _rn != 0.0:
+                rx_lat, rx_lon = _rl, _rn
+
+        has_drone = device.drone_lat != 0.0 or device.drone_lon != 0.0
+        has_op = device.operator_lat != 0.0 or device.operator_lon != 0.0
+
+        # ---- Compute geo BEFORE the DB insert so the persisted row is complete ----
+        event_range_m = event_bearing_deg = None
+        event_op_lat = event_op_lon = None
+        event_op_range_m = event_op_bearing_deg = None
+
+        if rx_lat is not None:
+            if has_drone:
+                event_range_m = round(haversine(rx_lat, rx_lon, device.drone_lat, device.drone_lon), 1)
+                event_bearing_deg = round(bearing(rx_lat, rx_lon, device.drone_lat, device.drone_lon), 1)
+            if has_op:
+                # Do NOT fall back to takeoff_lat/lon — semantically distinct
+                event_op_lat = device.operator_lat
+                event_op_lon = device.operator_lon
+                event_op_range_m = round(haversine(rx_lat, rx_lon, device.operator_lat, device.operator_lon), 1)
+                event_op_bearing_deg = round(bearing(rx_lat, rx_lon, device.operator_lat, device.operator_lon), 1)
+
         event = AlertEvent(
             timestamp=_utcnow_iso_z(),
             alert_type=alert_type,
@@ -455,6 +482,14 @@ class AlertEngine:
             drone_lat=device.drone_lat,
             drone_lon=device.drone_lon,
             drone_height_agl=device.drone_height_agl,
+            range_m=event_range_m,
+            bearing_deg=event_bearing_deg,
+            operator_lat=event_op_lat,
+            operator_lon=event_op_lon,
+            operator_range_m=event_op_range_m,
+            operator_bearing_deg=event_op_bearing_deg,
+            receiver_lat=rx_lat,
+            receiver_lon=rx_lon,
         )
 
         try:
@@ -492,17 +527,9 @@ class AlertEngine:
             protocol=proto_raw,
         )
 
-        # Range & bearing from receiver to drone
-        if self._gps:
-            rx_lat, rx_lon, _rx_alt = self._gps.get_receiver_position()
-            has_rx = rx_lat != 0.0 or rx_lon != 0.0
-            has_drone = device.drone_lat != 0.0 or device.drone_lon != 0.0
-            if has_rx and has_drone:
-                range_m = haversine(rx_lat, rx_lon, device.drone_lat, device.drone_lon)
-                brg = bearing(rx_lat, rx_lon, device.drone_lat, device.drone_lon)
-                alert_dict['range_m'] = round(range_m, 1)
-                alert_dict['bearing_deg'] = round(brg, 1)
-                alert_dict['bearing_cardinal'] = bearing_cardinal(brg)
+        # Promote geo to alert_dict for Slack/script/API consumers
+        if event_range_m is not None:
+            alert_dict['bearing_cardinal'] = bearing_cardinal(event_bearing_deg)
 
         with self._lock:
             self._pending_alerts.append(alert_dict)

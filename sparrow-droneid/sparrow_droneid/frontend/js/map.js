@@ -258,10 +258,10 @@ const MapManager = (() => {
         if (_onDroneClick) _onDroneClick(key);
       } else if (action === 'copy-latlon') {
         const txt = btn.dataset.value || '';
-        if (txt) _copyToClipboard(txt, 'Coordinates copied');
+        if (txt) Utils.copyToClipboard(txt, 'Coordinates copied');
       } else if (action === 'copy-text') {
         const txt = btn.dataset.value || '';
-        if (txt) _copyToClipboard(txt, 'Copied to clipboard');
+        if (txt) Utils.copyToClipboard(txt, 'Copied to clipboard');
       }
     });
 

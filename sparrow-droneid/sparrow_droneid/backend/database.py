@@ -141,6 +141,22 @@ class Database:
                 except Exception:
                     pass  # Column already exists
 
+            # Iteration 2: add geo columns to alerts (DEFAULT NULL so absent ≠ 0).
+            for col_def in (
+                "ADD COLUMN range_m REAL",
+                "ADD COLUMN bearing_deg REAL",
+                "ADD COLUMN operator_lat REAL",
+                "ADD COLUMN operator_lon REAL",
+                "ADD COLUMN operator_range_m REAL",
+                "ADD COLUMN operator_bearing_deg REAL",
+                "ADD COLUMN receiver_lat REAL",
+                "ADD COLUMN receiver_lon REAL",
+            ):
+                try:
+                    cursor.execute(f"ALTER TABLE alerts {col_def}")
+                except Exception:
+                    pass  # Column already exists
+
             # Disposition audit log — append-only; current value = latest row per key
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS disposition_events (
@@ -183,6 +199,11 @@ class Database:
             """)
 
             self._init_defaults(cursor)
+
+        # Backfill geo for historic alerts that predate iteration 2.
+        # Runs after the with-cursor block commits so the backfill sees the
+        # new columns.  Guarded internally so re-runs are no-ops.
+        self._backfill_alert_geo()
 
     def _init_defaults(self, cursor):
         """Populate default settings."""
@@ -426,14 +447,94 @@ class Database:
         with self.get_cursor() as cursor:
             cursor.execute("""
                 INSERT INTO alerts (timestamp, alert_type, serial_number, detail,
-                                   drone_lat, drone_lon, drone_height_agl)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                                   drone_lat, drone_lon, drone_height_agl,
+                                   range_m, bearing_deg,
+                                   operator_lat, operator_lon,
+                                   operator_range_m, operator_bearing_deg,
+                                   receiver_lat, receiver_lon)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 event.timestamp or _utcnow_iso_z(),
                 event.alert_type, event.serial_number, event.detail,
                 event.drone_lat, event.drone_lon, event.drone_height_agl,
+                event.range_m, event.bearing_deg,
+                event.operator_lat, event.operator_lon,
+                event.operator_range_m, event.operator_bearing_deg,
+                event.receiver_lat, event.receiver_lon,
             ))
             return cursor.lastrowid or 0
+
+    def _backfill_alert_geo(self) -> None:
+        """One-time backfill of geo columns for alerts that predate iteration 2.
+
+        Selects alerts where range_m IS NULL and serial_number is non-empty,
+        finds the nearest detection, and writes receiver/drone/operator geo.
+        Re-runs are no-ops (updated rows will no longer match IS NULL).
+        Wrapped in try/except so any hiccup never blocks startup.
+        """
+        from .models import haversine, bearing  # avoid circular import at module level
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT id, serial_number, timestamp
+                    FROM alerts
+                    WHERE range_m IS NULL AND serial_number != ''
+                """)
+                rows = cursor.fetchall()
+
+            for row in rows:
+                try:
+                    alert_id = row['id']
+                    serial = row['serial_number']
+                    ts = row['timestamp']
+                    det = self.get_detection_nearest(serial, ts)
+                    if not det:
+                        continue
+                    rx_lat = det.get('receiver_lat') or 0.0
+                    rx_lon = det.get('receiver_lon') or 0.0
+                    has_rx = rx_lat != 0.0 or rx_lon != 0.0
+                    d_lat = det.get('drone_lat') or 0.0
+                    d_lon = det.get('drone_lon') or 0.0
+                    has_drone = d_lat != 0.0 or d_lon != 0.0
+                    op_lat = det.get('operator_lat') or 0.0
+                    op_lon = det.get('operator_lon') or 0.0
+                    has_op = op_lat != 0.0 or op_lon != 0.0
+
+                    range_m = bearing_deg = None
+                    op_range = op_bearing = None
+                    recv_lat = recv_lon = None
+
+                    if has_rx:
+                        recv_lat = rx_lat
+                        recv_lon = rx_lon
+                        if has_drone:
+                            range_m = round(haversine(rx_lat, rx_lon, d_lat, d_lon), 1)
+                            bearing_deg = round(bearing(rx_lat, rx_lon, d_lat, d_lon), 1)
+                        if has_op:
+                            op_range = round(haversine(rx_lat, rx_lon, op_lat, op_lon), 1)
+                            op_bearing = round(bearing(rx_lat, rx_lon, op_lat, op_lon), 1)
+
+                    with self.get_cursor() as ucursor:
+                        ucursor.execute("""
+                            UPDATE alerts SET
+                                range_m = ?, bearing_deg = ?,
+                                operator_lat = ?, operator_lon = ?,
+                                operator_range_m = ?, operator_bearing_deg = ?,
+                                receiver_lat = ?, receiver_lon = ?
+                            WHERE id = ?
+                        """, (
+                            range_m, bearing_deg,
+                            op_lat if has_op else None,
+                            op_lon if has_op else None,
+                            op_range, op_bearing,
+                            recv_lat, recv_lon,
+                            alert_id,
+                        ))
+                except Exception:
+                    pass  # Individual alert backfill failure is non-fatal
+
+        except Exception:
+            pass  # Any startup-path hiccup must not block the service
 
     def get_alerts(self, from_ts: Optional[str] = None, to_ts: Optional[str] = None,
                    limit: int = 100, offset: int = 0,

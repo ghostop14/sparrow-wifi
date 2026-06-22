@@ -1,0 +1,126 @@
+- generic [active] [ref=e1]:
+  - navigation [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]: 
+      - generic [ref=e5]: Sparrow DroneID
+    - button " Stop" [ref=e7] [cursor=pointer]:
+      - generic [ref=e8]: 
+      - text: Stop
+    - generic [ref=e9]:
+      - generic "Monitoring state" [ref=e10]:
+        - generic [ref=e12]: Monitoring
+      - generic "Bluetooth Remote ID scanning — receiving" [ref=e13]:
+        - generic [ref=e14]: 
+        - generic [ref=e15]: BT
+      - generic "GPS state" [ref=e16]:
+        - generic [ref=e17]: 
+        - generic [ref=e18]: "GPS: static"
+      - generic "Active drones" [ref=e19]: "0"
+      - text: 
+    - generic [ref=e20]:
+      - button "Toggle metric/imperial units" [ref=e21] [cursor=pointer]: ft
+      - button "Toggle dark/light theme" [ref=e22] [cursor=pointer]:
+        - generic [ref=e23]: 
+      - button "Settings" [ref=e24] [cursor=pointer]:
+        - generic [ref=e25]: 
+  - generic [ref=e26]:
+    - generic [ref=e27]:
+      - generic [ref=e28]:
+        - generic:
+          - generic:
+            - img
+          - generic:
+            - button "Receiver" [ref=e29] [cursor=pointer]
+            - button "0.25 mi"
+            - button "0.5 mi"
+            - button "1 mi"
+            - button "2 mi"
+        - generic:
+          - generic [ref=e31]:
+            - button "Zoom in" [ref=e32] [cursor=pointer]: +
+            - button "Zoom out" [ref=e33] [cursor=pointer]: −
+          - button "Layers" [ref=e35] [cursor=pointer]
+          - generic [ref=e36]:
+            - textbox "Enter lat,lon and press Enter to snap map" [ref=e37]:
+              - /placeholder: 33.12345, -117.56789
+            - generic [ref=e38]: Cursor
+            - generic "Click map to pin coordinates" [ref=e39]: off map
+            - text: 
+          - generic:
+            - button "Toggle all flight tracks" [ref=e41] [cursor=pointer]:
+              - generic [ref=e42]: 
+            - button "Measure distance" [ref=e44] [cursor=pointer]:
+              - generic [ref=e45]: 
+            - button "Toggle compass" [ref=e47] [cursor=pointer]:
+              - generic [ref=e48]: 
+            - generic [ref=e49]:
+              - link "Leaflet" [ref=e50] [cursor=pointer]:
+                - /url: https://leafletjs.com
+                - img [ref=e51]
+                - text: Leaflet
+              - text: "| ©"
+              - link "OpenStreetMap" [ref=e55] [cursor=pointer]:
+                - /url: https://www.openstreetmap.org/copyright
+      - generic: 
+    - separator "Resize panels" [ref=e56]
+    - generic [ref=e57]:
+      - tablist [ref=e58]:
+        - tab "Drones 0" [selected] [ref=e59] [cursor=pointer]:
+          - text: Drones
+          - generic [ref=e60]: "0"
+        - tab " Alerts 16" [ref=e61] [cursor=pointer]:
+          - generic [ref=e62]: 
+          - text: Alerts
+          - generic [ref=e63]: "16"
+        - tab " Replay" [ref=e64] [cursor=pointer]:
+          - generic [ref=e65]: 
+          - text: Replay
+        - listitem [ref=e66]:
+          - button "Toggle geozones" [ref=e67] [cursor=pointer]:
+            - generic [ref=e68]: 
+          - button "Toggle range rings" [ref=e69] [cursor=pointer]:
+            - generic [ref=e70]: 
+          - button "Collapse panel" [ref=e71] [cursor=pointer]:
+            - generic [ref=e72]: 
+      - generic [ref=e73]:
+        - tabpanel "Drones 0" [ref=e74]:
+          - table [ref=e76]:
+            - rowgroup [ref=e77]:
+              - row "Serial  Type  Alt AGL (ft)  Speed (mph)  Range  Bearing  RSSI  Protocol Last Seen  State" [ref=e78]:
+                - columnheader "Serial " [ref=e79] [cursor=pointer]:
+                  - text: Serial
+                  - generic [ref=e80]: 
+                - columnheader "Type " [ref=e81] [cursor=pointer]:
+                  - text: Type
+                  - generic [ref=e82]: 
+                - columnheader "Alt AGL (ft) " [ref=e83] [cursor=pointer]:
+                  - text: Alt AGL (ft)
+                  - generic [ref=e84]: 
+                - columnheader "Speed (mph) " [ref=e85] [cursor=pointer]:
+                  - text: Speed (mph)
+                  - generic [ref=e86]: 
+                - columnheader "Range " [ref=e87] [cursor=pointer]:
+                  - text: Range
+                  - generic [ref=e88]: 
+                - columnheader "Bearing " [ref=e89] [cursor=pointer]:
+                  - text: Bearing
+                  - generic [ref=e90]: 
+                - columnheader "RSSI " [ref=e91] [cursor=pointer]:
+                  - text: RSSI
+                  - generic [ref=e92]: 
+                - columnheader "Protocol" [ref=e93]
+                - columnheader "Last Seen " [ref=e94] [cursor=pointer]:
+                  - text: Last Seen
+                  - generic [ref=e95]: 
+                - columnheader "State" [ref=e96]
+            - rowgroup [ref=e97]:
+              - row " No drones detected" [ref=e98] [cursor=pointer]:
+                - cell " No drones detected" [ref=e99]:
+                  - generic [ref=e100]: 
+                  - text: No drones detected
+        - text:                                                                              
+  - generic [ref=e102]:
+    - generic [ref=e103]: Drone Detail
+    - button "Close details" [ref=e104] [cursor=pointer]:
+      - generic [ref=e105]: 
+  - text:    

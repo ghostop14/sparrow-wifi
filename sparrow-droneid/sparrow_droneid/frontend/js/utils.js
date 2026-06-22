@@ -29,6 +29,15 @@ const Utils = (() => {
     return d.toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' });
   }
 
+  /** Format an ISO timestamp as HH:MM:SSZ using UTC getters (never local time). */
+  function formatZulu(isoString) {
+    if (!isoString) return '—';
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return '—';
+    const pad = n => String(n).padStart(2, '0');
+    return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}Z`;
+  }
+
   function toLocalDatetimeInput(isoString) {
     if (!isoString) return '';
     const d = new Date(isoString);
@@ -120,6 +129,46 @@ const Utils = (() => {
   // Keep formatRange as alias for backward compatibility
   function formatRange(m) {
     return formatDistance(m);
+  }
+
+  /**
+   * Format altitude with "— not broadcast" when the value is null or 0.
+   * Used for Alt Geo / Alt Baro where 0 typically means "not transmitted",
+   * unlike AGL where 0 is a valid (ground-level) reading.
+   */
+  function formatAltOrAbsent(m) {
+    if (m == null || m === 0) return '— not broadcast';
+    return formatAlt(m);
+  }
+
+  /**
+   * Format a range in both units, primary first per the operator's preference.
+   * e.g. metric: "337 m / 1106 ft", imperial: "1106 ft / 337 m"
+   */
+  function formatRangeDual(m) {
+    if (m == null) return '—';
+    const meters = Math.round(m);
+    const feet   = Math.round(m * 3.28084);
+    if (getUnits() === 'imperial') {
+      return `${feet} ft / ${meters} m`;
+    }
+    return `${meters} m / ${feet} ft`;
+  }
+
+  /**
+   * Format an altitude in both units, primary first per the operator's preference.
+   * Suffix is caller-supplied (e.g. 'AGL').
+   * e.g. metric: "200 m AGL (656 ft AGL)", imperial: "656 ft AGL (200 m AGL)"
+   */
+  function formatAltDual(m, suffix) {
+    if (m == null) return '—';
+    const sfx = suffix ? ` ${suffix}` : '';
+    const meters = Math.round(m);
+    const feet   = Math.round(m * 3.28084);
+    if (getUnits() === 'imperial') {
+      return `${feet} ft${sfx} (${meters} m${sfx})`;
+    }
+    return `${meters} m${sfx} (${feet} ft${sfx})`;
   }
 
   function formatBearing(deg, cardinal) {
@@ -336,11 +385,138 @@ const Utils = (() => {
     return `<span class="alt-badge ${cls}">${cls}</span>`;
   }
 
+  // ---- MGRS conversion ----
+
+  /**
+   * Convert lat/lon to an MGRS string using the vendored mgrs library.
+   * CRITICAL: mgrs.forward takes [longitude, latitude] — NOT lat/lon order.
+   * Returns '' on any error or out-of-range input (callers must handle gracefully).
+   * @param {number} lat  WGS84 latitude
+   * @param {number} lon  WGS84 longitude
+   * @param {number} [accuracy=5]  digits of precision (5 = 1 m)
+   */
+  function toMGRS(lat, lon, accuracy) {
+    if (lat == null || lon == null) return '';
+    try {
+      // mgrs.forward([longitude, latitude], accuracy) — lon FIRST
+      return mgrs.forward([lon, lat], accuracy != null ? accuracy : 5);
+    } catch (e) {
+      return '';
+    }
+  }
+
+  // ---- Clipboard helper (promoted from map.js for use across modules) ----
+
+  /**
+   * Copy text to clipboard.  Shows a toast on success/failure.
+   * Uses navigator.clipboard when available, falls back to execCommand.
+   * @param {string} text     Text to copy
+   * @param {string} toastMsg Success message shown in toast (defaults to 'Copied')
+   */
+  function copyToClipboard(text, toastMsg) {
+    const msg = toastMsg || 'Copied to clipboard';
+    function fallback() {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      toast(ok ? msg : 'Copy failed', ok ? 'success' : 'danger');
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text)
+        .then(() => toast(msg, 'success'))
+        .catch(() => fallback());
+    } else {
+      fallback();
+    }
+  }
+
+  // ---- Read-aloud callout builder ----
+
+  /**
+   * Build a plain-text operator callout string for a fired alert.
+   *
+   * Source precedence: if liveCtx (ctx.drone from detection_found branch) is
+   * provided, prefer its live fields; otherwise compose from denormalized
+   * alert columns (purged-fallback path).
+   *
+   * @param {Object} alertRow  The alert record from the database (with geo cols)
+   * @param {Object|null} liveCtx  ctx.drone when detection was found, else null
+   * @returns {string}  Single-line plain-text callout ready for TTS / copy
+   */
+  function buildCallout(alertRow, liveCtx) {
+    const parts = [];
+
+    // Identity: vendor + ua_type_name
+    const a = alertRow || {};
+    const drone = liveCtx || {};
+
+    const vendor = drone.vendor || a.vendor || '';
+    const uaType = drone.ua_type_name || a.ua_type_name || '';
+    const typeStr = [vendor, uaType].filter(Boolean).join(' ');
+    if (typeStr) parts.push(typeStr);
+
+    // AGL altitude — prefer live drone data, fall back to alert row
+    const agl = (liveCtx ? drone.drone_height_agl : null) ?? a.drone_height_agl;
+    if (agl != null && agl !== 0) {
+      parts.push(`~${formatAltDual(agl, 'AGL')}`);
+    }
+
+    // Range & bearing from sensor (drone)
+    const rangeMDrone = (liveCtx ? (drone.derived && drone.derived.range_m) : null) ?? a.range_m;
+    const brgDeg      = (liveCtx ? (drone.derived && drone.derived.bearing_deg) : null) ?? a.bearing_deg;
+    if (rangeMDrone != null && brgDeg != null) {
+      const card = bearingCardinal(brgDeg);
+      parts.push(`${formatRangeDual(rangeMDrone)} bearing ${Math.round(brgDeg)}° (${card}) from sensor`);
+    }
+
+    // Operator range & bearing
+    const opRangeM = (liveCtx ? (drone.derived && drone.derived.operator_range_m) : null) ?? a.operator_range_m;
+    const opBrgDeg  = (liveCtx ? (drone.derived && drone.derived.operator_bearing_deg) : null) ?? a.operator_bearing_deg;
+    if (opRangeM != null && opBrgDeg != null) {
+      const opCard = bearingCardinal(opBrgDeg);
+      parts.push(`pilot ${formatRangeDual(opRangeM)} bearing ${Math.round(opBrgDeg)}° (${opCard})`);
+    }
+
+    // Drone position — prefer live ctx, fall back to alert row
+    const dLat = (liveCtx ? drone.drone_lat : null) ?? a.drone_lat;
+    const dLon = (liveCtx ? drone.drone_lon : null) ?? a.drone_lon;
+    if (dLat && dLon) {
+      const mgrsStr = toMGRS(dLat, dLon);
+      const coordStr = `${dLat.toFixed(5)},${dLon.toFixed(5)}`;
+      parts.push(`drone ${coordStr}` + (mgrsStr ? ` (MGRS ${mgrsStr})` : ''));
+    }
+
+    // Operator position — prefer live ctx derived, fall back to alert cols
+    const opLat = (liveCtx ? drone.operator_lat : null) ?? a.operator_lat;
+    const opLon = (liveCtx ? drone.operator_lon : null) ?? a.operator_lon;
+    if (opLat && opLon) {
+      const opMgrs = toMGRS(opLat, opLon);
+      const opCoord = `${opLat.toFixed(5)},${opLon.toFixed(5)}`;
+      parts.push(`pilot ${opCoord}` + (opMgrs ? ` (MGRS ${opMgrs})` : ''));
+    }
+
+    // Registration — "none broadcast" when empty
+    const reg = (liveCtx ? drone.registration_id : null) ?? a.registration_id ?? '';
+    if (reg) parts.push(`reg ${reg}`);
+
+    // Timestamp
+    const ts = a.timestamp || (liveCtx ? drone.last_seen : null);
+    if (ts) parts.push(`as of ${formatZulu(ts)}`);
+
+    return parts.join(' · ');
+  }
+
   // ---- Expose public API ----
   return {
     relativeTime,
     formatTime,
     formatDateTime,
+    formatZulu,
     toLocalDatetimeInput,
     fromLocalDatetimeInput,
     getUnits,
@@ -350,9 +526,12 @@ const Utils = (() => {
     formatAltUnit,
     formatSpeedUnit,
     formatAlt,
+    formatAltOrAbsent,
     formatSpeed,
     formatDistance,
     formatRange,
+    formatRangeDual,
+    formatAltDual,
     formatBearing,
     formatRssi,
     formatBytes,
@@ -368,5 +547,8 @@ const Utils = (() => {
     haversine,
     bearing,
     bearingCardinal,
+    toMGRS,
+    copyToClipboard,
+    buildCallout,
   };
 })();
