@@ -658,6 +658,23 @@ class AlertEngine:
             return f"{mps * 2.23694:.1f} mph"
         return f"{mps:.1f} m/s"
 
+    @staticmethod
+    def _maps_link_line(label: str, lat: float, lon: float, slack: bool) -> str:
+        """One ``label: link`` line pointing Google Maps at a pushpin on the
+        given coordinate.
+
+        Uses the official Maps URL scheme (``query=lat,lon``), which drops a pin
+        at the exact coordinate and opens the Maps app on mobile. Rendered as a
+        Slack mrkdwn hyperlink (``<url|text>``) when targeting Slack, else a bare
+        URL for plain-text consumers. A separate line per coordinate because a
+        Google Maps URL can't show two distinctly-iconed pins (drone vs
+        controller) in one map.
+        """
+        url = f"https://www.google.com/maps/search/?api=1&query={lat:.6f},{lon:.6f}"
+        if slack:
+            return f"{label}: <{url}|Open in Google Maps>"
+        return f"{label}: {url}"
+
     def _format_alert_message(self, alert_dict: dict, slack: bool = True) -> str:
         """Build a human-readable alert summary for operators.
 
@@ -732,10 +749,23 @@ class AlertEngine:
             parts.append(f"Range: {range_str}  Bearing: {bearing_deg:.0f}° ({bearing_card})")
 
         # Position & altitude
-        if lat != 0 or lon != 0:
+        has_pos = lat != 0 or lon != 0
+        if has_pos:
             parts.append(f"Pos: {lat:.6f}, {lon:.6f}")
         if agl and agl != 0:
             parts.append(f"Alt: {self._fmt_alt(agl, imperial)} AGL")
+        # Tap-to-pushpin: Google Maps link to the drone position, under the
+        # coordinates/altitude so an operator can jump straight to the location.
+        if has_pos:
+            parts.append(self._maps_link_line('Map', lat, lon, slack))
+
+        # Controller/operator position + its own Google Maps link (separate pin —
+        # see _maps_link_line). Only when the controller location is known.
+        op_lat = alert_dict.get('operator_lat')
+        op_lon = alert_dict.get('operator_lon')
+        if op_lat and op_lon and (op_lat != 0 or op_lon != 0):
+            parts.append(f"Controller Pos: {op_lat:.6f}, {op_lon:.6f}")
+            parts.append(self._maps_link_line('Controller Map', op_lat, op_lon, slack))
 
         # Movement
         if speed and speed > 0:
