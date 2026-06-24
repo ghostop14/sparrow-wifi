@@ -420,6 +420,22 @@ class AlertEngine:
                 f"First detection of {key}",
             )
 
+    def flush_pending_new(self) -> None:
+        """Public, timer-driven flush of the deferred new-drone buffer.
+
+        Called from the periodic maintenance loop. ``_flush_pending_new()`` is
+        otherwise only reached via ``evaluate()`` (i.e. on frame arrival), so a
+        drone that emits a single Remote ID frame and then goes silent would
+        never have its deferral window re-examined — its new_drone alert would
+        sit pending until the drone was evicted as stale, and only ``signal_lost``
+        would ever fire. Driving the same flush from the maintenance tick lets a
+        single-packet detection still announce (with whatever the one frame
+        carried) once the deferral elapses, ahead of the signal_lost timeout.
+        The deferral threshold is unchanged: drones pending < the delay are not
+        emitted, so multi-frame drones keep merging fields exactly as before.
+        """
+        self._flush_pending_new()
+
     def _flush_pending_new(self) -> None:
         """Fire new-drone alerts for drones that have been pending long enough."""
         now = time.monotonic()

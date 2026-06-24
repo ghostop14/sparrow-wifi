@@ -326,6 +326,12 @@ class SparrowDroneID:
                     if retention_days > 0:
                         self.db.run_retention_purge(retention_days)
 
+                    # Emit any deferred new_drone alerts whose merge window has
+                    # elapsed. Done on the timer (not only on frame arrival) so a
+                    # single-packet detection still announces before it goes
+                    # stale — otherwise only its signal_lost would ever fire.
+                    self.alert_engine.flush_pending_new()
+
                     # Clean stale drones from memory, then forget their alert
                     # state so a genuine reappearance re-arms the new_drone alert.
                     evicted = self.droneid_engine.cleanup_stale(300)
