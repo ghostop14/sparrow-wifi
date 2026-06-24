@@ -92,5 +92,35 @@ class TestMapsLink(unittest.TestCase):
         self.assertNotIn('\nMap:', '\n' + msg)
 
 
+class TestApiExternalLink(unittest.TestCase):
+    """The AnalyticsAPI payload carries the drone Google Maps link in
+    alert.external_link so elk-ui renders a one-click 'open external' button."""
+
+    def test_external_link_present_with_drone_coords(self):
+        body = _make_engine()._build_api_payload(_alert())
+        ext = body['alert'].get('external_link')
+        self.assertIsNotNone(ext)
+        self.assertEqual(ext['url'], DRONE_URL)
+        self.assertEqual(ext['label'], 'View drone on Google Maps')
+
+    def test_external_link_url_is_https(self):
+        """elk-ui rejects non-http(s) URLs; ours must be https."""
+        body = _make_engine()._build_api_payload(_alert())
+        self.assertTrue(body['alert']['external_link']['url'].startswith('https://'))
+
+    def test_no_external_link_without_drone_coords(self):
+        body = _make_engine()._build_api_payload(
+            _alert(drone_lat=0.0, drone_lon=0.0))
+        self.assertNotIn('external_link', body['alert'])
+
+    def test_external_link_points_to_drone_not_controller(self):
+        """The single button slot goes to the drone; the controller rides in
+        details.operator.* instead."""
+        body = _make_engine()._build_api_payload(
+            _alert(operator_lat=33.138737, operator_lon=-80.105254))
+        self.assertEqual(body['alert']['external_link']['url'], DRONE_URL)
+        self.assertNotIn(OP_URL, body['alert']['external_link']['url'])
+
+
 if __name__ == '__main__':
     unittest.main()

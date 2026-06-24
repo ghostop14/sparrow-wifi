@@ -659,18 +659,22 @@ class AlertEngine:
         return f"{mps:.1f} m/s"
 
     @staticmethod
+    def _maps_url(lat: float, lon: float) -> str:
+        """Google Maps URL that drops a pushpin at the exact coordinate (and
+        opens the Maps app on mobile). Official Maps URL scheme (query=lat,lon)."""
+        return f"https://www.google.com/maps/search/?api=1&query={lat:.6f},{lon:.6f}"
+
+    @staticmethod
     def _maps_link_line(label: str, lat: float, lon: float, slack: bool) -> str:
         """One ``label: link`` line pointing Google Maps at a pushpin on the
         given coordinate.
 
-        Uses the official Maps URL scheme (``query=lat,lon``), which drops a pin
-        at the exact coordinate and opens the Maps app on mobile. Rendered as a
-        Slack mrkdwn hyperlink (``<url|text>``) when targeting Slack, else a bare
-        URL for plain-text consumers. A separate line per coordinate because a
-        Google Maps URL can't show two distinctly-iconed pins (drone vs
-        controller) in one map.
+        Rendered as a Slack mrkdwn hyperlink (``<url|text>``) when targeting
+        Slack, else a bare URL for plain-text consumers. A separate line per
+        coordinate because a Google Maps URL can't show two distinctly-iconed
+        pins (drone vs controller) in one map.
         """
-        url = f"https://www.google.com/maps/search/?api=1&query={lat:.6f},{lon:.6f}"
+        url = AlertEngine._maps_url(lat, lon)
         if slack:
             return f"{label}: <{url}|Open in Google Maps>"
         return f"{label}: {url}"
@@ -935,6 +939,18 @@ class AlertEngine:
         if drone_lat and drone_lon and (drone_lat != 0.0 or drone_lon != 0.0):
             body['alert']['source'] = {'geo': {'location': {
                 'lat': float(drone_lat), 'lon': float(drone_lon)}}}
+            # One-click external link. elk-ui renders alert.external_link as an
+            # "open external" button (a single link; the server sanitizes the URL
+            # to http/https) — same field tar1090-elastic uses for its ADS-B
+            # Exchange deep-link. Point it at a Google Maps pushpin on the drone
+            # so an operator can click straight from the alert panel and share
+            # the location. The controller position rides separately in
+            # details.operator.* (and plots as its own map marker), so it doesn't
+            # contend for the single button slot.
+            body['alert']['external_link'] = {
+                'url':   self._maps_url(float(drone_lat), float(drone_lon)),
+                'label': 'View drone on Google Maps',
+            }
 
         # Operator/controller geo_point.  The ECS alert schema has only two geo
         # slots (source=drone, observer=sensor), so the pilot's position is
