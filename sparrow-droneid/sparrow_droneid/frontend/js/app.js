@@ -570,20 +570,20 @@ const App = (() => {
 
     let startY, startMapH, startPanelH;
 
-    handle.addEventListener('mousedown', e => {
-      e.preventDefault();
-      startY      = e.clientY;
+    // Pointer-agnostic drag core, shared by mouse and touch. iPad/Android
+    // tablets emit touch* events, not mouse*, so a mouse-only handler can't be
+    // grabbed there.
+    function beginDrag(clientY) {
+      startY      = clientY;
       startMapH   = mapContainer.offsetHeight;
       startPanelH = bottomPanel.offsetHeight;
       document.body.style.cursor    = 'ns-resize';
       document.body.style.userSelect = 'none';
       handle.classList.add('active');
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup',   onUp);
-    });
+    }
 
-    function onMove(e) {
-      const dy      = e.clientY - startY;
+    function moveDrag(clientY) {
+      const dy      = clientY - startY;
       const totalH  = startMapH + startPanelH;
       const newMapH = Math.max(100, Math.min(totalH - 100, startMapH + dy));
       mapContainer.style.flex = `0 0 ${newMapH}px`;
@@ -594,9 +594,7 @@ const App = (() => {
       }
     }
 
-    function onUp() {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup',   onUp);
+    function endDrag() {
       document.body.style.cursor    = '';
       document.body.style.userSelect = '';
       handle.classList.remove('active');
@@ -604,6 +602,47 @@ const App = (() => {
       if (typeof MapManager !== 'undefined' && MapManager.invalidateSizeDelayed) {
         MapManager.invalidateSizeDelayed(100);
       }
+    }
+
+    // ---- Mouse ----
+    handle.addEventListener('mousedown', e => {
+      e.preventDefault();
+      beginDrag(e.clientY);
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup',   onMouseUp);
+    });
+
+    function onMouseMove(e) { moveDrag(e.clientY); }
+
+    function onMouseUp() {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup',   onMouseUp);
+      endDrag();
+    }
+
+    // ---- Touch (iPad/Android) ----
+    // touchmove is registered non-passive so preventDefault() can suppress the
+    // page scroll / rubber-band that would otherwise fight the drag.
+    handle.addEventListener('touchstart', e => {
+      if (!e.touches || e.touches.length === 0) return;
+      e.preventDefault();
+      beginDrag(e.touches[0].clientY);
+      document.addEventListener('touchmove', onTouchMove, { passive: false });
+      document.addEventListener('touchend',    onTouchEnd);
+      document.addEventListener('touchcancel', onTouchEnd);
+    }, { passive: false });
+
+    function onTouchMove(e) {
+      if (!e.touches || e.touches.length === 0) return;
+      e.preventDefault();
+      moveDrag(e.touches[0].clientY);
+    }
+
+    function onTouchEnd() {
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('touchend',    onTouchEnd);
+      document.removeEventListener('touchcancel', onTouchEnd);
+      endDrag();
     }
 
     // Keyboard support: ArrowUp/ArrowDown adjust by 20px steps

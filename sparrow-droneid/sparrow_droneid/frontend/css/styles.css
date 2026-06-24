@@ -248,6 +248,10 @@ html, body {
   position: relative;
   z-index: 500;
   transition: background 0.15s;
+  /* Claim the vertical-drag gesture so touch devices (iPad) don't treat it as
+     a page scroll before our touchmove handler runs. Without this the divider
+     can't be "grabbed" on a touchscreen. */
+  touch-action: none;
 }
 
 #panelResizeHandle:hover,
@@ -264,6 +268,33 @@ html, body {
   left: 0;
   right: 0;
   height: 16px;
+}
+
+/* Touch devices (iPad/Android tablets) need a far larger hit target than the
+   6px desktop hairline, plus a visible grab affordance so it reads as draggable.
+   Scoped to coarse pointers so mouse/trackpad layout is untouched. */
+@media (pointer: coarse) {
+  #panelResizeHandle {
+    height: 18px;
+  }
+  /* Widen the invisible grab target to match the taller handle. */
+  #panelResizeHandle::before {
+    top: -6px;
+    height: 30px;
+  }
+  /* Visible grab pill, centered. */
+  #panelResizeHandle::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 44px;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--text-secondary);
+    opacity: 0.7;
+  }
 }
 
 .panel-tabs {
