@@ -28,7 +28,7 @@ from requests.adapters import HTTPAdapter as _HTTPAdapter
 
 from .droneid_engine import DroneIDEngine, CaptureManager, check_prerequisites
 from .gps_engine import GPSEngine
-from .alert_engine import AlertEngine
+from .alert_engine import AlertEngine, maps_pushpin_url
 from .cot_engine import CotEngine
 from .elasticsearch_engine import ElasticsearchEngine
 from .database import Database
@@ -652,7 +652,7 @@ def api_status(req: RequestHandler):
     uptime = int((datetime.now(timezone.utc) - _start_time).total_seconds())
     active_count = len(_droneid_engine.get_active_drones()) if _droneid_engine else 0
     unique_total = _require_db().get_unique_serial_count() if _db else 0
-    retention = int(_require_db().get_setting_str('retention_days', '14') or '14') if _db else 14
+    retention = int(_require_db().get_setting_str('retention_days', '90') or '90') if _db else 90
 
     # Build supervisor state for health fields (None when supervisor not started)
     sup_status = _supervisor.get_status() if _supervisor is not None else {}
@@ -975,6 +975,71 @@ def api_drones(req: RequestHandler):
             'aging': aging_count,
             'stale': stale_count,
         },
+        'timestamp': _utcnow_iso_z(),
+    })
+
+
+@router.route('GET', '/api/v1/drone-database', spec={
+    'summary': 'List all drones in the detection database (90-day window)',
+    'tags': ['Detections'],
+    'responses': {
+        '200': response_ref('DroneDatabaseResponse', 'All drones seen in the retention window, one row per serial'),
+        '503': {'description': 'Engine not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
+    },
+})
+def api_drone_database(req: RequestHandler):
+    if _droneid_engine is None or _db is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Engine not available')
+        return
+
+    rows = _require_db().get_drone_database()
+
+    # Fetch disposition and flags overlays once for all rows
+    disp_map = _require_db().get_current_dispositions()
+    flags_map = _require_db().get_current_flags()
+
+    for row in rows:
+        serial = row.get('serial_number', '')
+
+        # Vendor enrichment
+        if _alert_engine:
+            row['vendor'] = _alert_engine.resolve_vendor(
+                serial=serial,
+                mac=row.get('mac_address', ''),
+                protocol=row.get('protocol', ''),
+            )
+        else:
+            row['vendor'] = ''
+
+        # Disposition overlay (defaults to 'unknown' when absent)
+        row['disposition'] = disp_map.get(serial, 'unknown')
+
+        # Flag overlays
+        serial_flags = flags_map.get(serial, {})
+        row['military'] = bool(serial_flags.get('military', False))
+        row['law_enforcement'] = bool(serial_flags.get('law_enforcement', False))
+
+        # drone_key
+        row['drone_key'] = serial
+
+        # Maps URLs — only when coordinates are non-null / non-zero
+        drone_lat = row.get('drone_lat') or 0.0
+        drone_lon = row.get('drone_lon') or 0.0
+        if drone_lat != 0.0 or drone_lon != 0.0:
+            row['drone_maps_url'] = maps_pushpin_url(float(drone_lat), float(drone_lon))
+        else:
+            row['drone_maps_url'] = None
+
+        op_lat = row.get('operator_lat')
+        op_lon = row.get('operator_lon')
+        if op_lat is not None and op_lon is not None and (op_lat != 0.0 or op_lon != 0.0):
+            row['controller_maps_url'] = maps_pushpin_url(float(op_lat), float(op_lon))
+        else:
+            row['controller_maps_url'] = None
+
+    req._send_ok({
+        'drones': rows,
+        'count': len(rows),
         'timestamp': _utcnow_iso_z(),
     })
 
@@ -2123,7 +2188,7 @@ def api_data_stats(req: RequestHandler):
         req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
         return
     stats = _require_db().get_stats()
-    retention = int(_require_db().get_setting_str('retention_days', '14') or '14')
+    retention = int(_require_db().get_setting_str('retention_days', '90') or '90')
     stats['retention_days'] = retention
     req._send_ok(stats)
 

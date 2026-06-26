@@ -584,7 +584,7 @@ const SettingsManager = (() => {
                 <label class="form-label" for="s_retention">Retention Period</label>
                 <div class="d-flex align-items-center gap-2">
                   <input type="number" class="form-control form-control-sm" id="s_retention"
-                    value="${s.retention_days || 14}" min="1" max="365" style="max-width:80px;">
+                    value="${s.retention_days || 90}" min="1" max="365" style="max-width:80px;">
                   <span class="text-secondary small">days</span>
                 </div>
                 <small class="text-muted">Auto-purge data older than this</small>
@@ -1207,7 +1207,7 @@ const SettingsManager = (() => {
     // Purge data
     document.getElementById('btnPurgeData')?.addEventListener('click', async () => {
       if (!confirm('Purge data older than the retention period?')) return;
-      const days = parseInt(document.getElementById('s_retention')?.value || '14');
+      const days = parseInt(document.getElementById('s_retention')?.value || '90');
       const before = new Date(Date.now() - days * 86400000).toISOString();
       try {
         const result = await Api.purgeData(before);

@@ -532,6 +532,65 @@ _schema('DataStats', _obj({
 }))
 
 # ---------------------------------------------------------------------------
+# DroneDatabaseEntry  — one row from GET /api/v1/drone-database
+# ---------------------------------------------------------------------------
+
+_schema('DroneDatabaseEntry', _obj({
+    # Identity
+    'serial_number':    _str(description='ANSI/CTA-2063-A serial or empty string'),
+    'drone_key':        _str(description='Primary key used for disposition/flags lookup (= serial_number)'),
+    'registration_id':  _str(description='CAA registration ID or empty string'),
+    'id_type':          _int(description='ASTM F3411 ID type integer'),
+    'ua_type':          _int(description='UA type integer (0=None … 15=Other)'),
+    'ua_type_name':     _str(description='Human-readable UA type name'),
+    'protocol':         _str(description='Detection protocol'),
+    'mac_address':      _str(description='Source MAC address'),
+    'vendor':           _str(description='Manufacturer / vendor name or empty string'),
+    'operator_id':      _str(description='Operator identifier string'),
+    'self_id_text':     _str(description='Free-text self-identification from drone'),
+    # Drone position / motion (latest frame)
+    'drone_lat':        _num(description='Drone latitude at last detection (decimal degrees)'),
+    'drone_lon':        _num(description='Drone longitude at last detection (decimal degrees)'),
+    'drone_alt_geo':    _num(description='Drone geodetic altitude at last detection (metres MSL)'),
+    'drone_alt_baro':   _num(description='Drone barometric altitude at last detection (metres)'),
+    'drone_height_agl': _num(description='Drone height above ground level at last detection (metres)'),
+    'speed':            _num(description='Horizontal speed at last detection (m/s)'),
+    'direction':        _num(description='Track direction at last detection (degrees true)'),
+    'vertical_speed':   _num(description='Vertical speed at last detection (m/s)'),
+    'rssi':             _int(description='Received signal strength at last detection (dBm)'),
+    'takeoff_lat':      _num(description='Takeoff latitude (decimal degrees) — French RID'),
+    'takeoff_lon':      _num(description='Takeoff longitude (decimal degrees) — French RID'),
+    # Controller last-known non-zero position
+    'operator_lat':     _nullable(_num(description='Last known operator/controller latitude (decimal degrees)')),
+    'operator_lon':     _nullable(_num(description='Last known operator/controller longitude (decimal degrees)')),
+    'operator_alt':     _nullable(_num(description='Last known operator/controller altitude (metres)')),
+    'controller_last_seen': _nullable(_str(description='ISO 8601 UTC timestamp of the frame that provided controller position')),
+    # Session statistics
+    'first_seen':       _str(description='ISO 8601 UTC timestamp of first detection'),
+    'last_seen':        _str(description='ISO 8601 UTC timestamp of most recent detection'),
+    'detection_count':  _int(description='Total detection frames in the retention window'),
+    'time_in_area_seconds': _nullable(_int(description='Seconds elapsed between first and last detection')),
+    # Enrichment
+    'disposition':      _str(description='Operator-assigned disposition', enum=['friendly', 'threat', 'unknown']),
+    'military':         _bool(description='True when marked as a military asset'),
+    'law_enforcement':  _bool(description='True when marked as a law enforcement asset'),
+    'drone_maps_url':   _nullable(_str(description='Google Maps pushpin URL for the drone position, or null when position unknown')),
+    'controller_maps_url': _nullable(_str(description='Google Maps pushpin URL for the controller position, or null when unknown')),
+}))
+
+# ---------------------------------------------------------------------------
+# DroneDatabaseResponse  — GET /api/v1/drone-database
+# ---------------------------------------------------------------------------
+
+_schema('DroneDatabaseResponse', _obj({
+    'errcode':   _int(),
+    'errmsg':    _str(),
+    'drones':    _arr(_ref('DroneDatabaseEntry')),
+    'count':     _int(description='Number of drone entries returned'),
+    'timestamp': _str(description='ISO 8601 UTC timestamp of the response'),
+}, required=['errcode', 'errmsg', 'drones', 'count', 'timestamp']))
+
+# ---------------------------------------------------------------------------
 # StatusResponse  — GET /api/status
 # ---------------------------------------------------------------------------
 

@@ -104,6 +104,10 @@ const Api = (() => {
     return get(`/drones/${encodeURIComponent(serial)}`, { track_minutes: trackMinutes });
   }
 
+  function getDroneDatabase() {
+    return get('/drone-database');
+  }
+
   // ---- Disposition ----
 
   function putDisposition(serial, disposition, changedBy = '') {
@@ -344,6 +348,7 @@ const Api = (() => {
     getMonitorStatus,
     getDrones,
     getDroneDetail,
+    getDroneDatabase,
     putDisposition,
     getDispositions,
     getDispositionHistory,

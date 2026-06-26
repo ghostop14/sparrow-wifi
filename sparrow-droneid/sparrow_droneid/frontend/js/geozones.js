@@ -175,10 +175,15 @@ const GeozoneManager = (() => {
     }
   }
 
+  function isVisible() {
+    return _visible;
+  }
+
   return {
     init,
     loadData,
     toggle,
+    isVisible,
     setAirportRadius,
   };
 

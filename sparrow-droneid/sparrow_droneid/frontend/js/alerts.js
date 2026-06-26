@@ -414,8 +414,12 @@ const AlertsManager = (() => {
             <span style="opacity:0.6;">AGL</span><span>${_esc(aglStr)}</span>`;
         if (rangeStr) geoRows += `<span style="opacity:0.6;">Range</span><span>${_esc(rangeStr)}</span>`;
         if (brgStr) geoRows += `<span style="opacity:0.6;">Bearing</span><span>${brgStr}</span>`;
+        const droneMaps = Utils.mapsLinkHtml(fa.drone_lat, fa.drone_lon);
+        if (droneMaps) geoRows += `<span style="opacity:0.6;">Map</span><span>${droneMaps}</span>`;
         if (opRangeStr) geoRows += `<span style="opacity:0.6;">Pilot range</span><span>${_esc(opRangeStr)}</span>`;
         if (opBrgStr) geoRows += `<span style="opacity:0.6;">Pilot brg</span><span>${opBrgStr}</span>`;
+        const opMaps = Utils.mapsLinkHtml(fa.operator_lat, fa.operator_lon);
+        if (opMaps) geoRows += `<span style="opacity:0.6;">Pilot map</span><span>${opMaps}</span>`;
 
         fallbackHtml = `<div style="color:var(--text-secondary);font-size:12px;padding:8px 4px;">
           Detection data unavailable (may have been purged).

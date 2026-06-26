@@ -67,6 +67,8 @@ const App = (() => {
 
     AlertsManager.init();
 
+    DroneDbManager.init();
+
     ReplayManager.init((records, timeMs) => {
       // Replay time update — render snapshot on map and table
       // Pass currentTimeMs so map filters tracks correctly (Fix #10)
@@ -88,20 +90,16 @@ const App = (() => {
     // Geozones
     if (typeof GeozoneManager !== 'undefined') {
       GeozoneManager.init(MapManager.getMap());
-      document.getElementById('btnGeozones')?.addEventListener('click', () => {
-        const on = GeozoneManager.toggle();
-        document.getElementById('btnGeozones')?.classList.toggle('text-info', on);
-      });
-      // Set initial button state
-      document.getElementById('btnGeozones')?.classList.toggle('text-info', true);
+      // The geozones toggle is now an on-map button (created in map.js). Sync its
+      // active state to the persisted visibility GeozoneManager just loaded.
+      const gzBtn = document.querySelector('.leaflet-control-geozones-toggle');
+      if (gzBtn) {
+        const vis = GeozoneManager.isVisible();
+        gzBtn.classList.toggle('active', vis);
+        const a = gzBtn.querySelector('a');
+        if (a) a.setAttribute('aria-pressed', vis);
+      }
     }
-
-    // Range rings toggle
-    document.getElementById('btnRangeRings')?.addEventListener('click', () => {
-      const on = MapManager.toggleRangeRings();
-      const btn = document.getElementById('btnRangeRings');
-      btn.classList.toggle('text-info', on);
-    });
 
     // Panel collapse
     document.getElementById('btnPanelCollapse')?.addEventListener('click', togglePanelCollapse);
@@ -135,6 +133,15 @@ const App = (() => {
         document.getElementById('replayIndicator').style.display = 'none';
         _startPolling();
       }
+    });
+
+    document.getElementById('tab-dronedb')?.addEventListener('shown.bs.tab', () => {
+      if (_inReplay) {
+        _inReplay = false;
+        document.getElementById('replayIndicator').style.display = 'none';
+        _startPolling();
+      }
+      DroneDbManager.load();
     });
 
     // Listen for replay play state
@@ -188,7 +195,7 @@ const App = (() => {
       // Refresh all unit-aware displays
       TableManager.refreshUnits();
       MapManager.refreshMeasureUnits();
-      // Force a drone re-render if we have data (popups will update on next poll)
+      DroneDbManager.refreshUnits();
     });
   }
 

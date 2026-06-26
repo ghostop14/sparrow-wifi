@@ -121,7 +121,7 @@
     <ul class="nav nav-tabs panel-tabs px-2 pt-1" id="bottomTabs" role="tablist">
       <li class="nav-item" role="presentation">
         <button class="nav-link active" id="tab-drones" data-bs-toggle="tab" data-bs-target="#pane-drones" type="button" role="tab">
-          <i class="bi bi-aircraft-horizontal me-1"></i>Drones
+          <i class="bi bi-aircraft-horizontal me-1"></i>Active Drones
           <span class="badge ms-1 tab-count" id="droneTabCount">0</span>
         </button>
       </li>
@@ -136,19 +136,14 @@
           <i class="bi bi-clock-history me-1"></i>Replay
         </button>
       </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-dronedb" data-bs-toggle="tab" data-bs-target="#pane-dronedb" type="button" role="tab">
+          <i class="bi bi-database me-1"></i>Drone Database
+        </button>
+      </li>
       <!-- right-side controls aligned to end -->
       <li class="nav-item ms-auto d-flex align-items-center pe-1">
         <!-- Fix #22: add aria-label to icon-only buttons -->
-        <button class="btn btn-xs btn-icon text-info" id="btnGeozones"
-                title="Toggle airport/no-fly zones"
-                aria-label="Toggle geozones">
-          <i class="bi bi-shield-exclamation"></i>
-        </button>
-        <button class="btn btn-xs btn-icon" id="btnRangeRings"
-                title="Toggle range rings"
-                aria-label="Toggle range rings">
-          <i class="bi bi-circle"></i>
-        </button>
         <button class="btn btn-xs btn-icon ms-1" id="btnPanelCollapse"
                 title="Collapse panel"
                 aria-label="Collapse panel">
@@ -277,6 +272,32 @@
         </div>
       </div>
 
+      <!-- Drone Database pane -->
+      <div class="tab-pane fade h-100" id="pane-dronedb" role="tabpanel">
+        <div class="table-wrapper h-100 overflow-auto">
+          <table class="table table-sm table-drone mb-0" id="droneDbTable">
+            <thead>
+              <tr>
+                <th data-col="last_seen" class="sortable">Last Seen <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                <th data-col="ua_type" class="sortable">Type <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                <th data-col="serial_number" class="sortable">ID <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                <th>Last Position</th>
+                <th>Last Controller Position</th>
+                <th data-col="detection_count" class="sortable">Detections <i class="bi bi-arrow-down-up sort-icon"></i></th>
+              </tr>
+            </thead>
+            <tbody id="droneDbTableBody">
+              <tr class="table-empty-row">
+                <td colspan="6" class="text-center text-secondary py-4">
+                  <i class="bi bi-database fs-3 d-block mb-2 opacity-25"></i>
+                  No drones in database
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
     </div><!-- /tab-content -->
   </div><!-- /bottom-panel -->
 
@@ -375,6 +396,7 @@
 <script src="js/alerts.js"></script>
 <script src="js/replay.js"></script>
 <script src="js/settings.js"></script>
+<script src="js/dronedb.js"></script>
 <script src="js/app.js"></script>
 
 </body>

@@ -174,7 +174,23 @@ const MapManager = (() => {
     });
     new MeasureControl().addTo(_map);
 
-    // Flight tracks toggle control (lower-right, above ruler)
+    // Range rings toggle control (lower-right, above ruler)
+    const RangeRingsControl = L.Control.extend({
+      options: { position: 'bottomright' },
+      onAdd() {
+        const btn = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-rangerings-toggle');
+        // _rangeRingsVisible defaults to true → render in active state initially
+        btn.classList.add('active');
+        btn.innerHTML = '<a href="#" title="Toggle range rings" aria-label="Toggle range rings" aria-pressed="true" role="button"><i class="bi bi-bullseye"></i></a>';
+        btn.querySelector('a').style.cssText = 'display:flex;align-items:center;justify-content:center;width:30px;height:30px;text-decoration:none;';
+        L.DomEvent.disableClickPropagation(btn);
+        btn.addEventListener('click', (e) => { e.preventDefault(); toggleRangeRings(); });
+        return btn;
+      },
+    });
+    new RangeRingsControl().addTo(_map);
+
+    // Flight tracks toggle control (lower-right, above range rings)
     const TracksControl = L.Control.extend({
       options: { position: 'bottomright' },
       onAdd() {
@@ -187,6 +203,31 @@ const MapManager = (() => {
       },
     });
     new TracksControl().addTo(_map);
+
+    // Geozones (airport / no-fly) toggle control (lower-right, top of stack,
+    // above the tracks button). Drives the shared GeozoneManager; the button's
+    // active state is synced to persisted visibility by app.js after init().
+    const GeozonesControl = L.Control.extend({
+      options: { position: 'bottomright' },
+      onAdd() {
+        const btn = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-geozones-toggle');
+        // Geozones default to visible; app.js corrects this from localStorage post-init.
+        btn.classList.add('active');
+        btn.innerHTML = '<a href="#" title="Toggle airport/no-fly zones" aria-label="Toggle airport/no-fly zones" aria-pressed="true" role="button"><i class="bi bi-shield-exclamation"></i></a>';
+        btn.querySelector('a').style.cssText = 'display:flex;align-items:center;justify-content:center;width:30px;height:30px;text-decoration:none;';
+        L.DomEvent.disableClickPropagation(btn);
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          if (typeof GeozoneManager === 'undefined') return;
+          const on = GeozoneManager.toggle();
+          btn.classList.toggle('active', on);
+          const a = btn.querySelector('a');
+          if (a) a.setAttribute('aria-pressed', on);
+        });
+        return btn;
+      },
+    });
+    new GeozonesControl().addTo(_map);
 
     // Go-to input + cursor position (single row, lower-left)
     const CoordBarControl = L.Control.extend({
@@ -419,6 +460,12 @@ const MapManager = (() => {
 
   function toggleRangeRings() {
     _rangeRingsVisible = !_rangeRingsVisible;
+    const btn = document.querySelector('.leaflet-control-rangerings-toggle');
+    if (btn) {
+      btn.classList.toggle('active', _rangeRingsVisible);
+      const a = btn.querySelector('a');
+      if (a) a.setAttribute('aria-pressed', _rangeRingsVisible);
+    }
     if (_receiverMarker) {
       const latLng = _receiverMarker.getLatLng();
       updateRangeRings(latLng.lat, latLng.lng);
@@ -799,6 +846,7 @@ const MapManager = (() => {
     const rows = [
       _popupRow('Drone', esc(serial)),
       _popupRow('Position', esc(`${lat}, ${lon}`)),
+      _popupRow('Map', Utils.mapsLinkHtml(drone.takeoff_lat, drone.takeoff_lon)),
     ].filter(Boolean).join('');
     return `
       <div class="drone-popup">
@@ -831,6 +879,7 @@ const MapManager = (() => {
       _popupRow('Disposition', dispHtml),
       opFlagHtml ? _popupRow('Flags', opFlagHtml) : null,
       _popupRow('Position', esc(`${opLat}, ${opLon}`)),
+      _popupRow('Map', Utils.mapsLinkHtml(drone.operator_lat, drone.operator_lon)),
       _popupRow('Alt', esc(Utils.formatAlt(drone.operator_alt))),
       _popupRow('Pilot dist', esc(_bvlosStr(drone))),
     ].filter(Boolean).join('');
@@ -921,6 +970,7 @@ const MapManager = (() => {
       _popupRow('V/S', esc(_vspdStr(drone))),
       _popupRow('From Rx', esc(Utils.formatBearing(d.bearing_deg, d.bearing_cardinal)
         + (d.range_m != null ? ' @ ' + Utils.formatRange(d.range_m) : ''))),
+      _popupRow('Map', Utils.mapsLinkHtml(drone.drone_lat, drone.drone_lon)),
     ].filter(Boolean).join('');
 
     // Operator block
