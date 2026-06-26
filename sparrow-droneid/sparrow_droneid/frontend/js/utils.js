@@ -414,6 +414,35 @@ const Utils = (() => {
     }
   }
 
+  // ---- Google Maps pushpin link (shareable: one-shot open or copy-to-text) ----
+
+  /**
+   * Google Maps "drop a pushpin" URL for a coordinate — the SAME format the
+   * Slack/API alerts use (backend alert_engine.maps_pushpin_url), so a link
+   * copied from the UI matches what teams receive in alerts.
+   */
+  function mapsPushpinUrl(lat, lon) {
+    return `https://www.google.com/maps/search/?api=1&query=${lat.toFixed(6)},${lon.toFixed(6)}`;
+  }
+
+  /**
+   * Inline HTML for a clickable Google Maps pushpin link plus a copy-URL
+   * button — lets an operator one-shot open the map or copy the link to text
+   * to a field team. Returns '' when the coordinate is absent (null/undefined
+   * or the 0,0 default). stopPropagation keeps a click from toggling the
+   * surrounding row/panel.
+   */
+  function mapsLinkHtml(lat, lon) {
+    if (lat == null || lon == null || (lat === 0 && lon === 0)) return '';
+    const urlAttr = escapeHtml(mapsPushpinUrl(lat, lon));
+    return `<a href="${urlAttr}" target="_blank" rel="noopener" class="maps-link" ` +
+      `title="Open in Google Maps" onclick="event.stopPropagation();">` +
+      `<i class="bi bi-geo-alt-fill"></i> Map</a>` +
+      ` <button class="btn-copy-inline" title="Copy Google Maps link" ` +
+      `onclick="event.stopPropagation(); Utils.copyToClipboard('${urlAttr}', 'Map link copied');">` +
+      `<i class="bi bi-clipboard" style="font-size:10px;"></i></button>`;
+  }
+
   // ---- Clipboard helper (promoted from map.js for use across modules) ----
 
   /**
@@ -558,6 +587,8 @@ const Utils = (() => {
     bearing,
     bearingCardinal,
     toMGRS,
+    mapsPushpinUrl,
+    mapsLinkHtml,
     copyToClipboard,
     buildCallout,
   };

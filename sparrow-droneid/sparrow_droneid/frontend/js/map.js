@@ -846,6 +846,7 @@ const MapManager = (() => {
     const rows = [
       _popupRow('Drone', esc(serial)),
       _popupRow('Position', esc(`${lat}, ${lon}`)),
+      _popupRow('Map', Utils.mapsLinkHtml(drone.takeoff_lat, drone.takeoff_lon)),
     ].filter(Boolean).join('');
     return `
       <div class="drone-popup">
@@ -878,6 +879,7 @@ const MapManager = (() => {
       _popupRow('Disposition', dispHtml),
       opFlagHtml ? _popupRow('Flags', opFlagHtml) : null,
       _popupRow('Position', esc(`${opLat}, ${opLon}`)),
+      _popupRow('Map', Utils.mapsLinkHtml(drone.operator_lat, drone.operator_lon)),
       _popupRow('Alt', esc(Utils.formatAlt(drone.operator_alt))),
       _popupRow('Pilot dist', esc(_bvlosStr(drone))),
     ].filter(Boolean).join('');
@@ -968,6 +970,7 @@ const MapManager = (() => {
       _popupRow('V/S', esc(_vspdStr(drone))),
       _popupRow('From Rx', esc(Utils.formatBearing(d.bearing_deg, d.bearing_cardinal)
         + (d.range_m != null ? ' @ ' + Utils.formatRange(d.range_m) : ''))),
+      _popupRow('Map', Utils.mapsLinkHtml(drone.drone_lat, drone.drone_lon)),
     ].filter(Boolean).join('');
 
     // Operator block

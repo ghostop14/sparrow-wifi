@@ -363,6 +363,8 @@ const TableManager = (() => {
           `<i class="bi bi-clipboard" style="font-size:10px;"></i></button>`
         ]);
       }
+      const mapsHtml = Utils.mapsLinkHtml(lat, lon);
+      if (mapsHtml) rows.push(['Map', mapsHtml]);
       return rows;
     }
 
@@ -381,9 +383,11 @@ const TableManager = (() => {
       ]);
     } else if (drone.takeoff_lat && drone.takeoff_lon) {
       // French RemoteID: no live operator position, only launch point.
+      const takeoffMaps = Utils.mapsLinkHtml(drone.takeoff_lat, drone.takeoff_lon);
       operatorHtml = section('Takeoff Point', [
         ['Lat', drone.takeoff_lat.toFixed(6)],
         ['Lon', drone.takeoff_lon.toFixed(6)],
+        ...(takeoffMaps ? [['Map', takeoffMaps]] : []),
         ['Note', '<span style="color:#9CA3AF;font-style:italic;">Launch location, not pilot position</span>'],
       ]);
     }

@@ -392,6 +392,25 @@ html, body {
 
 .table-empty-row td { color: var(--text-muted); cursor: default; }
 
+/* Inline copy button + Google Maps link used in detail panels, alert detail,
+   and map popups (shareable pushpin links). */
+.btn-copy-inline {
+  background: transparent;
+  border: none;
+  padding: 0 2px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  line-height: 1;
+  vertical-align: baseline;
+}
+.btn-copy-inline:hover { color: var(--accent-blue); }
+.maps-link {
+  color: var(--accent-blue);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.maps-link:hover { text-decoration: underline; }
+
 /* Drone Database table — size columns and align the icon/numeric headers over
    their (center/right-aligned) cells. With table-layout:fixed the thead th
    widths drive every column; the ID column is intentionally left unsized so it
