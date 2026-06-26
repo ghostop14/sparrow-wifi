@@ -218,7 +218,7 @@ class Database:
             'gps_static_lat': '0.0',
             'gps_static_lon': '0.0',
             'gps_static_alt': '0.0',
-            'retention_days': '14',
+            'retention_days': '90',
             'cot_enabled': 'false',
             'cot_address': '239.2.3.1',
             'cot_port': '6969',
@@ -734,6 +734,98 @@ class Database:
         with self.get_cursor() as cursor:
             cursor.execute("SELECT COUNT(DISTINCT serial_number) as cnt FROM detections")
             return cursor.fetchone()['cnt']
+
+    def get_drone_database(self) -> List[Dict]:
+        """Return one dict per unique serial across the entire detections table
+        (90-day retention window), newest-first by last_seen.
+
+        Each row includes:
+          - All columns from the latest detection frame for that serial.
+          - first_seen / last_seen / detection_count from the aggregation sub-query.
+          - controller position (operator_lat/lon/alt) from the most-recent frame
+            that had a non-zero operator coordinate, or None when none exists.
+          - ua_type_name  — human-readable UA type string.
+          - time_in_area_seconds — int(last_seen - first_seen), or None on parse failure.
+        """
+        with self.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT
+                    d.*,
+                    agg.first_seen,
+                    agg.last_seen,
+                    agg.detection_count,
+                    op.operator_lat  AS ctrl_lat,
+                    op.operator_lon  AS ctrl_lon,
+                    op.operator_alt  AS ctrl_alt,
+                    op.timestamp     AS ctrl_last_seen
+                FROM detections d
+                INNER JOIN (
+                    SELECT serial_number,
+                           MIN(timestamp) AS first_seen,
+                           MAX(timestamp) AS last_seen,
+                           COUNT(*)       AS detection_count
+                    FROM detections
+                    GROUP BY serial_number
+                ) agg
+                  ON d.serial_number = agg.serial_number
+                 AND d.timestamp     = agg.last_seen
+                LEFT JOIN (
+                    SELECT od.serial_number,
+                           od.operator_lat, od.operator_lon, od.operator_alt,
+                           od.timestamp
+                    FROM detections od
+                    INNER JOIN (
+                        SELECT serial_number, MAX(timestamp) AS op_ts
+                        FROM detections
+                        WHERE operator_lat <> 0 OR operator_lon <> 0
+                        GROUP BY serial_number
+                    ) opm
+                      ON od.serial_number = opm.serial_number
+                     AND od.timestamp     = opm.op_ts
+                ) op
+                  ON op.serial_number = d.serial_number
+                ORDER BY agg.last_seen DESC
+            """)
+            raw = [dict(row) for row in cursor.fetchall()]
+
+        # Dedup by serial_number, first-wins (rows already last_seen DESC).
+        # Guards identical-timestamp ties that can produce duplicate latest rows.
+        seen: set = set()
+        rows: List[Dict] = []
+        for row in raw:
+            sn = row['serial_number']
+            if sn in seen:
+                continue
+            seen.add(sn)
+
+            # Remap controller columns to standard field names so the frontend
+            # detail builder works unchanged.
+            ctrl_lat = row.pop('ctrl_lat', None)
+            ctrl_lon = row.pop('ctrl_lon', None)
+            ctrl_alt = row.pop('ctrl_alt', None)
+            ctrl_ts  = row.pop('ctrl_last_seen', None)
+            # Only set operator fields when the LEFT JOIN found a non-zero row.
+            row['operator_lat']  = ctrl_lat
+            row['operator_lon']  = ctrl_lon
+            row['operator_alt']  = ctrl_alt
+            row['controller_last_seen'] = ctrl_ts
+
+            # ua_type_name
+            from .models import UAType
+            ua = row.get('ua_type', 0) or 0
+            row['ua_type_name'] = UAType(ua).display_name if 0 <= ua <= 15 else "Unknown"
+
+            # time_in_area_seconds
+            try:
+                fs = datetime.fromisoformat(row['first_seen'].replace('Z', '+00:00'))
+                ls = datetime.fromisoformat(row['last_seen'].replace('Z', '+00:00'))
+                row['time_in_area_seconds'] = int((ls - fs).total_seconds())
+            except (ValueError, AttributeError, TypeError):
+                row['time_in_area_seconds'] = None
+
+            rows.append(row)
+
+        return rows
 
     # ==================== Disposition Operations ====================
 

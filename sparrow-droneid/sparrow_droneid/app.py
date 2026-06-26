@@ -322,7 +322,7 @@ class SparrowDroneID:
                 self._maintenance_last_tick = _time.monotonic()
                 try:
                     # Retention purge
-                    retention_days = int(self.db.get_setting('retention_days', '14'))
+                    retention_days = int(self.db.get_setting('retention_days', '90'))
                     if retention_days > 0:
                         self.db.run_retention_purge(retention_days)
 

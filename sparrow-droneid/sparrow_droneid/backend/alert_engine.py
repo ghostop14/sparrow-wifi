@@ -26,6 +26,16 @@ from .database import Database
 
 log = logging.getLogger(__name__)
 
+
+def maps_pushpin_url(lat: float, lon: float) -> str:
+    """Return a Google Maps URL that drops a pushpin at the exact coordinate.
+
+    Uses the official Maps URL scheme (query=lat,lon) which also opens the
+    Maps app on mobile.  Canonical pushpin format used throughout the codebase.
+    """
+    return f"https://www.google.com/maps/search/?api=1&query={lat:.6f},{lon:.6f}"
+
+
 # Friendly protocol names for operator-facing messages
 _PROTOCOL_DISPLAY = {
     Protocol.ASTM_BLE.value: "Bluetooth",
@@ -661,8 +671,10 @@ class AlertEngine:
     @staticmethod
     def _maps_url(lat: float, lon: float) -> str:
         """Google Maps URL that drops a pushpin at the exact coordinate (and
-        opens the Maps app on mobile). Official Maps URL scheme (query=lat,lon)."""
-        return f"https://www.google.com/maps/search/?api=1&query={lat:.6f},{lon:.6f}"
+        opens the Maps app on mobile). Official Maps URL scheme (query=lat,lon).
+        Delegates to the module-level maps_pushpin_url for centralised formatting.
+        """
+        return maps_pushpin_url(lat, lon)
 
     @staticmethod
     def _maps_link_line(label: str, lat: float, lon: float, slack: bool) -> str:
