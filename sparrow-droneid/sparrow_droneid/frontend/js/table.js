@@ -147,6 +147,14 @@ const TableManager = (() => {
     tbody.querySelectorAll('tr[data-serial]').forEach(tr => {
       tr.addEventListener('click', () => {
         const serial = tr.dataset.serial;
+        // Toggle: clicking the already-selected row again deselects it and
+        // closes the detail sidebar (matches the click-to-expand/collapse
+        // behavior of the Alerts and Drone Database rows).
+        if (serial && serial === _selectedSerial) {
+          selectDrone(null);
+          if (_onSelect) _onSelect(null, null);
+          return;
+        }
         selectDrone(serial);
         // Notify app (outside selectDrone to avoid circular callbacks)
         const drone = _drones.find(d => d.serial_number === serial);

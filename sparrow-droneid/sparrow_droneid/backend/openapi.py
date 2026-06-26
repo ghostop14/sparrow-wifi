@@ -317,6 +317,8 @@ _schema('AlertEvent', _obj({
         description='Alert type code',
     ),
     'serial_number':    _str(description='Drone serial number that triggered the alert'),
+    'vendor':           _str(description='Manufacturer resolved from the latest detection (blank if unknown/purged)'),
+    'ua_type_name':     _str(description='UA type name resolved from the latest detection (blank if unknown/purged)'),
     'detail':           _str(description='Human-readable alert detail message'),
     'drone_lat':        _num(description='Drone latitude at alert time'),
     'drone_lon':        _num(description='Drone longitude at alert time'),

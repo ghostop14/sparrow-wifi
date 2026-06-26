@@ -198,15 +198,28 @@ const AlertsManager = (() => {
         </div>
       </div>`;
 
+      // Subject after the message — "which drone?": vendor + UA type (when the
+      // backend could resolve them) and the short identifier. Shown only when
+      // we have something; absent for type-less/identifier-less alerts.
+      const uaName = (a.ua_type_name && a.ua_type_name !== 'None / Not Declared') ? a.ua_type_name : '';
+      const typeStr = [a.vendor, uaName].filter(Boolean).join(' ');
+      const ident = a.serial_number ? Utils.shortSerial(a.serial_number) : '';
+      const subject = [typeStr, ident].filter(Boolean).join(' · ');
+      const subjectHtml = subject
+        ? `<span class="alert-subject text-truncate" style="flex:1;min-width:0;color:var(--text-secondary);font-size:11px;">${_esc(subject)}</span>`
+        : '';
+
       // ---- Collapsed row: one line — local date/time + message (elk-ui look) ----
-      // Everything else (where-to-look, serial, detail) lives in the expanded
-      // panel; keeping the row to a single line stops alerts being pushed down.
+      // Everything else (where-to-look, full serial, detail) lives in the
+      // expanded panel; keeping the row to a single line stops alerts being
+      // pushed down. The whole row is clickable to expand/collapse.
       return `
         <div class="alert-item ${stateClass}${isExpanded ? ' expanded' : ''}" data-alert-id="${a.id}">
           <i class="bi ${icon} alert-icon"></i>
           <div class="alert-content" style="display:flex;align-items:baseline;gap:8px;min-width:0;">
             <span class="alert-time" style="flex-shrink:0;">${_esc(Utils.formatLocal(a.timestamp))}</span>
-            <span class="alert-title text-truncate" style="flex:1;min-width:0;">${_esc(_alertTitle(a.alert_type))}${stateExtra}</span>
+            <span class="alert-title" style="flex-shrink:0;">${_esc(_alertTitle(a.alert_type))}${stateExtra}</span>
+            ${subjectHtml}
           </div>
           <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
             ${ackBtn}${deleteBtn}${chevronBtn}
@@ -238,6 +251,15 @@ const AlertsManager = (() => {
       btn.addEventListener('click', e => {
         e.stopPropagation();
         _toggleExpand(parseInt(btn.dataset.alertExpand, 10));
+      });
+    });
+
+    // Whole collapsed row toggles expand/collapse (the ack/delete/expand
+    // buttons stopPropagation, and the detail panel is a sibling — not a child
+    // — so neither re-triggers this).
+    list.querySelectorAll('.alert-item[data-alert-id]').forEach(item => {
+      item.addEventListener('click', () => {
+        _toggleExpand(parseInt(item.dataset.alertId, 10));
       });
     });
 

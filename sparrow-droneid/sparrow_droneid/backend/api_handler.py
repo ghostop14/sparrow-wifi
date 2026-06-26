@@ -1796,6 +1796,35 @@ def api_alerts_log(req: RequestHandler):
         req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Database error: {e}')
         return
 
+    # Enrich each alert with the drone's manufacturer + UA type so the UI can
+    # show "<vendor> <type>" next to the message ("which drone?"). These aren't
+    # stored on the alert row; look them up from the latest detection for the
+    # serial, cached per serial within this request. Left blank when the
+    # detection has been purged — i.e. only shown "if we have it".
+    if alerts and _db:
+        from .models import UAType
+        _type_cache = {}
+        for a in alerts:
+            serial = a.get('serial_number') or ''
+            if not serial:
+                a['vendor'] = ''
+                a['ua_type_name'] = ''
+                continue
+            if serial not in _type_cache:
+                det = _require_db().get_drone_by_serial(serial)
+                if det:
+                    ua = det.get('ua_type', 0)
+                    ua_name = UAType(ua).display_name if 0 <= ua <= 15 else ''
+                    vendor = _alert_engine.resolve_vendor(
+                        serial=det.get('serial_number', ''),
+                        mac=det.get('mac_address', ''),
+                        protocol=det.get('protocol', ''),
+                    ) if _alert_engine else ''
+                    _type_cache[serial] = (vendor, ua_name)
+                else:
+                    _type_cache[serial] = ('', '')
+            a['vendor'], a['ua_type_name'] = _type_cache[serial]
+
     req._send_ok({
         'alerts': alerts,
         'pagination': {

@@ -473,6 +473,7 @@ html, body {
   padding: 8px 14px;
   border-bottom: 1px solid rgba(51,65,85,0.4);
   transition: background 0.1s;
+  cursor: pointer;
 }
 
 .alert-item:hover { background: var(--bg-tertiary); }
