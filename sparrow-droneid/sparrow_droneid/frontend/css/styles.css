@@ -391,6 +391,17 @@ html, body {
 .table-drone tbody tr.state-stale  td { opacity: 0.45; text-decoration: line-through; }
 
 .table-empty-row td { color: var(--text-muted); cursor: default; }
+
+/* Drone Database table — size columns and align the icon/numeric headers over
+   their (center/right-aligned) cells. With table-layout:fixed the thead th
+   widths drive every column; the ID column is intentionally left unsized so it
+   absorbs the free horizontal space and shows the full serial. */
+#droneDbTable th:nth-child(1) { width: 165px; }                      /* Last Seen */
+#droneDbTable th:nth-child(2) { width: 230px; }                      /* Type */
+/* ID (3rd) flexes to fill remaining width */
+#droneDbTable th:nth-child(4) { width: 160px; text-align: center; }  /* Last Position */
+#droneDbTable th:nth-child(5) { width: 210px; text-align: center; }  /* Last Controller Position */
+#droneDbTable th:nth-child(6) { width: 110px; text-align: right; }   /* Detections */
 .table-empty-row:hover { background: transparent !important; }
 
 /* RSSI bars */
@@ -1104,21 +1115,26 @@ html, body {
   background: rgba(59,130,246,0.12);
   border-color: rgba(59,130,246,0.4);
 }
-.leaflet-control-measure.active,
-.leaflet-control-compass-toggle.active,
-.leaflet-control-tracks-toggle.active,
-.leaflet-control-rangerings-toggle.active,
-.leaflet-control-geozones-toggle.active {
+/* Active state fills the whole button. The inner <a> carries a themed
+   background with !important (see .leaflet-bar a above), so the active fill
+   must target that anchor — setting it on the outer .leaflet-bar only showed
+   at the edges. */
+.leaflet-control-measure.active a,
+.leaflet-control-compass-toggle.active a,
+.leaflet-control-tracks-toggle.active a,
+.leaflet-control-rangerings-toggle.active a,
+.leaflet-control-geozones-toggle.active a {
   background: var(--accent-blue) !important;
   color: #fff !important;
   border-color: var(--accent-blue) !important;
 }
-.leaflet-control-measure.active:hover,
-.leaflet-control-compass-toggle.active:hover,
-.leaflet-control-tracks-toggle.active:hover,
-.leaflet-control-rangerings-toggle.active:hover,
-.leaflet-control-geozones-toggle.active:hover {
+.leaflet-control-measure.active:hover a,
+.leaflet-control-compass-toggle.active:hover a,
+.leaflet-control-tracks-toggle.active:hover a,
+.leaflet-control-rangerings-toggle.active:hover a,
+.leaflet-control-geozones-toggle.active:hover a {
   background: #60a0f8 !important;
+  color: #fff !important;
   border-color: #60a0f8 !important;
 }
 

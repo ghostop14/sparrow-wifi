@@ -144,7 +144,8 @@ const DroneDbManager = (() => {
       ? _esc(row.ua_type_name) : '';
     const typeHtml = vendor || uaName ? `${vendor}${uaName}` : '—';
 
-    // ID: disposition dot + flag chips + short serial
+    // ID: disposition dot + flag chips + full serial (the ID column flexes to
+    // fill the table's free width, so there's room for the untruncated serial).
     const disp = row.disposition || 'unknown';
     const dispDot = disp !== 'unknown'
       ? `<span class="disposition-dot disposition-${disp}" title="${disp}">&#9679;</span>`
@@ -152,7 +153,7 @@ const DroneDbManager = (() => {
     const flagChips =
       (row.military ? '<span class="flag-chip flag-military" title="Military">MIL</span>' : '') +
       (row.law_enforcement ? '<span class="flag-chip flag-le" title="Law Enforcement">LE</span>' : '');
-    const idHtml = `${dispDot}${flagChips}${_esc(Utils.shortSerial(sn))}`;
+    const idHtml = `${dispDot}${flagChips}${_esc(sn)}`;
 
     // Position cells — map link or dash
     const dronePos = row.drone_maps_url
