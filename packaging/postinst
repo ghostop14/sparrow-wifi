@@ -1,0 +1,37 @@
+#!/bin/sh
+# Sparrow-WiFi post-install — build the app's dedicated venv.
+#
+# Runs for both .deb (dpkg "configure") and .rpm (%post). The Qt/numpy stack
+# comes from distro packages (declared as deps), so the venv is created with
+# --system-site-packages and only the three pip-only deps are installed into
+# it: gps3 (required), dronekit (drone telemetry), manuf (MAC vendor lookup).
+#
+# dronekit pulls pymavlink, which compiles a small C extension — that is why
+# the package depends on a compiler + python headers. Network access is
+# required at install time; if it is unavailable this script fails loudly so
+# the problem is visible rather than surfacing later as a broken launch.
+set -e
+
+STATE_DIR="/var/lib/sparrow-wifi"
+VENV_DIR="$STATE_DIR/venv"
+SYS_PY="/usr/bin/python3"
+
+echo "sparrow-wifi: setting up Python environment in $VENV_DIR ..."
+
+mkdir -p "$STATE_DIR"
+
+if [ ! -x "$VENV_DIR/bin/python3" ]; then
+    "$SYS_PY" -m venv --system-site-packages "$VENV_DIR"
+fi
+
+"$VENV_DIR/bin/python3" -m pip install --upgrade pip
+"$VENV_DIR/bin/python3" -m pip install --upgrade gps3 dronekit manuf
+
+# Refresh the application menu (best-effort).
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
+fi
+
+echo "sparrow-wifi: install complete. Launch from your menu or run: sparrow-wifi"
+
+exit 0

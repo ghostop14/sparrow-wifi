@@ -23,3 +23,9 @@ sparrow_elastic/data/fingerbank.db
 .playwright-mcp/
 *-layout.png
 page-*.yml
+
+# Packaging build output (see Makefile / packaging/)
+build/
+dist/
+*.deb
+*.rpm

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Sparrow-WiFi
+GenericName=WiFi / Bluetooth Spectral Awareness
+Comment=2.4/5 GHz WiFi and Bluetooth scanning, spectrum analysis, GPS wardriving
+Exec=/usr/bin/sparrow-wifi
+Icon=sparrow-wifi
+Terminal=false
+Categories=Network;System;Security;
+Keywords=wifi;wireless;scan;bluetooth;spectrum;gps;wardriving;

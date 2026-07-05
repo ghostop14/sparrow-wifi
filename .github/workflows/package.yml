@@ -1,0 +1,126 @@
+name: package
+
+# Build .deb and .rpm with fpm, install-test both on amd64 + arm64, and
+# publish them to a GitHub Release on version tags.
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install fpm + rpm tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby ruby-dev rpm
+          sudo gem install --no-document fpm
+
+      - name: Determine version
+        id: ver
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="0.0.0"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Building version $V"
+
+      - name: Build packages
+        run: make all VERSION=${{ steps.ver.outputs.version }}
+
+      - name: List artifacts
+        run: ls -l dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: dist/*
+          if-no-files-found: error
+
+  test-deb:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: dist
+
+      - name: Install the .deb (apt resolves dependencies)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ./dist/*.deb
+
+      - name: Verify the venv + Qt stack import
+        run: |
+          QT_QPA_PLATFORM=offscreen /var/lib/sparrow-wifi/venv/bin/python3 - <<'PY'
+          import PyQt5.QtWidgets, PyQt5.QtChart, PyQt5.Qsci, manuf, gps3
+          print("import check OK on", __import__("platform").machine())
+          PY
+
+      - name: Purge and confirm state is removed
+        run: |
+          sudo apt-get purge -y sparrow-wifi
+          test ! -e /var/lib/sparrow-wifi && echo "state dir removed OK"
+
+  test-rpm:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            os: ubuntu-latest
+          - arch: arm64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    container: fedora:latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: dist
+
+      - name: Install the .rpm (dnf resolves dependencies)
+        run: dnf install -y ./dist/*.rpm
+
+      - name: Verify the venv + Qt stack import
+        run: |
+          QT_QPA_PLATFORM=offscreen /var/lib/sparrow-wifi/venv/bin/python3 - <<'PY'
+          import PyQt5.QtWidgets, PyQt5.QtChart, PyQt5.Qsci, manuf, gps3
+          print("import check OK on", __import__("platform").machine())
+          PY
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [test-deb, test-rpm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: dist
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes

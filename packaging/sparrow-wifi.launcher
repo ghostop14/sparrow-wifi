@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Sparrow-WiFi launcher — installed as /usr/bin/sparrow-wifi by the .deb/.rpm.
+#
+# Runs the app from its dedicated venv, elevating to root (the WiFi scanner
+# needs it) while keeping the graphical session reachable. The venv is built
+# by the package postinstall at /var/lib/sparrow-wifi/venv.
+#
+# We cd into /var/lib/sparrow-wifi (root-writable) before exec so the app's
+# CWD-relative writes — the manuf OUI database and sparrowwifiagent.cfg — land
+# in a writable place instead of the read-only /usr/share install dir.
+set -euo pipefail
+
+APP_DIR="/usr/share/sparrow-wifi"
+STATE_DIR="/var/lib/sparrow-wifi"
+VENV_PY="$STATE_DIR/venv/bin/python3"
+APP="$APP_DIR/sparrow-wifi.py"
+
+# Fall back to the system interpreter if the venv is missing (e.g. the
+# postinstall could not reach the network to build it).
+if [[ ! -x "$VENV_PY" ]]; then
+    VENV_PY="/usr/bin/python3"
+fi
+
+# Pick a writable working directory (see header note). The postinstall creates
+# STATE_DIR; fall back to /tmp if it is somehow missing.
+WORK_DIR="$STATE_DIR"
+[ -d "$WORK_DIR" ] || WORK_DIR=/tmp
+
+# Already root: just run from the writable dir.
+if [[ $EUID -eq 0 ]]; then
+    cd "$WORK_DIR" || cd /
+    exec "$VENV_PY" "$APP" "$@"
+fi
+
+# X11 (incl. XWayland): let root talk to the display.
+if [[ -n "${DISPLAY:-}" ]]; then
+    xhost +si:localuser:root >/dev/null 2>&1 || true
+fi
+
+# pkexec resets the working directory, so set it inside the elevated context
+# with `env --chdir` — that is where the app's CWD-relative writes land.
+exec pkexec env --chdir="$WORK_DIR" \
+    DISPLAY="${DISPLAY:-}" \
+    WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" \
+    XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}" \
+    XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" \
+    QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-}" \
+    "$VENV_PY" "$APP" "$@"

@@ -20,7 +20,8 @@
 
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# This script lives in scripts/; the repo root is its parent directory.
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="$REPO_DIR/venv"
 SYS_PY="/usr/bin/python3"
 APP="$REPO_DIR/sparrow-wifi.py"

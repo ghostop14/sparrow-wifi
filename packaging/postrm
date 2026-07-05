@@ -1,0 +1,26 @@
+#!/bin/sh
+# Sparrow-WiFi post-remove — tear down the venv + state on full removal.
+#
+# Runs for both .deb and .rpm. We only wipe the generated venv/state on a real
+# removal/purge, not on an upgrade:
+#   * dpkg passes "$1" = remove | purge | upgrade | ...
+#   * rpm  passes "$1" = 0 on final erase, 1 on upgrade.
+set -e
+
+STATE_DIR="/var/lib/sparrow-wifi"
+
+purge=0
+case "${1:-}" in
+    purge|remove) purge=1 ;;   # dpkg
+    0)            purge=1 ;;   # rpm final erase
+esac
+
+if [ "$purge" -eq 1 ]; then
+    rm -rf "$STATE_DIR"
+fi
+
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
+fi
+
+exit 0

@@ -819,7 +819,7 @@ class mainWindow(QMainWindow):
         self.resize(self.mainWidth, self.mainHeight)
         self.center()
         self.setWindowTitle('Sparrow-WiFi Analyzer')
-        self.setWindowIcon(QIcon('wifi_icon.png'))        
+        self.setWindowIcon(QIcon(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'wifi_icon.png')))
 
         self.createMenu()
         
