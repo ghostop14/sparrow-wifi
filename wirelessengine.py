@@ -552,7 +552,7 @@ class WirelessEngine(object):
         else:
             return ssid
         
-    def getInterfaces(printResults=True) -> list:
+    def getInterfaces(printResults=False) -> list:
         """ Returns a list of wireless interfaces using iwconfig, iw, or nmcli (whichever is available). """
         global interfaceApp
         retVal = []
