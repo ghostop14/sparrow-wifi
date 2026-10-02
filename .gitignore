@@ -21,3 +21,4 @@ sparrow_elastic/data/fingerbank.db
 .playwright-mcp/
 *-layout.png
 page-*.yml
+manuf
