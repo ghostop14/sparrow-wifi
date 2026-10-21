@@ -82,7 +82,9 @@ def _suppress_urllib3_warnings() -> None:
 # Dashboards, ILM refresh, etc.) don't dump tracebacks to the console
 # before the engine ever calls start().  The engine's own logging is
 # concise and handles retry/backoff itself.
-for _lib_logger_name in ("opensearch", "elasticsearch", "urllib3.connectionpool"):
+# elasticsearch-py 8.x logs its HTTP requests under "elastic_transport".
+for _lib_logger_name in ("opensearch", "elasticsearch", "elastic_transport",
+                         "urllib3.connectionpool"):
     logging.getLogger(_lib_logger_name).setLevel(logging.ERROR)
 
 
