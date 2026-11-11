@@ -1283,3 +1283,53 @@ html, body {
 [data-bs-theme="light"] .compass-rose {
   filter: drop-shadow(0 1px 2px rgba(0,0,0,0.25));
 }
+
+/* ---- TAK settings tab ---- */
+.tak-status-grid,
+.tak-pkg-result,
+.tak-cert-summary {
+  --tak-warn: #B45309;   /* amber / red text tokens: >= 4.5:1 on the light cards */
+  --tak-bad:  #DC2626;
+}
+[data-bs-theme="dark"] .tak-status-grid,
+[data-bs-theme="dark"] .tak-pkg-result,
+[data-bs-theme="dark"] .tak-cert-summary {
+  --tak-warn: #FBBF24;   /* >= 4.5:1 on the dark cards */
+  --tak-bad:  #F87171;
+}
+.tak-status-grid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  font-size: 12px;
+  margin: 0;
+}
+.tak-status-grid dt {
+  color: var(--text-secondary);
+  font-weight: 500;
+  margin: 0;
+}
+.tak-status-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+}
+.tak-cert-summary {
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  padding: 8px 10px;
+  overflow-wrap: anywhere;
+}
+.tak-days-warn { color: var(--tak-warn, #B45309); }
+.tak-days-bad  { color: var(--tak-bad, #DC2626); font-weight: 600; }
+.tak-err       { color: var(--tak-bad, #DC2626); }
+.tak-pkg-result { overflow-wrap: anywhere; }
+.tak-pkg-result ul {
+  margin: 4px 0;
+  padding-left: 1.1rem;
+}
+@media (max-width: 575.98px) {
+  .tak-status-grid { grid-template-columns: 1fr; gap: 0; }
+  .tak-status-grid dd { margin-bottom: 6px; }
+}

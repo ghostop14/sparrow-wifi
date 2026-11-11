@@ -9,6 +9,8 @@ Provides a multithreaded HTTP server with:
 - OpenAPI 3.0 compliance via /api/v1/openapi.json
 - Legacy /api/ → /api/v1/ redirect with Deprecation headers
 """
+import base64
+import binascii
 import ipaddress
 import json
 import mimetypes
@@ -29,7 +31,13 @@ from requests.adapters import HTTPAdapter as _HTTPAdapter
 from .droneid_engine import DroneIDEngine, CaptureManager, check_prerequisites
 from .gps_engine import GPSEngine
 from .alert_engine import AlertEngine, maps_pushpin_url
-from .cot_engine import CotEngine
+from .tak import config as tak_config
+from .tak import certs as tak_certs
+from .tak.engine import TakEngine
+from .tak import enrollment as tak_enrollment
+from .tak.enrollment import EnrollmentManager
+from .tak.package import PackageError, parse_package
+from .tak.transport import list_ipv4_interfaces, probe_connection
 from .elasticsearch_engine import ElasticsearchEngine
 from .database import Database
 from .export import generate_kml
@@ -52,7 +60,7 @@ def _utcnow_iso_z() -> str:
 _droneid_engine: Optional[DroneIDEngine] = None
 _gps_engine: Optional[GPSEngine] = None
 _alert_engine: Optional[AlertEngine] = None
-_cot_engine: Optional[CotEngine] = None
+_cot_engine: Optional[TakEngine] = None
 _es_engine: Optional[ElasticsearchEngine] = None
 _db: Optional[Database] = None
 _data_dir: Optional[str] = None
@@ -86,7 +94,7 @@ def _require_db() -> Database:
 
 
 def set_engines(droneid: DroneIDEngine, gps: GPSEngine, alert: AlertEngine,
-                cot: CotEngine, db: Database, data_dir: str, html_dir: str,
+                cot: TakEngine, db: Database, data_dir: str, html_dir: str,
                 cert_manager: Optional[CertManager] = None,
                 wifi_ssid_scanner: Optional[WifiSsidScanner] = None,
                 es_engine: Optional[ElasticsearchEngine] = None,
@@ -203,6 +211,10 @@ class MultithreadHTTPServer(ThreadingMixIn, HTTPServer):
 # Request Handler
 # ---------------------------------------------------------------------------
 
+# Global cap on request bodies (decoded-size caps on individual routes are tighter).
+MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024
+
+
 class RequestHandler(BaseHTTPRequestHandler):
     """HTTP request handler for Sparrow DroneID.
 
@@ -218,6 +230,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.json_data: Optional[Dict] = None
         self.query_params: Dict[str, str] = {}
         self._deprecated_path: bool = False
+        self._body_too_large: bool = False
         super().__init__(*args, **kwargs)
 
     # ------------------------------------------------------------------
@@ -248,6 +261,13 @@ class RequestHandler(BaseHTTPRequestHandler):
             content_length = int(self.headers.get('Content-Length', 0))
         except (ValueError, TypeError):
             content_length = 0
+
+        if content_length > MAX_REQUEST_BODY_BYTES:
+            # Do not read it: answer 413 after auth and drop the connection so the
+            # unread body is not parsed as the next request.
+            self._body_too_large = True
+            self.close_connection = True
+            return
 
         if content_length > 0:
             self.body_data = self.rfile.read(content_length)
@@ -510,12 +530,18 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.parse_body()
         if not self.check_auth():
             return
+        if self._body_too_large:
+            self._send_error(413, ErrorCode.PAYLOAD_TOO_LARGE, 'Request body exceeds 16 MiB')
+            return
         self._handle_api('POST')
 
     def do_PUT(self):
         self.parse_query_string()
         self.parse_body()
         if not self.check_auth():
+            return
+        if self._body_too_large:
+            self._send_error(413, ErrorCode.PAYLOAD_TOO_LARGE, 'Request body exceeds 16 MiB')
             return
         self._handle_api('PUT')
 
@@ -599,17 +625,18 @@ def _coerce_settings(raw: Dict[str, str]) -> Dict[str, Any]:
         'tile_cache_enabled',
         'wifi_ssid_enabled',
         'es_enabled', 'es_verify_tls', 'es_dashboards_verify_tls',
-    }
+    } | tak_config.BOOL_KEYS
     int_keys = {'port', 'cot_port', 'retention_days',
-                'es_shards', 'es_replicas', 'es_bulk_size', 'es_flush_interval'}
-    float_keys = {'gps_static_lat', 'gps_static_lon', 'gps_static_alt'}
+                'es_shards', 'es_replicas', 'es_bulk_size', 'es_flush_interval'
+                } | tak_config.INT_KEYS
+    float_keys = {'gps_static_lat', 'gps_static_lon', 'gps_static_alt'} | tak_config.FLOAT_KEYS
     # Sensitive fields: show '(set)' if non-empty, '' if empty — never reveal value.
     sensitive_keys = {
         'auth_token',
         'alert_api_token',
         'es_password', 'es_api_key',
         'es_dashboards_password', 'es_dashboards_api_key',
-    }
+    } | tak_config.SECRET_KEYS
 
     result: Dict[str, Any] = {}
     for k, v in raw.items():
@@ -2067,25 +2094,27 @@ def api_cot_status(req: RequestHandler):
     if _cot_engine is None:
         req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'CoT engine not available')
         return
-    req._send_ok(_cot_engine.get_status())
+    req._send_ok(_cot_engine.legacy_status())
 
 
 @router.route('PUT', '/api/v1/cot/config', spec={
-    'summary': 'Configure CoT output',
+    'summary': 'Configure CoT output (legacy: multicast address/port + enable)',
     'tags': ['CoT'],
     'requestBody': json_body_inline(
         {'enabled': {'type': 'boolean', 'description': 'Enable or disable CoT output'},
          'address': {'type': 'string',  'description': 'UDP multicast destination address'},
          'port':    {'type': 'integer', 'description': 'UDP destination port'}},
-        description='CoT configuration',
+        description='CoT configuration. Supplying address or port selects the UDP multicast '
+                    'transport; use /api/v1/tak/config for the other transports.',
     ),
     'responses': {
         '200': response_inline({}, 'CoT configuration updated'),
+        '400': {'description': 'Invalid address or port', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
         '503': {'description': 'CoT engine not available', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
     },
 })
 def api_cot_config(req: RequestHandler):
-    if _cot_engine is None:
+    if _cot_engine is None or _db is None:
         req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'CoT engine not available')
         return
     if req.json_data is None:
@@ -2093,27 +2122,549 @@ def api_cot_config(req: RequestHandler):
         return
 
     body = req.json_data
-    enabled = bool(body.get('enabled', _cot_engine.enabled))
-    address = str(body.get('address', _cot_engine.address))
-    try:
-        port = int(body.get('port', _cot_engine.port))
-    except (ValueError, TypeError):
-        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'port must be an integer')
+    patch: Dict[str, Any] = {}
+    if 'enabled' in body:
+        patch['cot_enabled'] = bool(body['enabled'])
+    if 'address' in body or 'port' in body:
+        # This endpoint has always described multicast output.
+        patch['tak_transport'] = 'udp_multicast'
+    if 'address' in body:
+        patch['cot_address'] = str(body['address'])
+    if 'port' in body:
+        patch['cot_port'] = body['port']
+
+    merged = tak_config.merge_patch(tak_config.read_raw(_require_db()), patch)
+    errors = tak_config.validate(merged)
+    if errors:
+        _send_tak_validation_error(req, errors)
         return
-
-    try:
-        _cot_engine.configure(enabled, address, port)
-    except Exception as e:
-        req._send_error(500, ErrorCode.INTERNAL_ERROR, f'Failed to configure CoT: {e}')
-        return
-
-    # Persist to DB so settings survive restart
-    if _db:
-        _require_db().set_setting('cot_enabled', str(enabled).lower())
-        _require_db().set_setting('cot_address', address)
-        _require_db().set_setting('cot_port', str(port))
-
+    for key in patch:
+        _require_db().set_setting(key, merged[key])
+    _apply_tak_config()
     req._send_ok({})
+
+
+# ---------------------------------------------------------------------------
+# TAK / Cursor-on-Target  (/api/v1/tak/*)
+# ---------------------------------------------------------------------------
+
+_ERR_REF = {'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}}
+
+
+def _err_resp(description: str) -> dict:
+    return {'description': description, **_ERR_REF}
+
+
+_MAX_CERT_BYTES = 256 * 1024
+_MAX_PACKAGE_BYTES = 2 * 1024 * 1024
+
+def _send_tak_validation_error(req: RequestHandler, errors: list) -> None:
+    req._send_error(400, ErrorCode.VALIDATION_ERROR, errors[0]['message'],
+                    detail={'errors': errors})
+
+
+def _apply_tak_config(restart_tls: bool = False) -> None:
+    """Re-read the TAK settings and hand the effective config to the engine."""
+    if _cot_engine is None or _db is None:
+        return
+    cfg, warnings = tak_config.normalize(tak_config.read_raw(_require_db()))
+    _cot_engine.set_config_warnings(warnings)
+    if restart_tls and cfg.transport == 'tls' and _cot_engine.config == cfg:
+        _cot_engine.restart()     # certificate files changed: reconnect with them
+    else:
+        _cot_engine.configure(cfg)
+
+
+def _tak_config_body() -> dict:
+    raw = tak_config.read_raw(_require_db())
+    cfg, _warnings = tak_config.normalize(raw)
+    return {
+        'settings': tak_config.masked(raw),
+        'effective': {
+            'station_name': cfg.station_name,
+            'client_uid': cfg.client_uid,
+            'sensor_stale_s': cfg.sensor_stale_s,
+            'sensor_stale_auto': not raw.get('tak_sensor_stale_s', '').strip(),
+        },
+        'default_ports': dict(tak_config.DEFAULT_PORT_BY_TRANSPORT),
+    }
+
+
+def _require_tak_db(req: RequestHandler) -> bool:
+    if _db is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'Database not available')
+        return False
+    return True
+
+
+def _require_crypto(req: RequestHandler) -> bool:
+    if not tak_certs.HAS_CRYPTOGRAPHY:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'cryptography is not installed')
+        return False
+    return True
+
+
+def _decode_b64(req: RequestHandler, value: Any, field: str, max_bytes: int,
+                too_large: str) -> Optional[bytes]:
+    """Strict base64 decode with a decoded-size cap; sends a 400 and returns None on failure."""
+    if not isinstance(value, str) or not value:
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, '%s is required' % field)
+        return None
+    try:
+        data = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError):
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, '%s is not valid base64' % field)
+        return None
+    if len(data) > max_bytes:
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, too_large)
+        return None
+    return data
+
+
+def _display_filename(value: Any) -> str:
+    name = os.path.basename(str(value or '').replace('\\', '/'))
+    return ''.join(c for c in name if c.isprintable())[:128]
+
+
+def _file_format(data: bytes) -> str:
+    return 'p12' if tak_certs.sniff(data) == 'p12' else 'pem'
+
+
+def _temp_enrollment(cfg) -> EnrollmentManager:
+    """A throwaway manager for "Test connection" / "Enroll now" (output disabled, or a
+    candidate config). The failure backoff lives in a process-wide table inside
+    tak.enrollment, so a fresh manager still honours it."""
+    return EnrollmentManager(cfg, _cot_engine.cert_store)
+
+
+@router.route('GET', '/api/v1/tak/status', spec={
+    'summary': 'Get TAK output status',
+    'tags': ['TAK'],
+    'responses': {
+        '200': response_ref('TakStatus', 'Live TAK output status'),
+        '503': _err_resp('TAK engine not available'),
+    },
+})
+def api_tak_status(req: RequestHandler):
+    if _cot_engine is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'TAK engine not available')
+        return
+    req._send_ok(_cot_engine.get_status())
+
+
+@router.route('GET', '/api/v1/tak/config', spec={
+    'summary': 'Get all TAK settings',
+    'description': 'Every TAK setting, typed. Secrets are returned as "(set)" or an empty string.',
+    'tags': ['TAK'],
+    'responses': {
+        '200': response_ref('TakConfigResponse', 'TAK settings, effective defaults and default ports'),
+        '503': _err_resp('Database not available'),
+    },
+})
+def api_tak_config_get(req: RequestHandler):
+    if not _require_tak_db(req):
+        return
+    req._send_ok(_tak_config_body())
+
+
+@router.route('PUT', '/api/v1/tak/config', spec={
+    'summary': 'Update TAK settings',
+    'description': 'Any subset of the TAK settings. A secret that is absent or "(set)" keeps its '
+                   'stored value; "" clears it. The whole result is validated before anything is '
+                   'written; the engine is reconfigured when the effective config changed.',
+    'tags': ['TAK'],
+    'requestBody': json_body_inline({}, description='TAK settings to update'),
+    'responses': {
+        '200': response_ref('TakConfigResponse', 'Updated TAK settings'),
+        '400': _err_resp('Unknown key or validation error (detail.errors lists each field)'),
+        '503': _err_resp('Database not available'),
+    },
+})
+def api_tak_config_put(req: RequestHandler):
+    if not _require_tak_db(req):
+        return
+    if not isinstance(req.json_data, dict):
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'JSON object body required')
+        return
+    body = req.json_data
+    unknown = [k for k in body if k not in tak_config.TAK_KEYS]
+    if unknown:
+        req._send_error(400, ErrorCode.VALIDATION_ERROR,
+                        'Unknown settings key(s): %s' % ', '.join(sorted(unknown)),
+                        detail={'unknown_keys': unknown})
+        return
+    merged = tak_config.merge_patch(tak_config.read_raw(_require_db()), body)
+    errors = tak_config.validate(merged)
+    if errors:
+        _send_tak_validation_error(req, errors)
+        return
+    for key in body:
+        if key in tak_config.SECRET_KEYS and body[key] == tak_config.SECRET_MASK:
+            continue
+        _require_db().set_setting(key, merged[key])
+    _apply_tak_config()
+    req._send_ok(_tak_config_body())
+
+
+@router.route('POST', '/api/v1/tak/test', spec={
+    'summary': 'Test the TAK connection with (unsaved) settings',
+    'description': 'Candidate settings are merged over the stored ones ({} tests the saved '
+                   'configuration). Nothing is saved and no CoT is sent. TLS in enroll mode may '
+                   'perform a real enrollment (honouring the failure backoff).',
+    'tags': ['TAK'],
+    'requestBody': json_body_inline({}, description='Candidate TAK settings (any subset)'),
+    'responses': {
+        '200': response_ref('TakTestResult', 'Connection outcome (always 200 for connection results)'),
+        '400': _err_resp('Validation error'),
+        '503': _err_resp('TAK engine not available'),
+    },
+})
+def api_tak_test(req: RequestHandler):
+    if _cot_engine is None or _db is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'TAK engine not available')
+        return
+    body = req.json_data if req.json_data is not None else {}
+    if not isinstance(body, dict):
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'JSON object body required')
+        return
+    unknown = [k for k in body if k not in tak_config.TAK_KEYS]
+    if unknown:
+        req._send_error(400, ErrorCode.VALIDATION_ERROR,
+                        'Unknown settings key(s): %s' % ', '.join(sorted(unknown)),
+                        detail={'unknown_keys': unknown})
+        return
+    merged = tak_config.merge_patch(tak_config.read_raw(_require_db()), body)
+    errors = tak_config.validate(merged)
+    if errors:
+        _send_tak_validation_error(req, errors)
+        return
+    cfg, _warnings = tak_config.normalize(merged)
+    enrollment = None
+    if cfg.transport == 'tls' and cfg.tls_client_mode == 'enroll':
+        if not tak_certs.HAS_CRYPTOGRAPHY:
+            req._send_ok({'ok': False, 'message': '', 'error': 'cryptography is not installed',
+                          'duration_ms': 0, 'details': {}})
+            return
+        if not cfg.enroll_username or not cfg.enroll_password:
+            req._send_ok({'ok': False, 'message': '', 'duration_ms': 0, 'details': {},
+                          'error': 'Enter the enrollment username and password first'})
+            return
+        enrollment = _temp_enrollment(cfg)
+    elif cfg.transport == 'tls' and not tak_certs.HAS_CRYPTOGRAPHY:
+        req._send_ok({'ok': False, 'message': '', 'error': 'cryptography is not installed',
+                      'duration_ms': 0, 'details': {}})
+        return
+    req._send_ok(probe_connection(cfg, _cot_engine.cert_store, enrollment))
+
+
+@router.route('GET', '/api/v1/tak/interfaces', spec={
+    'summary': 'List IPv4 network interfaces (for the multicast interface choice)',
+    'tags': ['TAK'],
+    'responses': {'200': response_ref('TakInterfaces', 'Interfaces with an IPv4 address (lo excluded)')},
+})
+def api_tak_interfaces(req: RequestHandler):
+    req._send_ok({'interfaces': list_ipv4_interfaces()})
+
+
+# ---- certificates -----------------------------------------------------------------
+
+@router.route('GET', '/api/v1/tak/certs', spec={
+    'summary': 'Stored TAK client certificate, CA truststore and enrolled certificate',
+    'tags': ['TAK'],
+    'responses': {
+        '200': response_ref('TakCertsResponse', 'Certificate summaries (null when absent)'),
+        '503': _err_resp('TAK engine not available, or cryptography is not installed'),
+    },
+})
+def api_tak_certs_get(req: RequestHandler):
+    if _cot_engine is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'TAK engine not available')
+        return
+    if not _require_crypto(req):
+        return
+    store = _cot_engine.cert_store
+    req._send_ok({'client': store.client_info(), 'ca': store.ca_info(),
+                  'enrolled': store.enrolled_info()})
+
+
+@router.route('POST', '/api/v1/tak/certs/client', spec={
+    'summary': 'Upload a TAK client certificate (.p12, PEM pair, combined PEM)',
+    'description': 'The format is detected from the content. The key is decrypted and stored '
+                   'unencrypted (mode 0600); the password is never stored. Sets the client '
+                   'certificate mode to "upload".',
+    'tags': ['TAK'],
+    'requestBody': json_body_inline(
+        {'cert_b64': {'type': 'string', 'description': 'Base64 of the certificate / .p12 / combined PEM (max 256 KiB decoded)'},
+         'key_b64': {'type': 'string', 'description': 'Base64 of a separate private key (optional, max 256 KiB decoded)'},
+         'password': {'type': 'string', 'description': 'Password of the .p12 or encrypted key (optional, used once)'},
+         'filename': {'type': 'string', 'description': 'Display name only (optional)'}},
+        required_props=['cert_b64'], description='Client certificate upload'),
+    'responses': {
+        '201': response_inline({'client': {'$ref': '#/components/schemas/TakCertInfo'}},
+                               'Stored certificate'),
+        '400': _err_resp('Invalid file, wrong password, key mismatch or too large'),
+        '503': _err_resp('Engine unavailable or cryptography not installed'),
+    },
+})
+def api_tak_certs_client_post(req: RequestHandler):
+    if _cot_engine is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'TAK engine not available')
+        return
+    if not _require_tak_db(req) or not _require_crypto(req):
+        return
+    if not isinstance(req.json_data, dict):
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'JSON object body required')
+        return
+    body = req.json_data
+    too_large = 'Certificate file too large (max 256 KiB)'
+    cert = _decode_b64(req, body.get('cert_b64'), 'cert_b64', _MAX_CERT_BYTES, too_large)
+    if cert is None:
+        return
+    key = None
+    if body.get('key_b64'):
+        key = _decode_b64(req, body.get('key_b64'), 'key_b64', _MAX_CERT_BYTES, too_large)
+        if key is None:
+            return
+    password = body.get('password') or ''
+    if not isinstance(password, str) or len(password) > 256:
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'password must be a string of at most 256 characters')
+        return
+    try:
+        mat = tak_certs.normalize_client(cert, key, password)
+        info = _cot_engine.cert_store.store_client(
+            mat, source='upload', filename=_display_filename(body.get('filename')),
+            fmt=_file_format(cert))
+    except tak_certs.CertError as exc:
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, str(exc))
+        return
+    _require_db().set_setting('tak_tls_client_mode', 'upload')
+    _apply_tak_config(restart_tls=True)
+    req._send_ok({'client': info}, status=201)
+
+
+@router.route('POST', '/api/v1/tak/certs/ca', spec={
+    'summary': 'Upload a TAK CA truststore (.p12, PEM bundle, DER certificate)',
+    'description': 'Sets the CA truststore mode to "upload". The password is never stored.',
+    'tags': ['TAK'],
+    'requestBody': json_body_inline(
+        {'data_b64': {'type': 'string', 'description': 'Base64 of the truststore (max 256 KiB decoded)'},
+         'password': {'type': 'string', 'description': 'Truststore password (optional, used once)'},
+         'filename': {'type': 'string', 'description': 'Display name only (optional)'}},
+        required_props=['data_b64'], description='CA truststore upload'),
+    'responses': {
+        '201': response_inline({'ca': {'$ref': '#/components/schemas/TakCaInfo'}}, 'Stored truststore'),
+        '400': _err_resp('Invalid file, wrong password or too large'),
+        '503': _err_resp('Engine unavailable or cryptography not installed'),
+    },
+})
+def api_tak_certs_ca_post(req: RequestHandler):
+    if _cot_engine is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'TAK engine not available')
+        return
+    if not _require_tak_db(req) or not _require_crypto(req):
+        return
+    if not isinstance(req.json_data, dict):
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'JSON object body required')
+        return
+    body = req.json_data
+    data = _decode_b64(req, body.get('data_b64'), 'data_b64', _MAX_CERT_BYTES,
+                       'Certificate file too large (max 256 KiB)')
+    if data is None:
+        return
+    password = body.get('password') or ''
+    if not isinstance(password, str) or len(password) > 256:
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'password must be a string of at most 256 characters')
+        return
+    try:
+        mat = tak_certs.normalize_ca(data, password)
+        info = _cot_engine.cert_store.store_ca(
+            mat, source='upload', filename=_display_filename(body.get('filename')),
+            fmt=_file_format(data))
+    except tak_certs.CertError as exc:
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, str(exc))
+        return
+    _require_db().set_setting('tak_tls_ca_mode', 'upload')
+    _apply_tak_config(restart_tls=True)
+    req._send_ok({'ca': info}, status=201)
+
+
+@router.route('DELETE', '/api/v1/tak/certs/client', spec={
+    'summary': 'Remove the stored TAK client certificate',
+    'tags': ['TAK'],
+    'responses': {
+        '200': response_inline({'deleted': {'type': 'boolean'}}, 'Whether a stored certificate existed'),
+        '503': _err_resp('TAK engine not available'),
+    },
+})
+def api_tak_certs_client_delete(req: RequestHandler):
+    if _cot_engine is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'TAK engine not available')
+        return
+    deleted = _cot_engine.cert_store.delete_client()
+    _apply_tak_config(restart_tls=True)
+    req._send_ok({'deleted': deleted})
+
+
+@router.route('DELETE', '/api/v1/tak/certs/ca', spec={
+    'summary': 'Remove the stored TAK CA truststore',
+    'tags': ['TAK'],
+    'responses': {
+        '200': response_inline({'deleted': {'type': 'boolean'}}, 'Whether a stored truststore existed'),
+        '503': _err_resp('TAK engine not available'),
+    },
+})
+def api_tak_certs_ca_delete(req: RequestHandler):
+    if _cot_engine is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'TAK engine not available')
+        return
+    deleted = _cot_engine.cert_store.delete_ca()
+    _apply_tak_config(restart_tls=True)
+    req._send_ok({'deleted': deleted})
+
+
+# ---- enrollment --------------------------------------------------------------------
+
+@router.route('GET', '/api/v1/tak/enrollment', spec={
+    'summary': 'Certificate enrollment status',
+    'tags': ['TAK'],
+    'responses': {
+        '200': response_ref('TakEnrollmentStatus', 'Enrollment status ({"status": "disabled"} when not in use)'),
+        '503': _err_resp('TAK engine not available'),
+    },
+})
+def api_tak_enrollment_get(req: RequestHandler):
+    if _cot_engine is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'TAK engine not available')
+        return
+    mgr = _cot_engine.enrollment
+    req._send_ok(mgr.status() if mgr is not None else {'status': 'disabled'})
+
+
+@router.route('POST', '/api/v1/tak/enroll', spec={
+    'summary': 'Enroll for a TAK client certificate now',
+    'description': 'Requires the saved configuration to use TLS with the "enroll" client mode and '
+                   'an enrollment username and password. Waits up to 40 s for the attempt. A '
+                   'recent failure delays the next attempt (5 min, doubling to 1 h).',
+    'tags': ['TAK'],
+    'responses': {
+        '200': response_ref('TakEnrollmentStatus', 'Enrollment status after the attempt'),
+        '409': _err_resp('Saved configuration does not use certificate enrollment'),
+        '503': _err_resp('Engine unavailable or cryptography not installed'),
+    },
+})
+def api_tak_enroll(req: RequestHandler):
+    if _cot_engine is None or _db is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'TAK engine not available')
+        return
+    if not _require_crypto(req):
+        return
+    cfg, _warnings = tak_config.normalize(tak_config.read_raw(_require_db()))
+    if cfg.transport != 'tls' or cfg.tls_client_mode != 'enroll':
+        req._send_error(409, ErrorCode.CONFLICT,
+                        'Enrollment needs the TLS transport with the "Enroll with TAK Server" '
+                        'client certificate mode; save those settings first')
+        return
+    if not cfg.enroll_username or not cfg.enroll_password:
+        req._send_error(409, ErrorCode.CONFLICT,
+                        'Enter and save the enrollment username and password first')
+        return
+    mgr = _cot_engine.enrollment
+    if mgr is None or mgr.identity_key() != tak_enrollment.identity_key(cfg):
+        mgr = _temp_enrollment(cfg)
+    req._send_ok(mgr.enroll_now(40.0))
+
+
+# ---- data package ---------------------------------------------------------------------
+
+_PACKAGE_NEXT_STEP = {
+    'enrollment': 'Enter the enrollment username and password for this TAK Server, then Save.',
+    'certificate': 'Client certificate imported. Enable the TAK output and Save.',
+    'truststore_only': 'CA truststore imported. Choose a client certificate, then Save.',
+}
+
+
+@router.route('POST', '/api/v1/tak/package', spec={
+    'summary': 'Import a TAK data package (.zip)',
+    'description': 'Accepts an ATAK enrollment package, a certificate package or an iTAK '
+                   'package. The zip is read in memory (nothing is extracted). Connection '
+                   'settings and certificates are applied; the enable switch and enrollment '
+                   'credentials are never changed.',
+    'tags': ['TAK'],
+    'requestBody': json_body_inline(
+        {'data_b64': {'type': 'string', 'description': 'Base64 of the zip (max 2 MiB decoded)'},
+         'filename': {'type': 'string', 'description': 'Display name only (optional)'}},
+        required_props=['data_b64'], description='Data package upload'),
+    'responses': {
+        '200': response_ref('TakPackageResult', 'What was imported'),
+        '400': _err_resp('Invalid package or certificate (nothing is written)'),
+        '503': _err_resp('Engine unavailable or cryptography not installed'),
+    },
+})
+def api_tak_package(req: RequestHandler):
+    if _cot_engine is None:
+        req._send_error(503, ErrorCode.SERVICE_UNAVAILABLE, 'TAK engine not available')
+        return
+    if not _require_tak_db(req) or not _require_crypto(req):
+        return
+    if not isinstance(req.json_data, dict):
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, 'JSON object body required')
+        return
+    data = _decode_b64(req, req.json_data.get('data_b64'), 'data_b64', _MAX_PACKAGE_BYTES,
+                       'Package is too large (max 2 MiB)')
+    if data is None:
+        return
+    try:
+        pkg = parse_package(data)
+        # Normalise everything first: any failure leaves nothing written.
+        ca_mat = tak_certs.normalize_ca(pkg.ca_bytes, pkg.ca_password) if pkg.ca_bytes else None
+        client_mat = (tak_certs.normalize_client(pkg.client_bytes, None, pkg.client_password)
+                      if pkg.client_bytes else None)
+    except (PackageError, tak_certs.CertError) as exc:
+        req._send_error(400, ErrorCode.VALIDATION_ERROR, str(exc))
+        return
+
+    patch: Dict[str, Any] = {
+        'tak_transport': pkg.transport, 'cot_address': pkg.host, 'cot_port': pkg.port,
+        'tak_tls_verify': True, 'tak_tls_check_hostname': True,
+    }
+    if ca_mat is not None:
+        patch['tak_tls_ca_mode'] = 'upload'
+    if pkg.kind == 'enrollment':
+        patch['tak_tls_client_mode'] = 'enroll'
+    elif pkg.kind == 'certificate':
+        patch['tak_tls_client_mode'] = 'upload'
+    merged = tak_config.merge_patch(tak_config.read_raw(_require_db()), patch)
+    errors = [e for e in tak_config.validate(merged) if e['field'] in patch]
+    if errors:
+        req._send_error(400, ErrorCode.VALIDATION_ERROR,
+                        'The package contains a setting that is not accepted: %s' % errors[0]['message'])
+        return
+
+    store = _cot_engine.cert_store
+    filename = _display_filename(req.json_data.get('filename'))
+    imported: Dict[str, Any] = {'ca': None, 'client': None}
+    if ca_mat is not None:
+        store.store_ca(ca_mat, source='package', filename=pkg.ca_name or filename,
+                       fmt=_file_format(pkg.ca_bytes))
+        imported['ca'] = {'count': ca_mat.count, 'subjects': ca_mat.subjects}
+    if client_mat is not None:
+        store.store_client(client_mat, source='package', filename=pkg.client_name or filename,
+                           fmt=_file_format(pkg.client_bytes))
+        imported['client'] = {'subject': client_mat.subject,
+                              'not_after': tak_certs.iso_z(client_mat.not_after)}
+    for key in patch:
+        _require_db().set_setting(key, merged[key])
+    _apply_tak_config(restart_tls=True)
+    req._send_ok({
+        'kind': pkg.kind,
+        'description': pkg.description,
+        'host': pkg.host, 'port': pkg.port, 'transport': pkg.transport,
+        'imported': imported,
+        'enroll_required': pkg.kind == 'enrollment',
+        'next_step': _PACKAGE_NEXT_STEP[pkg.kind],
+        'warnings': list(pkg.warnings),
+        'settings': tak_config.masked(tak_config.read_raw(_require_db())),
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -2703,7 +3254,13 @@ _SETTINGS_WRITABLE = frozenset({
     'es_dashboards_username', 'es_dashboards_password', 'es_dashboards_api_key',
     'es_dashboards_verify_tls', 'es_index_prefix', 'es_shards', 'es_replicas',
     'es_ilm_policy', 'es_bulk_size', 'es_flush_interval',
-})
+}) | frozenset(tak_config.TAK_KEYS)
+
+# Secret settings (value "(set)" is the mask the API returns: writing it back keeps the stored value).
+_SECRET_SETTING_KEYS = frozenset({
+    'auth_token', 'alert_api_token', 'es_password', 'es_api_key',
+    'es_dashboards_password', 'es_dashboards_api_key',
+}) | tak_config.SECRET_KEYS
 
 
 @router.route('GET', '/api/v1/settings', spec={
@@ -2758,10 +3315,24 @@ def api_settings_put(req: RequestHandler):
         )
         return
 
+    # TAK keys are validated together, against the stored values, before anything
+    # is written (a bad TAK value must not leave other keys half-applied).
+    tak_merged: Dict[str, str] = {}
+    if any(k in tak_config.TAK_KEYS for k in req.json_data):
+        tak_merged = tak_config.merge_patch(tak_config.read_raw(_require_db()), req.json_data)
+        errors = tak_config.validate(tak_merged)
+        if errors:
+            _send_tak_validation_error(req, errors)
+            return
+
     restart_required = False
     for key, value in req.json_data.items():
+        if key in _SECRET_SETTING_KEYS and value == tak_config.SECRET_MASK:
+            continue        # the masked placeholder: keep the stored secret
         # Normalise value to string for DB storage
-        if isinstance(value, bool):
+        if key in tak_merged:
+            str_value = tak_merged[key]
+        elif isinstance(value, bool):
             str_value = 'true' if value else 'false'
         else:
             str_value = str(value)
@@ -2789,14 +3360,10 @@ def api_settings_put(req: RequestHandler):
     if _alert_engine and any(k.startswith('alert_') for k in data):
         _alert_engine.reload_config()
 
-    # Apply CoT settings live if any CoT-related key changed.
-    if any(k in data for k in ('cot_enabled', 'cot_address', 'cot_port')):
-        if _cot_engine:
-            _cot_engine.configure(
-                enabled=_require_db().get_setting_str('cot_enabled', 'false').lower() == 'true',
-                address=_require_db().get_setting_str('cot_address', '239.2.3.1'),
-                port=int(_require_db().get_setting_str('cot_port', '6969')),
-            )
+    # Apply TAK settings live if any TAK-related key changed (an unchanged
+    # effective config is a no-op inside the engine).
+    if any(k in tak_config.TAK_KEYS for k in data):
+        _apply_tak_config()
 
     # Apply WiFi SSID scanner settings live if any related key changed.
     if any(k in data for k in ('wifi_ssid_enabled', 'wifi_ssid_agent_url', 'wifi_ssid_agent_interface', 'wifi_ssid_poll_interval')):

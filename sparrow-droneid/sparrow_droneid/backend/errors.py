@@ -13,6 +13,7 @@ class ErrorCode:
     FORBIDDEN           = 'FORBIDDEN'               # 403 — valid auth but insufficient rights
     NOT_FOUND           = 'NOT_FOUND'               # 404 — resource does not exist
     CONFLICT            = 'CONFLICT'                # 409 — request conflicts with current state
+    PAYLOAD_TOO_LARGE   = 'PAYLOAD_TOO_LARGE'       # 413 — request body exceeds the size cap
     INTERNAL_ERROR      = 'INTERNAL_ERROR'          # 500 — unexpected server-side failure
     BAD_GATEWAY         = 'BAD_GATEWAY'             # 502 — upstream / remote dependency failed
     SERVICE_UNAVAILABLE = 'SERVICE_UNAVAILABLE'     # 503 — engine or subsystem not ready

@@ -26,7 +26,8 @@ from backend.database import get_db
 from backend.droneid_engine import DroneIDEngine, CaptureManager, check_prerequisites
 from backend.gps_engine import GPSEngine
 from backend.alert_engine import AlertEngine
-from backend.cot_engine import CotEngine
+from backend.tak import config as tak_config
+from backend.tak.engine import TakEngine
 from backend.elasticsearch_engine import ElasticsearchEngine, _parse_iso_utc
 from backend.cert_manager import CertManager
 from backend.wifi_ssid_scanner import WifiSsidScanner
@@ -193,15 +194,15 @@ class SparrowDroneID:
         # Alert engine
         self.alert_engine = AlertEngine(db, gps_engine=self.gps_engine)
 
-        # CoT engine
-        self.cot_engine = CotEngine()
-        cot_enabled = db.get_setting('cot_enabled', 'false').lower() == 'true'
-        if cot_enabled:
-            self.cot_engine.configure(
-                enabled=True,
-                address=db.get_setting('cot_address', '239.2.3.1'),
-                port=int(db.get_setting('cot_port', '6969')),
-            )
+        # TAK / Cursor-on-Target engine
+        self.cot_engine = TakEngine(
+            cert_dir=os.path.join(self.data_dir, 'tak_certs'),
+            drone_source=self.droneid_engine.snapshot_for_output,
+            gps_engine=self.gps_engine,
+        )
+        tak_cfg, tak_warnings = tak_config.normalize(tak_config.read_raw(db))
+        self.cot_engine.set_config_warnings(tak_warnings)
+        self.cot_engine.configure(tak_cfg)
 
         # Elasticsearch engine
         self.es_engine = ElasticsearchEngine()
@@ -225,11 +226,10 @@ class SparrowDroneID:
                 flush_interval=int(db.get_setting('es_flush_interval', '5')),
             )
 
-        # Wire detection callback: alert engine + CoT engine + Elasticsearch engine
+        # Wire detection callback: alert engine + TAK engine + Elasticsearch engine
         def on_detection(device):
             self.alert_engine.evaluate(device)
-            if self.cot_engine.enabled:
-                self.cot_engine.send_event(device)
+            self.cot_engine.notify_detection()
             if self.es_engine and self.es_engine._enabled:
                 rx_lat, rx_lon, rx_alt = self.gps_engine.get_receiver_position()
                 key = device.get_key()

@@ -16,6 +16,7 @@ from typing import Optional, List, Dict, Tuple
 from contextlib import contextmanager
 
 from .models import DroneIDDevice, AlertEvent, AlertRule, DEFAULT_ALERT_RULES
+from .tak import config as tak_config
 import json
 
 
@@ -252,6 +253,19 @@ class Database:
             'wifi_ssid_poll_interval': '20',
             'wifi_ssid_patterns': '',   # seeded from drone_ssid_patterns.json on first startup
         }
+        # TAK output (backend/tak/config.py owns the keys and defaults). An install
+        # that already had a cot_port row but no tak_transport row is an upgrade
+        # from the multicast-only CoT output, which used TTL 32: keep that.
+        cursor.execute("SELECT 1 FROM settings WHERE key='cot_port'")
+        had_cot_port = cursor.fetchone() is not None
+        cursor.execute("SELECT 1 FROM settings WHERE key='tak_transport'")
+        had_tak = cursor.fetchone() is not None
+        if had_cot_port and not had_tak:
+            cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+                           ('tak_multicast_ttl', '32'))
+        for key, value in tak_config.DEFAULTS.items():
+            if key.startswith('tak_'):
+                defaults[key] = value
         for key, value in defaults.items():
             cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
 

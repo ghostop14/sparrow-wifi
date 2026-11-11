@@ -43,7 +43,8 @@ const Api = (() => {
       if (!resp.ok) {
         // OpenAPI error format: { error: { code, message } }
         const err = data.error || {};
-        throw new ApiError(err.code || `HTTP_${resp.status}`, err.message || `HTTP ${resp.status}`);
+        throw new ApiError(err.code || `HTTP_${resp.status}`, err.message || `HTTP ${resp.status}`,
+          err.detail !== undefined ? err.detail : null);
       }
 
       return data;
@@ -223,6 +224,60 @@ const Api = (() => {
     return put('/cot/config', config);
   }
 
+  // ---- TAK ----
+
+  function getTakStatus() {
+    return get('/tak/status');
+  }
+
+  function getTakConfig() {
+    return get('/tak/config');
+  }
+
+  function putTakConfig(body) {
+    return put('/tak/config', body);
+  }
+
+  function testTak(body) {
+    return post('/tak/test', body);
+  }
+
+  function getTakInterfaces() {
+    return get('/tak/interfaces');
+  }
+
+  function getTakCerts() {
+    return get('/tak/certs');
+  }
+
+  function uploadTakClientCert(body) {
+    return post('/tak/certs/client', body);
+  }
+
+  function uploadTakCa(body) {
+    return post('/tak/certs/ca', body);
+  }
+
+  function deleteTakClientCert() {
+    return request('DELETE', '/tak/certs/client');
+  }
+
+  function deleteTakCa() {
+    return request('DELETE', '/tak/certs/ca');
+  }
+
+  function getTakEnrollment() {
+    return get('/tak/enrollment');
+  }
+
+  function takEnrollNow() {
+    return post('/tak/enroll', {});
+  }
+
+  function importTakPackage(body) {
+    return post('/tak/package', body);
+  }
+
   // ---- Data maintenance ----
 
   function getDataStats() {
@@ -331,9 +386,10 @@ const Api = (() => {
   // ---- Error class ----
 
   class ApiError extends Error {
-    constructor(code, message) {
+    constructor(code, message, detail = null) {
       super(message);
       this.code = code;
+      this.detail = detail;
       this.name = 'ApiError';
     }
   }
@@ -371,6 +427,19 @@ const Api = (() => {
     getGps,
     getCotStatus,
     putCotConfig,
+    getTakStatus,
+    getTakConfig,
+    putTakConfig,
+    testTak,
+    getTakInterfaces,
+    getTakCerts,
+    uploadTakClientCert,
+    uploadTakCa,
+    deleteTakClientCert,
+    deleteTakCa,
+    getTakEnrollment,
+    takEnrollNow,
+    importTakPackage,
     getDataStats,
     purgeData,
     purgeTiles,
