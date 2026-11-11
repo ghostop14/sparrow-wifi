@@ -16,6 +16,7 @@ const SettingsManager = (() => {
   let _takPollTimer = null;
   let _takPollBusy = false;
   let _takPollGen = 0;
+  let _takLastState = null;
 
   // ---- Public: called from app.js init ----
   function init() {
@@ -57,6 +58,7 @@ const SettingsManager = (() => {
     if (!container) return;
 
     _stopTakPolling();
+    _takLastState = null;
 
     // Show loading state
     container.innerHTML = `
@@ -1935,6 +1937,22 @@ const SettingsManager = (() => {
     return isNaN(d.getTime()) ? String(iso) : d.toLocaleString();
   }
 
+  // <time> element for a timestamp (text is the local rendering).
+  function _timeHtml(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return _esc(iso);
+    return `<time datetime="${_esc(d.toISOString())}">${_esc(_fmtTime(iso))}</time>`;
+  }
+
+  // Colour + word cue for certificate expiry (never colour alone).
+  function _takExpiryCue(days, expired) {
+    if (expired || days < 0) return { cls: 'tak-days-bad', word: 'expired', text: 'expired' };
+    if (days < 14) return { cls: 'tak-days-bad', word: 'expiring', text: `${days} days left, expiring` };
+    if (days < 30) return { cls: 'tak-days-warn', word: 'expires soon', text: `${days} days left, expires soon` };
+    return { cls: '', word: '', text: `${days} days left` };
+  }
+
   function _takSecretInput(id, key, label, t, extraAttrs) {
     const isSet = t[key] === '(set)';
     return `
@@ -1959,16 +1977,14 @@ const SettingsManager = (() => {
     if (!info) return `<div class="text-muted">${_esc(emptyText)}</div>`;
     let days = '';
     if (typeof info.days_left === 'number') {
-      const cls = (info.expired || info.days_left < 14) ? 'tak-days-bad' : (info.days_left < 30 ? 'tak-days-warn' : '');
-      days = info.expired
-        ? ` <span class="tak-days-bad">(expired)</span>`
-        : ` <span class="${cls}">(${_esc(info.days_left)} days left)</span>`;
+      const cue = _takExpiryCue(info.days_left, info.expired);
+      days = ` <span class="${cue.cls}">(${_esc(cue.text)})</span>`;
     }
     const src = [info.source, info.filename].filter(Boolean).map(_esc).join(' / ');
     return `
       <div><strong>${_esc(info.subject || '')}</strong></div>
       ${info.issuer ? `<div class="text-muted">Issuer: ${_esc(info.issuer)}</div>` : ''}
-      ${info.not_after ? `<div>Expires: ${_esc(_fmtTime(info.not_after))}${days}</div>` : ''}
+      ${info.not_after ? `<div>Expires: ${_timeHtml(info.not_after)}${days}</div>` : ''}
       ${src ? `<div class="text-muted">Source: ${src}</div>` : ''}`;
   }
 
@@ -1979,7 +1995,7 @@ const SettingsManager = (() => {
     return `
       <div><strong>${_esc(info.count)}</strong> CA certificate${info.count === 1 ? '' : 's'}</div>
       ${subjects ? `<ul class="mb-1 ps-3">${subjects}</ul>` : ''}
-      ${info.earliest_not_after ? `<div>Earliest expiry: ${_esc(_fmtTime(info.earliest_not_after))}</div>` : ''}
+      ${info.earliest_not_after ? `<div>Earliest expiry: ${_timeHtml(info.earliest_not_after)}</div>` : ''}
       ${src ? `<div class="text-muted">Source: ${src}</div>` : ''}`;
   }
 
@@ -2023,7 +2039,7 @@ const SettingsManager = (() => {
                       Have a TAK data package (.zip)? Import it in <strong>Data Package</strong> below,
                       then <strong>Test Connection</strong> and <strong>Save</strong>.
                     </div>
-                    <button type="button" class="btn-close btn-close-white ms-2 flex-shrink-0" id="btn_tak_dismiss_banner" aria-label="Dismiss" style="font-size:10px;"></button>
+                    <button type="button" class="btn-close tak-banner-close ms-2 flex-shrink-0" id="btn_tak_dismiss_banner" aria-label="Dismiss" style="font-size:10px;"></button>
                   </div>`}
 
                   ${_takSwitch('s_tak_enabled', 'Enable TAK output', t.cot_enabled)}
@@ -2043,6 +2059,7 @@ const SettingsManager = (() => {
                     <label class="form-label" for="s_tak_host" id="tak_host_label">${_esc(hostUi.label)}</label>
                     <input type="text" class="form-control form-control-sm" id="s_tak_host"
                       value="${_esc(t.cot_address || '')}" placeholder="${_esc(hostUi.placeholder)}" style="max-width:300px;">
+                    <small class="text-muted" id="tak_host_hint" style="display:none;">ATAK default: 239.2.3.1 : 6969</small>
                   </div>
 
                   <div class="mb-3">
@@ -2085,6 +2102,7 @@ const SettingsManager = (() => {
                     <button class="btn btn-sm btn-outline-secondary" id="btn_tak_test" type="button">
                       <i class="bi bi-plug me-1"></i>Test Connection
                     </button>
+                    <span class="badge bg-secondary tak-state-badge" id="tak_state_badge" title="Live connection state">Status\u2026</span>
                     <span class="small text-muted" id="tak_test_status" role="status" aria-live="polite"></span>
                   </div>
                   <div class="small mt-1" id="tak_test_details"></div>
@@ -2093,13 +2111,21 @@ const SettingsManager = (() => {
               </div>
             </div>
 
-            <!-- ===== Card 2: Live Status ===== -->
+            <!-- ===== Card 2: Data Package ===== -->
             <div class="col-lg-6">
               <div class="card settings-card mb-3">
-                <div class="card-header"><i class="bi bi-activity me-2"></i>Live Status</div>
+                <div class="card-header"><i class="bi bi-file-earmark-zip me-2"></i>Data Package</div>
                 <div class="card-body">
-                  <div id="tak_status_warnings"></div>
-                  <div id="tak_status_body" aria-live="off"><span class="text-muted small">Loading status…</span></div>
+                  <div class="mb-2">
+                    <label class="form-label" for="s_tak_pkg_file">TAK data package (.zip)</label>
+                    <input type="file" class="form-control form-control-sm" id="s_tak_pkg_file" accept=".zip">
+                  </div>
+                  <button class="btn btn-sm btn-outline-secondary" id="btn_tak_pkg_import" type="button">
+                    <i class="bi bi-box-arrow-in-down me-1"></i>Import
+                  </button>
+                  <small class="text-muted">Imports an ATAK enrollment package, a certificate package, or an iTAK
+                    package. Settings are applied immediately; usernames and passwords are never in packages.</small>
+                  <div class="tak-pkg-result small mt-2" id="tak_pkg_result" role="status" aria-live="polite"></div>
                 </div>
               </div>
             </div>
@@ -2263,21 +2289,14 @@ const SettingsManager = (() => {
               </div>
             </div>
 
-            <!-- ===== Card 4: Data Package ===== -->
+            <!-- ===== Card 4: Live Status ===== -->
             <div class="col-lg-6">
               <div class="card settings-card mb-3">
-                <div class="card-header"><i class="bi bi-file-earmark-zip me-2"></i>Data Package</div>
+                <div class="card-header"><i class="bi bi-activity me-2"></i>Live Status</div>
                 <div class="card-body">
-                  <div class="mb-2">
-                    <label class="form-label" for="s_tak_pkg_file">TAK data package (.zip)</label>
-                    <input type="file" class="form-control form-control-sm" id="s_tak_pkg_file" accept=".zip">
-                  </div>
-                  <button class="btn btn-sm btn-outline-secondary" id="btn_tak_pkg_import" type="button">
-                    <i class="bi bi-box-arrow-in-down me-1"></i>Import
-                  </button>
-                  <small class="text-muted">Imports an ATAK enrollment package, a certificate package, or an iTAK
-                    package. Settings are applied immediately; usernames and passwords are never in packages.</small>
-                  <div class="tak-pkg-result small mt-2" id="tak_pkg_result" role="status" aria-live="polite"></div>
+                  <span class="visually-hidden" id="tak_state_announcer" role="status" aria-live="polite"></span>
+                  <div id="tak_status_warnings"></div>
+                  <div id="tak_status_body" aria-live="off"><span class="text-muted small">Loading status…</span></div>
                 </div>
               </div>
             </div>
@@ -2323,6 +2342,15 @@ const SettingsManager = (() => {
                       <small class="text-muted">Blank = auto</small>
                     </div>
                   </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ===== Card 6: Identity ===== -->
+            <div class="col-lg-6">
+              <div class="card settings-card mb-3">
+                <div class="card-header"><i class="bi bi-fingerprint me-2"></i>Identity</div>
+                <div class="card-body">
 
                   <div class="mb-3">
                     <label class="form-label" for="s_tak_station">Station name</label>
@@ -2346,7 +2374,7 @@ const SettingsManager = (() => {
               </div>
             </div>
 
-            <!-- ===== Card 6: Timing ===== -->
+            <!-- ===== Card 7: Timing ===== -->
             <div class="col-lg-6">
               <div class="card settings-card mb-3">
                 <div class="card-header"><i class="bi bi-stopwatch me-2"></i>Timing</div>
@@ -2502,33 +2530,91 @@ const SettingsManager = (() => {
     return errs;
   }
 
-  function _clearTakErrors() {
+  function _clearTakFieldError(el) {
+    if (!el) return;
+    el.classList.remove('is-invalid');
+    el.removeAttribute('aria-invalid');
+    if (el.dataset.takDescribedby !== undefined) {
+      if (el.dataset.takDescribedby) el.setAttribute('aria-describedby', el.dataset.takDescribedby);
+      else el.removeAttribute('aria-describedby');
+      delete el.dataset.takDescribedby;
+    }
+    const fb = _el('tak_err_' + el.id);
+    if (fb) fb.remove();
+  }
+
+  // Clears every TAK validation mark, or only the one for `field`.
+  function _clearTakErrors(field) {
     const pane = _el('takTabPane');
     if (!pane) return;
-    pane.querySelectorAll('.is-invalid').forEach(n => n.classList.remove('is-invalid'));
+    if (field) {
+      _clearTakFieldError(_el(_TAK_FIELD_IDS[field]));
+      return;
+    }
+    pane.querySelectorAll('.is-invalid, [data-tak-describedby]').forEach(_clearTakFieldError);
     pane.querySelectorAll('.tak-field-error').forEach(n => n.remove());
   }
 
-  // Marks fields with is-invalid + feedback. Returns the first message shown.
-  function _showTakErrors(errors) {
-    let first = null;
+  // Marks fields with is-invalid + feedback (aria-invalid, aria-describedby).
+  // opts.focus: move focus to the first invalid field; opts.alert: role=alert
+  // on the first message. Returns { first, count } (first message shown).
+  function _showTakErrors(errors, opts) {
+    const o = Object.assign({ focus: true, alert: true }, opts || {});
+    let first = null, firstEl = null, count = 0;
     for (const e of errors || []) {
       const id = _TAK_FIELD_IDS[e.field];
       const el = id && _el(id);
       if (!el) continue;
-      if (first === null) first = e.message;
+      _clearTakFieldError(el);
+      count++;
+      if (first === null) { first = e.message; firstEl = el; }
       el.classList.add('is-invalid');
       const fb = document.createElement('div');
       fb.className = 'invalid-feedback d-block tak-field-error';
+      fb.id = 'tak_err_' + id;
+      if (el === firstEl && o.alert) fb.setAttribute('role', 'alert');
       fb.textContent = e.message;       // textContent: server strings stay inert
       el.insertAdjacentElement('afterend', fb);
+      if (/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) {
+        el.setAttribute('aria-invalid', 'true');
+        el.dataset.takDescribedby = el.getAttribute('aria-describedby') || '';
+        el.setAttribute('aria-describedby', (el.dataset.takDescribedby + ' ' + fb.id).trim());
+      }
     }
-    return first;
+    if (o.focus && firstEl) {
+      const target = /^(INPUT|SELECT|TEXTAREA)$/.test(firstEl.tagName)
+        ? firstEl : firstEl.querySelector('input,select,textarea');
+      if (target && target.offsetParent !== null) {
+        target.focus({ preventScroll: true });
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
+    }
+    return { first, count };
   }
 
+  // Resolves once the TAK pane is the visible tab (so focus can land in it).
   function _focusTakTab() {
-    const tab = _el('takTab-tab');
-    if (tab) bootstrap.Tab.getOrCreateInstance(tab).show();
+    return new Promise(resolve => {
+      const tab = _el('takTab-tab');
+      if (!tab) { resolve(); return; }
+      if (tab.classList.contains('active')) { resolve(); return; }
+      tab.addEventListener('shown.bs.tab', () => resolve(), { once: true });
+      bootstrap.Tab.getOrCreateInstance(tab).show();
+    });
+  }
+
+  // Host validity for one transport; '' means valid (or empty).
+  function _takHostError(host, transport) {
+    if (!host) return '';
+    const errs = _validateTakClient({ cot_address: host, tak_transport: transport });
+    return errs.length ? errs[0].message : '';
+  }
+
+  function _validateTakHost() {
+    _clearTakErrors('cot_address');
+    const host = _el('s_tak_host')?.value.trim() || '';
+    const msg = _takHostError(host, _el('s_tak_transport')?.value);
+    if (msg) _showTakErrors([{ field: 'cot_address', message: msg }], { focus: false, alert: true });
   }
 
   // ---- TAK: UI state ----
@@ -2539,6 +2625,8 @@ const SettingsManager = (() => {
     if (label) label.textContent = ui.label;
     const host = _el('s_tak_host');
     if (host) host.placeholder = ui.placeholder;
+    const hint = _el('tak_host_hint');
+    if (hint) hint.style.display = transport === 'udp_multicast' ? '' : 'none';
     const show = (id, on) => { const n = _el(id); if (n) n.style.display = on ? '' : 'none'; };
     show('tak_mcast_block', transport === 'udp_multicast');
     show('tak_auth_block', transport === 'tcp' || transport === 'tls');
@@ -2639,15 +2727,35 @@ const SettingsManager = (() => {
 
   // ---- TAK: live status ----
 
+  const _TAK_STATES = {
+    disabled:   { cls: 'bg-secondary', text: 'Disabled' },
+    connecting: { cls: 'bg-warning text-dark', text: 'Connecting' },
+    connected:  { cls: 'tak-badge-ok', text: 'Connected' },
+    ready:      { cls: 'tak-badge-ok', text: 'Ready' },
+    error:      { cls: 'bg-danger', text: 'Error' },
+  };
+
+  function _takStateInfo(state) {
+    return _TAK_STATES[state] || { cls: 'bg-secondary', text: state || 'unknown' };
+  }
+
+  // Mirrors the live state into the compact badge beside Test Connection and
+  // announces ONLY state changes through the hidden live region.
+  function _updateTakStateUi(state) {
+    const info = state === null ? { cls: 'bg-secondary', text: 'Status unavailable' } : _takStateInfo(state);
+    const b = _el('tak_state_badge');
+    if (b) { b.className = `badge tak-state-badge ${info.cls}`; b.textContent = info.text; }
+    if (state !== null && state !== _takLastState) {
+      const a = _el('tak_state_announcer');
+      if (a) a.textContent = `TAK output ${info.text}`;
+    }
+    if (state !== null) _takLastState = state;
+  }
+
   function _renderTakStatus(st) {
     const badge = (cls, text) => `<span class="badge ${cls}">${_esc(text)}</span>`;
-    const stateMap = {
-      disabled:   badge('bg-secondary', 'Disabled'),
-      connecting: badge('bg-warning text-dark', 'Connecting'),
-      connected:  badge('bg-success', 'Connected'),
-      ready:      badge('bg-success', 'Ready'),
-      error:      badge('bg-danger', 'Error'),
-    };
+    const si = _takStateInfo(st.state);
+    const stateMap = { [st.state]: badge(si.cls, si.text) };
     const rows = [];
     const row = (k, vHtml) => rows.push(`<dt>${_esc(k)}</dt><dd>${vHtml}</dd>`);
     const dash = '<span class="text-muted">—</span>';
@@ -2655,7 +2763,7 @@ const SettingsManager = (() => {
 
     row('State', stateMap[st.state] || badge('bg-secondary', st.state || 'unknown'));
     row('Destination', val(st.destination));
-    row('Connected since', st.connected_since ? _esc(_fmtTime(st.connected_since)) : dash);
+    row('Connected since', st.connected_since ? _timeHtml(st.connected_since) : dash);
     row('Sent', val(st.sent));
     row('Send errors', val(st.send_errors));
     row('Reconnects', val(st.reconnects));
@@ -2669,9 +2777,9 @@ const SettingsManager = (() => {
     const errAt = st.last_error_at ? new Date(st.last_error_at).getTime() : NaN;
     const connAt = st.connected_since ? new Date(st.connected_since).getTime() : NaN;
     const errIsOld = st.connected && !isNaN(errAt) && !isNaN(connAt) && errAt < connAt;
-    row('Last error', st.last_error
+    row(errIsOld ? 'Last error (before this connection)' : 'Last error', st.last_error
       ? (st.last_error_at
-          ? `<span class="${errIsOld ? 'tak-err-old' : 'tak-err'}">${_esc(_fmtTime(st.last_error_at))} &mdash; ${_esc(st.last_error)}</span>`
+          ? `<span class="${errIsOld ? 'tak-err-old' : 'tak-err'}">${_timeHtml(st.last_error_at)} &mdash; ${_esc(st.last_error)}</span>`
           : `<span class="${errIsOld ? 'tak-err-old' : 'tak-err'}">${_esc(st.last_error)}</span>`)
       : dash);
 
@@ -2681,11 +2789,11 @@ const SettingsManager = (() => {
         const dl = st.tls.client_days_left;
         let tag = '';
         if (typeof dl === 'number') {
-          tag = dl < 0 ? ' <span class="tak-days-bad">(expired)</span>'
-            : ` <span class="${dl < 14 ? 'tak-days-bad' : (dl < 30 ? 'tak-days-warn' : '')}">(${_esc(dl)} days left)</span>`;
+          const cue = _takExpiryCue(dl, false);
+          tag = ` <span class="${cue.cls}">(${_esc(cue.text)})</span>`;
         }
         cc = `${_esc(st.tls.client_subject)}` +
-          (st.tls.client_not_after ? `<br><span class="text-muted">expires ${_esc(_fmtTime(st.tls.client_not_after))}</span>${tag}` : '');
+          (st.tls.client_not_after ? `<br><span class="text-muted">expires ${_timeHtml(st.tls.client_not_after)}</span>${tag}` : '');
       }
       row('Client cert', cc);
       if (st.tls.version) row('TLS', `${_esc(st.tls.version)}${st.tls.cipher ? ' / ' + _esc(st.tls.cipher) : ''}`);
@@ -2693,8 +2801,8 @@ const SettingsManager = (() => {
     if (st.enrollment) {
       const e = st.enrollment;
       row('Enrollment', `${_esc(e.status || '')}` +
-        (e.last_success_at ? `<br><span class="text-muted">last success ${_esc(_fmtTime(e.last_success_at))}</span>` : '') +
-        (e.next_attempt_at ? `<br><span class="text-muted">next attempt ${_esc(_fmtTime(e.next_attempt_at))}</span>` : '') +
+        (e.last_success_at ? `<br><span class="text-muted">last success ${_timeHtml(e.last_success_at)}</span>` : '') +
+        (e.next_attempt_at ? `<br><span class="text-muted">next attempt ${_timeHtml(e.next_attempt_at)}</span>` : '') +
         (e.last_error ? `<br><span class="tak-err">${_esc(e.last_error)}</span>` : ''));
     }
     return `<dl class="tak-status-grid mb-0">${rows.join('')}</dl>`;
@@ -2716,12 +2824,14 @@ const SettingsManager = (() => {
       const st = await Api.getTakStatus();
       if (gen !== _takPollGen || !_el('tak_status_body')) return;   // stopped meanwhile
       _el('tak_status_body').innerHTML = _renderTakStatus(st);
+      _updateTakStateUi(st.state);
       const w = _el('tak_status_warnings');
       if (w) w.innerHTML = _renderTakWarnings(st);
     } catch (_) {
       if (gen === _takPollGen) {
         const b = _el('tak_status_body');
         if (b) b.innerHTML = '<span class="text-muted small">Status unavailable</span>';
+        _updateTakStateUi(null);
       }
     } finally {
       _takPollBusy = false;
@@ -2748,7 +2858,7 @@ const SettingsManager = (() => {
     if (d.transport) parts.push(`${_esc(d.transport)}${d.destination ? ' ' + _esc(d.destination) : ''}`);
     if (d.tls_version) parts.push(`${_esc(d.tls_version)}${d.cipher ? ' / ' + _esc(d.cipher) : ''}`);
     if (d.server_subject) parts.push(`server ${_esc(d.server_subject)}`);
-    if (d.client_subject) parts.push(`client cert ${_esc(d.client_subject)}${d.client_not_after ? ' (expires ' + _esc(_fmtTime(d.client_not_after)) + ')' : ''}`);
+    if (d.client_subject) parts.push(`client cert ${_esc(d.client_subject)}${d.client_not_after ? ' (expires ' + _timeHtml(d.client_not_after) + ')' : ''}`);
     if (d.enrollment) parts.push(`enrollment: ${_esc(d.enrollment)}`);
     if (r.duration_ms != null) parts.push(`${_esc(r.duration_ms)} ms`);
     return parts.length ? `<span class="text-muted">${parts.join(' &middot; ')}</span>` : '';
@@ -2822,7 +2932,17 @@ const SettingsManager = (() => {
       }
       trSel.dataset.prev = next;
       _applyTakTransportUi(next);
+      // A host that is not valid for the new transport is cleared so the
+      // placeholder (e.g. 239.2.3.1 for multicast) shows; otherwise re-check it.
+      const hostEl = _el('s_tak_host');
+      if (hostEl) {
+        _clearTakErrors('cot_address');
+        if (hostEl.value.trim() && _takHostError(hostEl.value.trim(), next)) hostEl.value = '';
+        else _validateTakHost();
+      }
     });
+    _el('s_tak_host')?.addEventListener('change', _validateTakHost);
+    _el('s_tak_host')?.addEventListener('blur', _validateTakHost);
 
     _el('tak_client_mode_group')?.addEventListener('change', _applyTakModeUi);
     _el('tak_ca_mode_group')?.addEventListener('change', _applyTakModeUi);
@@ -2854,8 +2974,9 @@ const SettingsManager = (() => {
     ['s_tak_send_interval', 's_tak_refresh_interval', 's_tak_stale_after', 's_tak_delete_after'].forEach(id => {
       _el(id)?.addEventListener('input', () => {
         _updateTakTimingHint();
-        _clearTakErrors();
-        _showTakErrors(_validateTakClient(_readTakValues()).filter(e => _TAK_TIMING_KEYS.includes(e.field)));
+        _TAK_TIMING_KEYS.forEach(k => _clearTakErrors(k));
+        _showTakErrors(_validateTakClient(_readTakValues()).filter(e => _TAK_TIMING_KEYS.includes(e.field)),
+          { focus: false, alert: false });
       });
     });
 
@@ -2869,8 +2990,8 @@ const SettingsManager = (() => {
       const body = _collectTakFields();
       const errs = _validateTakClient(body);
       if (errs.length) {
-        const first = _showTakErrors(errs);
-        _setInline(statusEl, first, 'text-danger');
+        const r = _showTakErrors(errs);           // focuses + scrolls to the first invalid field
+        _setInline(statusEl, r.count === 1 ? 'Fix the highlighted field' : `Fix the ${r.count} highlighted fields`, 'text-danger');
         return;
       }
       const done = _setBusy(btn, '<i class="bi bi-hourglass-split me-1"></i>Testing…');
@@ -2885,8 +3006,12 @@ const SettingsManager = (() => {
         if (detailsEl) detailsEl.innerHTML = _takTestDetailsHtml(r);
         if (r.details && r.details.enrollment === 'enrolled') _refreshTakCerts();
       } catch (e) {
-        if (e.detail && e.detail.errors) _showTakErrors(e.detail.errors);
-        _setInline(statusEl, e.message || 'Test failed', 'text-danger');
+        if (e.detail && e.detail.errors) {
+          const r = _showTakErrors(e.detail.errors);
+          _setInline(statusEl, r.count === 1 ? 'Fix the highlighted field' : `Fix the ${r.count} highlighted fields`, 'text-danger');
+        } else {
+          _setInline(statusEl, e.message || 'Test failed', 'text-danger');
+        }
       }
       done();
     });
@@ -3152,9 +3277,9 @@ const SettingsManager = (() => {
       const takBody = _collectTakFields();
       const takErrs = _validateTakClient(takBody);
       if (takErrs.length) {
-        _focusTakTab();
-        const first = _showTakErrors(takErrs);
-        Utils.toast(_esc(first || 'Invalid TAK settings'), 'danger');
+        await _focusTakTab();
+        const r = _showTakErrors(takErrs);
+        Utils.toast(_esc(r.first || 'Invalid TAK settings'), 'danger');
         return;
       }
       Object.assign(changes, takBody);
@@ -3203,10 +3328,10 @@ const SettingsManager = (() => {
         ? e.detail.errors.filter(x => x && _TAK_FIELD_IDS[x.field]) : [];
       if (e && e.code === 'VALIDATION_ERROR' && takErrs.length) {
         // Keep the modal open on the TAK tab with the offending fields marked
-        _focusTakTab();
+        await _focusTakTab();
         _clearTakErrors();
-        const first = _showTakErrors(takErrs);
-        Utils.toast(_esc(first || e.message), 'danger');
+        const r = _showTakErrors(takErrs);
+        Utils.toast(_esc(r.first || e.message), 'danger');
       } else {
         Utils.toast('Failed to save settings: ' + _esc(e.message), 'danger');
       }
