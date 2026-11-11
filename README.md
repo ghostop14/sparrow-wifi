@@ -68,9 +68,13 @@ A standalone web-based drone detection and tracking system that decodes FAA-mand
 - **Airport geozones** &mdash; Automatic download and display of nearby airports (OurAirports data) and FAA Prohibited/Restricted airspace polygons, cached locally for offline operation
 - **GPS** &mdash; gpsd integration or configurable static coordinates
 - **History & replay** &mdash; SQLite-backed detection history with timeline replay and KML export
-- **Cursor-on-Target (CoT)** &mdash; Multicast CoT output for SA integration
+- **TAK / Cursor-on-Target** &mdash; UDP multicast/broadcast/unicast, TCP or TLS to TAK Server with certificate enrollment and data-package import; drones coloured by disposition, operator points and links, receiver sensor point
 - **Multi-device** &mdash; Web UI works on desktop, tablet, and phone simultaneously
 - **Metric / Imperial** &mdash; Full unit preference support throughout the UI and alerts
+
+### TAK / Cursor-on-Target
+
+The TAK tab in Settings sends each tracked drone, its operator (or takeoff) point, a dashed link line and this receiver to ATAK, WinTAK, iTAK or TAK Server as Cursor-on-Target. Choose UDP multicast for clients on the same network, or TCP/TLS to a TAK Server; import a TAK data package (.zip) to fill in the server, trust store and enrollment in one step. Drones are removed from the TAK map when they vanish. See [sparrow-droneid/TAK_INTEGRATION.md](sparrow-droneid/TAK_INTEGRATION.md) for transports, certificates, symbols, timing and troubleshooting.
 
 Web UI runs at `http://localhost:8097` once started. See [Installation](#sparrow-droneid-web-application-1) below for setup, and the [API reference](sparrow-droneid/sparrow_drone_id_api.md) for programmatic access.
 

@@ -8,6 +8,11 @@
 # HTTP client for map tile proxy/caching and future export integrations
 requests>=2.28.0
 
+# TAK / Cursor-on-Target: client certificates (.p12 / PEM), CA truststores and
+# TAK Server certificate enrollment (key + CSR). 3.4.8 is the Ubuntu 22.04 apt
+# version; the code avoids every API newer than that.
+cryptography>=3.4.8
+
 # BLE scanning for Bluetooth RemoteID (ASTM F3411 BT4/BT5 Legacy)
 bleak>=0.21.0
 

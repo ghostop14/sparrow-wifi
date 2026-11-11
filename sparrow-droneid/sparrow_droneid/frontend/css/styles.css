@@ -1283,3 +1283,107 @@ html, body {
 [data-bs-theme="light"] .compass-rose {
   filter: drop-shadow(0 1px 2px rgba(0,0,0,0.25));
 }
+
+/* ---- TAK settings tab (every rule scoped to #takTabPane or a tak- class) ---- */
+.tak-status-grid,
+.tak-pkg-result,
+.tak-cert-summary {
+  --tak-warn: #B45309;   /* light: 5.0:1 on #FFFFFF, 4.6:1 on #F1F5F9 */
+  --tak-bad:  #B91C1C;   /* light: 6.5:1 on #FFFFFF, 5.9:1 on #F1F5F9 */
+}
+[data-bs-theme="dark"] .tak-status-grid,
+[data-bs-theme="dark"] .tak-pkg-result,
+[data-bs-theme="dark"] .tak-cert-summary {
+  --tak-warn: #FBBF24;   /* dark: 8.8:1 on #1E293B, 7.4:1 on #273549 */
+  --tak-bad:  #FCA5A5;   /* dark: 7.7:1 on #1E293B, 6.5:1 on #273549 */
+}
+.tak-status-grid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  font-size: 12px;
+  margin: 0;
+}
+.tak-status-grid dt {
+  color: var(--text-secondary);
+  font-weight: 500;
+  margin: 0;
+}
+.tak-status-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+}
+.tak-cert-summary {
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  padding: 8px 10px;
+  overflow-wrap: anywhere;
+}
+.tak-days-warn { color: var(--tak-warn, #B45309); }
+.tak-days-bad  { color: var(--tak-bad, #B91C1C); font-weight: 600; }
+.tak-err       { color: var(--tak-bad, #B91C1C); }
+.tak-err-old   { font-style: italic; }
+.tak-pkg-result { overflow-wrap: anywhere; }
+.tak-pkg-result ul {
+  margin: 4px 0;
+  padding-left: 1.1rem;
+}
+
+/* State badges: >= 11px; connected green #146C43 (white text 6.4:1) */
+#takTabPane .tak-status-grid .badge,
+#takTabPane .tak-state-badge { font-size: 12px; }
+#takTabPane .tak-badge-ok { background-color: #146C43; color: #fff; }
+#takTabPane .tak-state-badge { font-weight: 600; }
+
+/* Muted text: >= 4.5:1 on the card (#1E293B) and the cert summary (#273549) in dark */
+#takTabPane .text-muted,
+#takTabPane .settings-card small.text-muted,
+#takTabPane .settings-card .text-muted.small,
+#takTabPane .tak-err-old,
+#takTabPane .tak-clear-note {
+  color: var(--text-muted) !important;
+}
+[data-bs-theme="dark"] #takTabPane .text-muted,
+[data-bs-theme="dark"] #takTabPane .settings-card small.text-muted,
+[data-bs-theme="dark"] #takTabPane .settings-card .text-muted.small,
+[data-bs-theme="dark"] #takTabPane .tak-err-old,
+[data-bs-theme="dark"] #takTabPane .tak-clear-note {
+  color: #94A3B8 !important;       /* 5.7:1 on #1E293B, 4.8:1 on #273549 */
+}
+/* light: #64748B is 4.3:1 on the #F1F5F9 summary box, so darken it there */
+#takTabPane .tak-cert-summary .text-muted { color: #475569 !important; }   /* 6.9:1 */
+[data-bs-theme="dark"] #takTabPane .tak-cert-summary .text-muted { color: #94A3B8 !important; }
+
+/* Errors in dark: #F87171 is 5.3:1 on the card */
+[data-bs-theme="dark"] #takTabPane .invalid-feedback,
+[data-bs-theme="dark"] #takTabPane .text-danger {
+  color: #F87171 !important;
+}
+
+/* Outline buttons in dark: text #CBD5E1 (9.9:1), border #94A3B8 (5.7:1) */
+[data-bs-theme="dark"] #takTabPane .btn-outline-secondary {
+  color: #CBD5E1;
+  border-color: #94A3B8;
+}
+[data-bs-theme="dark"] #takTabPane .btn-outline-secondary:hover:not(:disabled),
+[data-bs-theme="dark"] #takTabPane .btn-outline-secondary:focus-visible {
+  color: #F8FAFC;
+  background-color: #475569;
+  border-color: #CBD5E1;
+}
+
+/* Info banner close: dark X in light theme, inverted only in dark */
+[data-bs-theme="dark"] #takTabPane .tak-banner-close {
+  filter: invert(1) grayscale(100%) brightness(200%);
+}
+
+/* Keyboard focus */
+#takTabPane :focus-visible { outline: 2px solid #2563EB; outline-offset: 2px; }          /* 5.2:1 on white */
+[data-bs-theme="dark"] #takTabPane :focus-visible { outline-color: #60A5FA; }            /* 5.8:1 on #1E293B */
+
+@media (max-width: 575.98px) {
+  .tak-status-grid { grid-template-columns: 1fr; gap: 0; }
+  .tak-status-grid dd { margin-bottom: 6px; }
+}

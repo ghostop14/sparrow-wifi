@@ -17,7 +17,7 @@
 - [Alerts](#alerts)
 - [Geozones](#geozones)
 - [GPS](#gps)
-- [Cursor on Target (CoT)](#cursor-on-target-cot)
+- [TAK / Cursor on Target](#tak--cursor-on-target)
 - [Map Tiles](#map-tiles)
 - [Data Maintenance](#data-maintenance)
 - [Settings](#settings)
@@ -843,85 +843,114 @@ When `mode` is `none`, `fix` will always be `false` and coordinates will be `0.0
 
 ---
 
-## Cursor on Target (CoT)
+## TAK / Cursor on Target
 
-### GET /api/cot/status
+Sparrow DroneID publishes drones, their operators, a drone-to-operator link line and the receiver itself to TAK clients and TAK Server as Cursor-on-Target (CoT). There is one output, configured with the `cot_*` and `tak_*` settings. Operator documentation (transports, certificates, enrollment, symbols, timing, troubleshooting) is in [TAK_INTEGRATION.md](TAK_INTEGRATION.md), which also shows the exact CoT shapes.
 
-Returns the current CoT output configuration and status.
+Conventions: success bodies are the domain object; errors are `{"error": {"code", "message", "detail"?}}`. Codes used: `VALIDATION_ERROR` (400), `CONFLICT` (409), `PAYLOAD_TOO_LARGE` (413), `INTERNAL_ERROR` (500), `SERVICE_UNAVAILABLE` (503, engine absent or the `cryptography` package missing for certificate, package and enrollment routes). Request bodies are capped at 16 MiB (413).
 
-**Response:**
+### Legacy endpoints (unchanged shape)
 
-```json
-{
-  "errcode": 0,
-  "errmsg": "",
-  "enabled": false,
-  "address": "239.2.3.1",
-  "port": 6969,
-  "events_sent": 0
-}
-```
-
-### PUT /api/cot/config
-
-Update CoT output configuration.
-
-**Request body:**
+`GET /api/v1/cot/status`
 
 ```json
-{
-  "enabled": true,
-  "address": "239.2.3.1",
-  "port": 6969
-}
+{"enabled": false, "address": "239.2.3.1", "port": 6969, "events_sent": 0,
+ "transport": null, "state": "disabled", "connected": false, "send_errors": 0, "last_error": null}
 ```
 
-**Response:**
+The first four keys are as before; the rest are additive.
+
+`PUT /api/v1/cot/config` with `{"enabled": true, "address": "239.2.3.1", "port": 6969}` returns `{}`. When `address` or `port` is present the transport is set to `udp_multicast` (this endpoint has always described multicast output); `enabled` alone only toggles. Invalid values are a 400.
+
+### GET /api/v1/tak/status
+
+Live status: `enabled`, `running`, `state` (`disabled`, `connecting`, `connected`, `ready` for an open UDP socket, `error`), `transport`, `destination`, `connected`, `connected_since`, `sent`, `send_errors`, `reconnects`, `queue_depth`, `queue_drops`, `last_error`, `last_error_at`, `last_send_at`, `items` (`drones`, `operators`, `lines`, `sensor` currently drawn), `deletes_sent`, `deletes_on_stop`, `sensor_point` (`enabled`, `publishing`, `reason`, `last_sent_at`, `stale_s`), `tls` (null unless TLS: `version`, `cipher`, `server_subject`, `client_mode`, `client_subject`, `client_not_after`, `client_days_left`, `ca_mode`, `ca_subjects`), `enrollment` (null unless enroll mode), `config_warnings`, `defaults` (`station_name`, `client_uid`).
+
+### GET /api/v1/tak/config, PUT /api/v1/tak/config
+
+`GET` returns `{"settings": {...every TAK setting, typed...}, "effective": {"station_name", "client_uid", "sensor_stale_s", "sensor_stale_auto"}, "default_ports": {"udp_multicast": 6969, "udp_broadcast": 6969, "udp_unicast": 4242, "tcp": 8087, "tls": 8089}}`. Secrets are returned as `"(set)"` or `""`.
+
+`PUT` takes any subset of the settings. A secret that is absent or `"(set)"` keeps its stored value, `""` clears it, anything else replaces it. The merged result is validated first; on error nothing is written and the response is 400 with `detail.errors = [{"field", "message"}, ...]`. Unknown keys are a 400 listing them. The response is the `GET` body. The engine is reconfigured only when the effective configuration changed (a Save that re-sends unchanged values does not flicker the map).
+
+### POST /api/v1/tak/test
+
+Body: candidate settings (any subset), merged over the stored ones; `{}` tests the saved configuration. Nothing is saved and no CoT is sent. Always 200 for connection outcomes:
 
 ```json
-{
-  "errcode": 0,
-  "errmsg": ""
-}
+{"ok": false, "message": "", "error": "Server rejected our client certificate after the handshake: ...",
+ "duration_ms": 2034,
+ "details": {"transport": "tls", "destination": "takserver.local:8089", "tls_version": "TLSv1.3",
+             "cipher": "TLS_AES_256_GCM_SHA384", "server_subject": "CN=takserver",
+             "client_subject": "CN=sparrow,O=TAK", "client_not_after": "2027-11-11T14:00:00Z",
+             "enrollment": "enrolled"}}
 ```
 
-**CoT event format:**
+UDP tests open and close a socket; TCP connects and closes; TLS connects, handshakes and waits 2 s for the server's verdict on the client certificate. In enroll mode a test may perform a real enrollment (honouring the failure backoff).
 
-Each active drone emits a CoT event on every position update:
+### Certificates
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<event version="2.0"
-       uid="sparrow-droneid-1FA123456789ABCD"
-       type="a-n-A-C-F-q"
-       time="2026-03-17T14:36:45Z"
-       start="2026-03-17T14:36:45Z"
-       stale="2026-03-17T14:36:55Z"
-       how="m-f">
-  <point lat="38.8984" lon="-77.0352" hae="57.2" ce="10.0" le="15.0"/>
-  <detail>
-    <track course="22.5" speed="3.2"/>
-    <remarks>
-      SN:1FA123456789ABCD UA:Multirotor AGL:42.0m Self-ID:Survey flight
-    </remarks>
-    <contact callsign="DRONE-1FA1"/>
-    <__droneid
-      serial="1FA123456789ABCD"
-      ua_type="3"
-      height_agl="42.0"
-      operator_lat="38.8971"
-      operator_lon="-77.0368"
-      operator_id=""
-      self_id="Survey flight"
-      rssi="-68"
-      protocol="astm_nan"/>
-  </detail>
-</event>
+- `GET /api/v1/tak/certs` returns `{"client": CertInfo|null, "ca": CaInfo|null, "enrolled": CertInfo|null}`.
+- `POST /api/v1/tak/certs/client` with `{"cert_b64", "key_b64"?, "password"?, "filename"?}` (decoded files at most 256 KiB). The format (.p12, PEM pair, combined PEM, DER certificate) is detected from the content. The key is stored decrypted (mode 0600); the password is never stored. Sets `tak_tls_client_mode` to `upload`. 201 `{"client": CertInfo}`.
+- `POST /api/v1/tak/certs/ca` with `{"data_b64", "password"?, "filename"?}`. Sets `tak_tls_ca_mode` to `upload`. 201 `{"ca": CaInfo}`.
+- `DELETE /api/v1/tak/certs/client`, `DELETE /api/v1/tak/certs/ca`: 200 `{"deleted": true|false}`.
+
+`CertInfo`: `subject`, `issuer`, `not_after`, `days_left`, `expired`, `source` (`upload`, `package`, `enrollment`), `filename`, `format` (`p12`, `pem`), `stored_at`, `chain_length`. `CaInfo`: `count`, `subjects`, `earliest_not_after`, `source`, `filename`, `format`, `stored_at`.
+
+### Enrollment
+
+- `GET /api/v1/tak/enrollment`: `{"status": "disabled"}` or the status object `status` (`pending`, `enrolling`, `enrolled`, `cached`, `failed`), `last_attempt_at`, `last_success_at`, `next_attempt_at`, `last_error`, `cert_subject`, `cert_not_after`.
+- `POST /api/v1/tak/enroll`: requires the saved settings to use TLS with the `enroll` client mode and an enrollment username and password (else 409). Waits up to 40 s and returns the status object. After a failure the next attempt is delayed (5 min, doubling to 1 h); a request inside that window returns the status with `next_attempt_at` and `last_error` set.
+
+### POST /api/v1/tak/package
+
+Body `{"data_b64": "<base64 zip>", "filename"?}` (decoded at most 2 MiB). Imports an ATAK enrollment package, a certificate package or an iTAK package; the zip is read in memory and nothing is extracted. Everything is validated before anything is written; a bad package is a 400 and changes nothing. Applied: transport, host, port, CA truststore and client mode (`enroll` or `upload`), `tak_tls_verify` and `tak_tls_check_hostname` true. Never changed: `cot_enabled` (an import never enables the output) and the enrollment user name. When the import changes the host, port or transport from the saved values, the stored secrets `tak_enroll_password`, `tak_auth_password` and `tak_tls_client_password` are cleared in the same write so they cannot be sent to the new server; the keys actually cleared are listed in `cleared_secrets`.
+
+```json
+{"kind": "enrollment", "description": "TAK 127.0.0.1", "host": "127.0.0.1", "port": 8089,
+ "transport": "tls", "imported": {"ca": {"count": 2, "subjects": ["CN=..."]}, "client": null},
+ "enroll_required": true,
+ "next_step": "Enter the enrollment username and password for this TAK Server, then Save.",
+ "warnings": [], "cleared_secrets": [], "settings": {"...": "..."}}
 ```
 
-**CoT type field:** `a-n-A-C-F-q` = atom, neutral, air, civilian, fixed-wing, UAV. Can be overridden per-drone if threat classification is implemented in a future version.
+`kind` is `enrollment`, `certificate` or `truststore_only`.
 
-**Stale time:** 10 seconds after event time (configurable, should be > 2x expected update interval).
+### GET /api/v1/tak/interfaces
+
+`{"interfaces": [{"name": "eth0", "ipv4": "192.168.1.10"}]}`: IPv4 interfaces (without `lo`) for the multicast interface choice.
+
+### TAK settings
+
+| Key | Default | Notes |
+|---|---|---|
+| `cot_enabled` | `false` | Enable the output. |
+| `cot_address` | `239.2.3.1` | Multicast group, broadcast address or host (also the enrollment host). |
+| `cot_port` | `6969` | 1-65535. |
+| `tak_transport` | `udp_multicast` | `udp_multicast`, `udp_broadcast`, `udp_unicast`, `tcp`, `tls`. |
+| `tak_multicast_interface` | `` | Interface name; blank = OS routing. |
+| `tak_multicast_ttl` | `1` (`32` on an upgraded install) | 1-255. |
+| `tak_auth_username`, `tak_auth_password` | `` | `<auth>` sent after a TCP/TLS connect. Password is a secret. |
+| `tak_client_uid` | `` | Blank = `sparrow-droneid-<hostname>`. |
+| `tak_station_name` | `` | Blank = hostname. Sensor callsign; part of every UID. |
+| `tak_uid_prefix` | `sparrow-droneid` | |
+| `tak_tls_client_mode` | `upload` | `upload`, `path`, `enroll`. |
+| `tak_tls_client_cert_path`, `tak_tls_client_key_path`, `tak_tls_client_password` | `` | Path mode; the password is a secret. |
+| `tak_tls_ca_mode` | `none` | `none` (system store), `upload`, `path`. |
+| `tak_tls_ca_path`, `tak_tls_ca_password` | `` | Path mode; the password is a secret. |
+| `tak_tls_verify`, `tak_tls_check_hostname` | `true` | |
+| `tak_enroll_port`, `tak_enroll_username`, `tak_enroll_password` | `8446`, ``, `` | Enrollment; the password is a secret. |
+| `tak_send_interval_s` | `2` | 0.5-60. |
+| `tak_refresh_interval_s` | `10` | 1-300, at least the send interval. |
+| `tak_stale_after_s` | `30` | At least 3 x max(send, refresh); at most the delete time. |
+| `tak_delete_after_s` | `180` | At most 300. |
+| `tak_send_deletes` | `true` | |
+| `tak_unknown_affiliation` | `u` | `u` or `n`. |
+| `tak_drone_type_family` | `uav` | `uav` or `civil`. |
+| `tak_operator_enabled`, `tak_line_enabled` | `true` | |
+| `tak_include_ssid_detections` | `false` | |
+| `tak_sensor_enabled`, `tak_sensor_heartbeat_s`, `tak_sensor_stale_s` | `true`, `10`, `` | Blank stale = auto `max(30, 3 x heartbeat)`. |
+
+All of them are also readable and writable through `GET`/`PUT /api/v1/settings`, where the same validation applies and secrets are masked the same way.
 
 ---
 
@@ -1061,6 +1090,12 @@ Returns all application settings.
     "cot_enabled": false,
     "cot_address": "239.2.3.1",
     "cot_port": 6969,
+    "tak_transport": "udp_multicast",
+    "tak_multicast_ttl": 1,
+    "tak_auth_password": "",
+    "tak_send_interval_s": 2.0,
+    "tak_stale_after_s": 30.0,
+    "tak_delete_after_s": 180.0,
     "alert_audio_enabled": true,
     "alert_visual_enabled": true,
     "alert_script_enabled": false,

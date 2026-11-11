@@ -15,6 +15,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
+from .tak import config as _tak_config
+
 # ---------------------------------------------------------------------------
 # API version
 # ---------------------------------------------------------------------------
@@ -34,6 +36,7 @@ TAGS = [
     {'name': 'Alerts',        'description': 'Alert rules, log, and acknowledgement'},
     {'name': 'GPS',           'description': 'Receiver GPS position'},
     {'name': 'CoT',           'description': 'Cursor-on-Target (TAK) output configuration'},
+    {'name': 'TAK',           'description': 'TAK / Cursor-on-Target output: status, test, certificates, enrollment, data packages'},
     {'name': 'Tiles',         'description': 'Map tile proxy (OSM / ESRI)'},
     {'name': 'Data',          'description': 'Database statistics and data-purge operations'},
     {'name': 'Geozones',      'description': 'Airport and no-fly zone data'},
@@ -383,10 +386,120 @@ _schema('GpsStatus', _obj({
 
 _schema('CotStatus', _obj({
     'enabled':      _bool(description='True when CoT output is active'),
-    'address':      _str(description='UDP multicast destination address'),
-    'port':         _int(description='UDP destination port'),
-    'events_sent':  _int(description='Number of CoT events sent since startup'),
+    'address':      _str(description='Destination address (multicast group, broadcast address or host)'),
+    'port':         _int(description='Destination port'),
+    'events_sent':  _int(description='Number of CoT messages sent since the output was started'),
+    'transport':    _nullable(_str(description='Active transport (udp_multicast, udp_broadcast, udp_unicast, tcp, tls)')),
+    'state':        _str(enum=['disabled', 'connecting', 'connected', 'ready', 'error'],
+                         description='Connection state'),
+    'connected':    _bool(description='True when connected (UDP: socket open)'),
+    'send_errors':  _int(description='Messages that failed to send'),
+    'last_error':   _nullable(_str(description='Most recent connection or send error')),
 }, required=['enabled', 'address', 'port', 'events_sent']))
+
+# ---------------------------------------------------------------------------
+# TAK schemas  — /api/v1/tak/*
+# ---------------------------------------------------------------------------
+
+_schema('TakStatus', _obj({
+    'enabled':         _bool(),
+    'running':         _bool(description='True when the transport thread exists'),
+    'state':           _str(enum=['disabled', 'connecting', 'connected', 'ready', 'error']),
+    'transport':       _nullable(_str()),
+    'destination':     _nullable(_str(description='host:port')),
+    'connected':       _bool(),
+    'connected_since': _nullable(_str(description='ISO 8601 UTC')),
+    'sent':            _int(description='CoT messages written'),
+    'send_errors':     _int(),
+    'reconnects':      _int(),
+    'queue_depth':     _int(),
+    'queue_drops':     _int(),
+    'last_error':      _nullable(_str()),
+    'last_error_at':   _nullable(_str()),
+    'last_send_at':    _nullable(_str()),
+    'items':           _obj({'drones': _int(), 'operators': _int(), 'lines': _int(),
+                             'sensor': _int()}, description='Items currently drawn on TAK'),
+    'deletes_sent':    _int(),
+    'deletes_on_stop': _int(),
+    'sensor_point':    _obj({'enabled': _bool(), 'publishing': _bool(),
+                             'reason': _str(description='publishing, disabled or no GPS fix'),
+                             'last_sent_at': _nullable(_str()),
+                             'stale_s': _nullable(_num())}),
+    'tls':             _nullable(_obj({
+        'version': _nullable(_str()), 'cipher': _nullable(_str()),
+        'server_subject': _nullable(_str()), 'client_mode': _str(),
+        'client_subject': _nullable(_str()), 'client_not_after': _nullable(_str()),
+        'client_days_left': _nullable(_int()), 'ca_mode': _str(),
+        'ca_subjects': _arr(_str())})),
+    'enrollment':      _nullable(_ref('TakEnrollmentStatus')),
+    'config_warnings': _arr(_str()),
+    'defaults':        _obj({'station_name': _str(), 'client_uid': _str()}),
+}))
+
+_schema('TakConfigResponse', _obj({
+    'settings':      _obj({}, description='Every TAK setting, typed; secrets show "(set)" or empty',
+                          additionalProperties=True),
+    'effective':     _obj({'station_name': _str(), 'client_uid': _str(),
+                           'sensor_stale_s': _num(), 'sensor_stale_auto': _bool()}),
+    'default_ports': _obj({k: _int() for k in _tak_config.DEFAULT_PORT_BY_TRANSPORT}),
+}))
+
+_schema('TakTestResult', _obj({
+    'ok':          _bool(),
+    'message':     _str(),
+    'error':       _str(),
+    'duration_ms': _int(),
+    'details':     _obj({
+        'transport': _str(), 'destination': _str(), 'tls_version': _str(), 'cipher': _str(),
+        'server_subject': _str(), 'client_subject': _str(), 'client_not_after': _str(),
+        'enrollment': _str(enum=['enrolled', 'cached'])}),
+}, required=['ok', 'duration_ms']))
+
+_schema('TakCertInfo', _obj({
+    'subject': _str(), 'issuer': _str(), 'not_after': _nullable(_str()),
+    'days_left': _nullable(_int()), 'expired': _bool(),
+    'source': _str(enum=['upload', 'package', 'enrollment']),
+    'filename': _str(), 'format': _str(enum=['p12', 'pem']),
+    'stored_at': _nullable(_str()), 'chain_length': _int(),
+}))
+
+_schema('TakCaInfo', _obj({
+    'count': _int(), 'subjects': _arr(_str()), 'earliest_not_after': _nullable(_str()),
+    'source': _str(), 'filename': _str(), 'format': _str(), 'stored_at': _nullable(_str()),
+}))
+
+_schema('TakCertsResponse', _obj({
+    'client':   _nullable(_ref('TakCertInfo')),
+    'ca':       _nullable(_ref('TakCaInfo')),
+    'enrolled': _nullable(_ref('TakCertInfo')),
+}))
+
+_schema('TakEnrollmentStatus', _obj({
+    'status': _str(enum=['disabled', 'pending', 'enrolling', 'enrolled', 'cached', 'failed']),
+    'last_attempt_at': _nullable(_str()), 'last_success_at': _nullable(_str()),
+    'next_attempt_at': _nullable(_str()), 'last_error': _nullable(_str()),
+    'cert_subject': _nullable(_str()), 'cert_not_after': _nullable(_str()),
+}, required=['status']))
+
+_schema('TakPackageResult', _obj({
+    'kind':            _str(enum=['enrollment', 'certificate', 'truststore_only']),
+    'description':     _str(),
+    'host':            _str(),
+    'port':            _int(),
+    'transport':       _str(),
+    'imported':        _obj({
+        'ca': _nullable(_obj({'count': _int(), 'subjects': _arr(_str())})),
+        'client': _nullable(_obj({'subject': _str(), 'not_after': _nullable(_str())}))}),
+    'enroll_required': _bool(),
+    'next_step':       _str(),
+    'warnings':        _arr(_str()),
+    'cleared_secrets': _arr(_str(), description='Stored secrets cleared because the import changed the server'),
+    'settings':        _obj({}, additionalProperties=True),
+}))
+
+_schema('TakInterfaces', _obj({
+    'interfaces': _arr(_obj({'name': _str(), 'ipv4': _str()})),
+}, required=['interfaces']))
 
 # ---------------------------------------------------------------------------
 # MonitorStatus  — GET /api/monitor/status  (DroneIDEngine.get_status() shape)
@@ -497,8 +610,8 @@ _schema('Settings', _obj({
     'gps_static_alt':            _num(),
     'retention_days':            _int(description='Database record retention period (days)'),
     'cot_enabled':               _bool(),
-    'cot_address':               _str(description='CoT multicast address'),
-    'cot_port':                  _int(description='CoT UDP port'),
+    'cot_address':               _str(description='TAK destination: multicast group, broadcast address or host'),
+    'cot_port':                  _int(description='TAK destination port'),
     'alert_audio_enabled':       _bool(),
     'alert_visual_enabled':      _bool(),
     'alert_script_enabled':      _bool(),
@@ -517,6 +630,35 @@ _schema('Settings', _obj({
     'wifi_ssid_agent_interface': _str(),
     'wifi_ssid_poll_interval':   _str(description='Poll interval in seconds (stored as string)'),
 }))
+
+
+def _add_tak_settings() -> None:
+    """Register every TAK setting key on the Settings schema."""
+    cfg = _tak_config
+    enums = {
+        'tak_transport': cfg.TRANSPORTS, 'tak_tls_client_mode': cfg.CLIENT_MODES,
+        'tak_tls_ca_mode': cfg.CA_MODES, 'tak_unknown_affiliation': cfg.UNKNOWN_AFFILIATIONS,
+        'tak_drone_type_family': cfg.TYPE_FAMILIES,
+    }
+    props = SCHEMAS['Settings']['properties']
+    for key in cfg.TAK_KEYS:
+        if key in ('cot_enabled', 'cot_address', 'cot_port'):
+            continue
+        if key in cfg.SECRET_KEYS:
+            props[key] = _str(description='"(set)" when configured, else empty')
+        elif key in cfg.BOOL_KEYS:
+            props[key] = _bool()
+        elif key in cfg.INT_KEYS:
+            props[key] = _int()
+        elif key in cfg.FLOAT_KEYS:
+            props[key] = _num()
+        elif key in enums:
+            props[key] = _str(enum=list(enums[key]))
+        else:
+            props[key] = _str()
+
+
+_add_tak_settings()
 
 # ---------------------------------------------------------------------------
 # DataStats  — GET /api/data/stats  (Database.get_stats() + retention_days)

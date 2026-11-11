@@ -9,6 +9,7 @@ Manages monitor-mode WiFi capture via tcpdump and decodes:
   (ASD-STAN OUI 6A:5C:35, OUI type 0x01)
 """
 import asyncio
+import copy
 import logging
 import math
 import struct
@@ -1986,6 +1987,11 @@ class DroneIDEngine:
                     pass
 
     # ----- Active drone queries -------------------------------------------
+
+    def snapshot_for_output(self):
+        """Copies of every tracked drone, for output engines. Holds self._lock only for the copy."""
+        with self._lock:
+            return [(k, copy.copy(d)) for k, d in self._active_drones.items()]
 
     def get_active_drones(self, max_age=180):
         """Get list of currently tracked drones with derived fields."""
