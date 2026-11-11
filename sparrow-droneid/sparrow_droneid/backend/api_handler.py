@@ -3243,7 +3243,9 @@ def api_wifi_ssid_status_get(req: RequestHandler):
 # Settings
 # ---------------------------------------------------------------------------
 
-# Keys whose change requires a server restart to take effect.
+# Keys whose change requires a server restart to take effect (they are read only
+# when the HTTP server starts). A PUT reports restart_required only when one of
+# them changes value.
 _RESTART_REQUIRED_KEYS = frozenset({
     'port', 'bind_address', 'https_enabled', 'https_cert_name',
 })
@@ -3311,7 +3313,7 @@ def api_settings_get(req: RequestHandler):
     'responses': {
         '200': response_inline(
             {'settings':         {'$ref': '#/components/schemas/Settings'},
-             'restart_required': {'type': 'boolean', 'description': 'True when a restart is needed for changes to take effect'}},
+             'restart_required': {'type': 'boolean', 'description': 'True when this update changed a setting that only takes effect after a restart (port, bind_address, https_enabled, https_cert_name)'}},
             'Updated settings with restart flag',
         ),
         '400': {'description': 'Unknown settings keys', 'content': {'application/json': {'schema': {'$ref': '#/components/schemas/ErrorResponse'}}}},
@@ -3358,10 +3360,12 @@ def api_settings_put(req: RequestHandler):
         else:
             str_value = str(value)
 
-        _require_db().set_setting(key, str_value)
-
-        if key in _RESTART_REQUIRED_KEYS:
+        # The Settings dialog sends every field on each Save, so a restart-only key
+        # flags a restart only when its stored value actually changes.
+        if key in _RESTART_REQUIRED_KEYS and _require_db().get_setting(key) != str_value:
             restart_required = True
+
+        _require_db().set_setting(key, str_value)
 
     data = req.json_data
 

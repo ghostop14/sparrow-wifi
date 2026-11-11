@@ -11,7 +11,9 @@
   --bg-elevated:   #334155;
   --text-primary:  #F1F5F9;
   --text-secondary:#94A3B8;
-  --text-muted:    #64748B;
+  /* Muted text must stay >= 4.5:1 on every surface it is drawn on:
+     6.96 on --bg-primary, 5.71 on --bg-secondary, 4.84 on --bg-tertiary. */
+  --text-muted:    #94A3B8;
   --border-color:  #334155;
   --drone-active:  #F59E0B;
   --drone-aging:   #78909C;
@@ -34,7 +36,8 @@
   --bg-elevated:   #E2E8F0;
   --text-primary:  #0F172A;
   --text-secondary:#334155;
-  --text-muted:    #64748B;
+  /* 5.66 on --bg-primary, 5.92 on --bg-secondary, 5.40 on --bg-tertiary */
+  --text-muted:    #56657C;
   --border-color:  #CBD5E1;
   --drone-active:  #D97706;
   --drone-aging:   #607D8B;
@@ -52,6 +55,10 @@ html, body {
   background: var(--bg-primary);
   color: var(--text-primary);
 }
+
+/* Bootstrap's .text-secondary (#6C757D) is only 3.1:1 on the dark panels. This app
+   uses it for muted helper text, so it follows the --text-muted token. */
+.text-secondary { color: var(--text-muted) !important; }
 
 /* ---- Navbar ---- */
 .app-navbar {
@@ -1337,7 +1344,7 @@ html, body {
 #takTabPane .tak-badge-ok { background-color: #146C43; color: #fff; }
 #takTabPane .tak-state-badge { font-weight: 600; }
 
-/* Muted text: >= 4.5:1 on the card (#1E293B) and the cert summary (#273549) in dark */
+/* Muted text follows the --text-muted token (AA in both themes) */
 #takTabPane .text-muted,
 #takTabPane .settings-card small.text-muted,
 #takTabPane .settings-card .text-muted.small,
@@ -1345,16 +1352,6 @@ html, body {
 #takTabPane .tak-clear-note {
   color: var(--text-muted) !important;
 }
-[data-bs-theme="dark"] #takTabPane .text-muted,
-[data-bs-theme="dark"] #takTabPane .settings-card small.text-muted,
-[data-bs-theme="dark"] #takTabPane .settings-card .text-muted.small,
-[data-bs-theme="dark"] #takTabPane .tak-err-old,
-[data-bs-theme="dark"] #takTabPane .tak-clear-note {
-  color: #94A3B8 !important;       /* 5.7:1 on #1E293B, 4.8:1 on #273549 */
-}
-/* light: #64748B is 4.3:1 on the #F1F5F9 summary box, so darken it there */
-#takTabPane .tak-cert-summary .text-muted { color: #475569 !important; }   /* 6.9:1 */
-[data-bs-theme="dark"] #takTabPane .tak-cert-summary .text-muted { color: #94A3B8 !important; }
 
 /* Errors in dark: #F87171 is 5.3:1 on the card */
 [data-bs-theme="dark"] #takTabPane .invalid-feedback,

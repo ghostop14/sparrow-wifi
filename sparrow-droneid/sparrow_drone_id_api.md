@@ -1133,7 +1133,7 @@ Update one or more settings. Only include the keys you want to change.
 }
 ```
 
-**`restart_required`** will be `true` if any of these settings were changed: `port`, `bind_address`, `https_enabled`, `https_cert_path`, `https_key_path`.
+**`restart_required`** is `true` only when the update changed the stored value of one of these settings: `port`, `bind_address`, `https_enabled`, `https_cert_name`. Re-sending a value that is already stored (the Settings dialog sends every field on each Save) does not set it.
 
 **New settings added in this version:**
 
