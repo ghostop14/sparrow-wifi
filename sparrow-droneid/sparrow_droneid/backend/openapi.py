@@ -493,6 +493,7 @@ _schema('TakPackageResult', _obj({
     'enroll_required': _bool(),
     'next_step':       _str(),
     'warnings':        _arr(_str()),
+    'cleared_secrets': _arr(_str(), description='Stored secrets cleared because the import changed the server'),
     'settings':        _obj({}, additionalProperties=True),
 }))
 

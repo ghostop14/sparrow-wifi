@@ -177,9 +177,9 @@ class TestEnroll(EnrollCase):
         mgr = self.manager()
         mgr.check()
         for name in ('key.pem', 'cert.pem', 'ca_chain.pem', 'meta.json'):
-            path = os.path.join(self.store.cert_dir, 'enroll', name)
+            path = os.path.join(self.store.cert_dir, enrollment.cache_subdir(self.cfg()), name)
             self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600, name)
-        meta = open(os.path.join(self.store.cert_dir, 'enroll', 'meta.json')).read()
+        meta = open(os.path.join(self.store.cert_dir, enrollment.cache_subdir(self.cfg()), 'meta.json')).read()
         self.assertNotIn(self.server.password, meta)
         data = json.loads(meta)
         self.assertEqual({'host', 'port', 'username', 'client_uid', 'enrolled_at', 'not_after'},

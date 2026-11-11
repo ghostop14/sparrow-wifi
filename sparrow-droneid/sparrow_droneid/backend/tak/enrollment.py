@@ -40,6 +40,20 @@ _SHARED_BACKOFF: Dict[str, dict] = {}
 _SHARED_BACKOFF_LOCK = threading.Lock()
 
 
+def cache_subdir(cfg) -> str:
+    """Cache directory (relative to the cert store) for *cfg*'s enrollment identity.
+
+    The identity is host, enrollment port, user name and client UID (never the
+    password), so two different identities (the saved config and a candidate being
+    tested, say) can never overwrite each other's certificate.
+    """
+    raw = '|'.join([cfg.host, str(cfg.enroll_port), cfg.enroll_username, cfg.client_uid])
+    return 'enroll/' + hashlib.sha256(raw.encode('utf-8')).hexdigest()[:16]
+
+
+_FLAT_FILES = ('key.pem', 'cert.pem', 'ca_chain.pem', 'meta.json')
+
+
 def identity_key(cfg) -> str:
     """Backoff / cache identity: host, enrollment port, username, password, client uid."""
     raw = '|'.join([cfg.host, str(cfg.enroll_port), cfg.enroll_username,
@@ -257,6 +271,9 @@ class EnrollmentManager:
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._force_request = False
+        self._recheck = False
+        self._subdir = cache_subdir(cfg)
+        self._adopted = False
         self._thread: Optional[threading.Thread] = None
         self._generation = 0
 
@@ -315,8 +332,10 @@ class EnrollmentManager:
             if self._stop.is_set():
                 break
             force, self._force_request = self._force_request, False
+            recheck, self._recheck = self._recheck, False
             now = self._wallclock()
-            due = self._last_full is None or now - self._last_full >= FULL_CHECK_INTERVAL
+            due = (recheck or self._last_full is None
+                   or now - self._last_full >= FULL_CHECK_INTERVAL)
             with self._lock:
                 retry_at = self._next_attempt_at
             if retry_at is not None and now >= retry_at:
@@ -340,12 +359,34 @@ class EnrollmentManager:
         ident = self._identity()
         return all(meta.get(k) == v for k, v in ident.items())
 
+    def _adopt_flat_cache(self) -> None:
+        """Move a certificate cached by an older version (flat ``enroll/``) into this
+        identity's directory when its meta matches; otherwise leave it alone."""
+        if self._adopted:
+            return
+        self._adopted = True
+        store = self._store
+        meta = store._read_json('enroll/meta.json')
+        if meta is None or not self._meta_matches(meta):
+            return
+        if store.exists(self._subdir + '/cert.pem'):
+            return
+        files = {n: store.read('enroll/' + n) for n in _FLAT_FILES}
+        if files['cert.pem'] is None or files['key.pem'] is None:
+            return
+        for name, data in files.items():
+            if data is not None:
+                store.write_atomic('%s/%s' % (self._subdir, name), data)
+        store.remove(*['enroll/' + n for n in _FLAT_FILES])
+
     def _cached(self):
         """(TlsMaterials | None, reason) for the cached certificate."""
         store = self._store
-        cert_pem = store.read('enroll/cert.pem')
-        key_pem = store.read('enroll/key.pem')
-        meta = store._read_json('enroll/meta.json')
+        sub = self._subdir
+        self._adopt_flat_cache()
+        cert_pem = store.read(sub + '/cert.pem')
+        key_pem = store.read(sub + '/key.pem')
+        meta = store._read_json(sub + '/meta.json')
         if cert_pem is None or key_pem is None or meta is None:
             return None, 'no enrolled certificate yet'
         if not self._meta_matches(meta):
@@ -362,9 +403,10 @@ class EnrollmentManager:
             return None, 'the enrolled certificate is unreadable'
         if summary['not_after'] <= self._wallclock():
             return None, 'the enrolled certificate has expired'
-        ca_path = store.path('enroll/ca_chain.pem') if store.exists('enroll/ca_chain.pem') else None
-        return TlsMaterials(cert_file=store.path('enroll/cert.pem'),
-                            key_file=store.path('enroll/key.pem'), ca_file=ca_path,
+        ca_rel = sub + '/ca_chain.pem'
+        return TlsMaterials(cert_file=store.path(sub + '/cert.pem'),
+                            key_file=store.path(sub + '/key.pem'),
+                            ca_file=store.path(ca_rel) if store.exists(ca_rel) else None,
                             subject=summary['subject'], not_after=summary['not_after'],
                             source='enrollment'), ''
 
@@ -372,6 +414,10 @@ class EnrollmentManager:
         """The cached certificate; never touches the network."""
         mats, reason = self._cached()
         if mats is None:
+            # Nothing usable on disk: wake the manager for a (backoff-honouring) check
+            # instead of waiting for the daily one.
+            self._recheck = True
+            self._wake.set()
             st = self.status()
             detail = st.get('last_error') or reason
             raise CertError('Waiting for certificate enrollment (%s: %s)' % (st['status'], detail))
@@ -433,7 +479,10 @@ class EnrollmentManager:
                     self._cfg.host, self._cfg.enroll_port, self._cfg.enroll_username,
                     self._cfg.enroll_password, self._cfg.client_uid,
                     self._ssl_context()).enroll()
-                self._write_result(result)
+                with self._lock:
+                    if generation != self._generation:
+                        return self._status      # stopped meanwhile: discard the result
+                    self._write_result(result)
             except (EnrollError, CertError, OSError) as exc:
                 message = str(exc) or exc.__class__.__name__
                 fails = (state['fails'] if state else 0) + 1
@@ -459,15 +508,16 @@ class EnrollmentManager:
 
     def _write_result(self, result: EnrollResult) -> None:
         store = self._store
-        store.write_atomic('enroll/key.pem', result.key_pem)
-        store.write_atomic('enroll/cert.pem', result.cert_pem)
+        sub = self._subdir
+        store.write_atomic(sub + '/key.pem', result.key_pem)
+        store.write_atomic(sub + '/cert.pem', result.cert_pem)
         if result.ca_pems:
-            store.write_atomic('enroll/ca_chain.pem', b''.join(result.ca_pems))
+            store.write_atomic(sub + '/ca_chain.pem', b''.join(result.ca_pems))
         else:
-            store.remove('enroll/ca_chain.pem')
+            store.remove(sub + '/ca_chain.pem')
         meta = dict(self._identity())
         meta.update(enrolled_at=iso_z(self._wallclock()), not_after=iso_z(result.not_after))
-        store._write_json('enroll/meta.json', meta)
+        store._write_json(sub + '/meta.json', meta)
 
     # ---- backoff table ----------------------------------------------------------------
 

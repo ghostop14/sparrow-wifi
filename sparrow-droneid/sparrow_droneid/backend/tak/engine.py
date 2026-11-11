@@ -94,6 +94,8 @@ class TakEngine:
 
         self._wake = threading.Event()
         self._stop_event = threading.Event()
+        # Serialises the end-of-tick state commit against configure()'s reset.
+        self._state_lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
 
         # Emit-thread state (tests drive tick() directly from one thread).
@@ -159,15 +161,19 @@ class TakEngine:
                 self._enrollment.start()
             self._transport = self._transport_factory(cfg, materials=self._resolve_materials)
             self._transport.start()
-            self._drawn = {}
-            self._sched = {}
-            self._sensor_sent_m = None
-            self._sensor_sent_at = None
-            self._last_epoch = self._transport.connection_epoch
-            self._stop_event.clear()
+            with self._state_lock:
+                self._drawn = {}
+                self._sched = {}
+                self._sensor_sent_m = None
+                self._sensor_sent_at = None
+                self._last_epoch = self._transport.connection_epoch
+                # A NEW event per emit session: an old thread that overran the stop
+                # join keeps its own (set) event and can never be revived.
+                self._stop_event = threading.Event()
             self._wake.clear()
             if self._start_threads:
-                self._thread = threading.Thread(target=self._run, name='tak-emit', daemon=True)
+                self._thread = threading.Thread(target=self._run, args=(self._stop_event,),
+                                                name='tak-emit', daemon=True)
                 self._thread.start()
 
     def stop(self) -> None:
@@ -239,13 +245,13 @@ class TakEngine:
 
     # ---- emit loop ----------------------------------------------------------------------
 
-    def _run(self) -> None:
-        while not self._stop_event.is_set():
+    def _run(self, stop: threading.Event) -> None:
+        while not stop.is_set():
             self.tick()
             woke = self._wake.wait(timeout=TICK_S)
             self._wake.clear()
-            if woke and not self._stop_event.is_set():
-                self._stop_event.wait(_COALESCE_S)
+            if woke and not stop.is_set():
+                stop.wait(_COALESCE_S)
 
     def tick(self) -> None:
         """One emit tick; exceptions are counted and logged (at most once a minute)."""
@@ -260,9 +266,15 @@ class TakEngine:
                 logger.warning('TAK emit tick failed', exc_info=True)
 
     def _tick(self) -> None:
+        # One emit session = one stop event. State dicts are captured here, so a
+        # thread that outlives a reconfigure only ever touches its own (discarded)
+        # dicts; scalar state and status are written only while its session is current.
+        stop = self._stop_event
+        drawn = self._drawn
+        sched = self._sched
         cfg = self._cfg
         transport = self._transport
-        if cfg is None or transport is None or not cfg.enabled:
+        if stop.is_set() or cfg is None or transport is None or not cfg.enabled:
             return
         now_m = self._monotonic()
         now_w = self._wallclock()
@@ -272,10 +284,11 @@ class TakEngine:
 
         # 1. Reconnect: the transport discarded queued updates; resend what is desired.
         force_all = False
+        sensor_sent_m = self._sensor_sent_m
+        sensor_sent_at = self._sensor_sent_at
         if epoch != self._last_epoch:
             force_all = True
-            self._last_epoch = epoch
-            self._sensor_sent_m = None
+            sensor_sent_m = None
 
         # 2. Desired items.
         desired_uids = set()
@@ -305,20 +318,20 @@ class TakEngine:
 
         # 3. Deletes first.
         deletes = 0
-        for uid in list(self._drawn):
-            drawn = self._drawn[uid]
-            if drawn.kind == 'sensor' or uid in desired_uids:
+        for uid in list(drawn):
+            item = drawn[uid]
+            if item.kind == 'sensor' or uid in desired_uids:
                 continue
             if cfg.send_deletes:
-                batch.append(('delete', uid, cot.build_delete(uid, drawn.cot_type, now_w)))
+                batch.append(('delete', uid, cot.build_delete(uid, item.cot_type, now_w)))
                 deletes += 1
-            del self._drawn[uid]
-        for drone_uid in [u for u in self._sched if u not in desired_uids]:
-            del self._sched[drone_uid]
+            del drawn[uid]
+        for drone_uid in [u for u in sched if u not in desired_uids]:
+            del sched[drone_uid]
 
         # 4. Updates.
         for view, dev, has_op, has_line in wanted:
-            rec = self._sched.get(view.drone_uid)
+            rec = sched.get(view.drone_uid)
             fresh = view.stale_at > now_w
             send = False
             if fresh:
@@ -334,14 +347,14 @@ class TakEngine:
             if not send:
                 continue
             batch.append(('update', view.drone_uid, cot.build_drone(view, dev, cfg, now_w)))
-            self._drawn[view.drone_uid] = _Drawn('drone', view.drone_type)
+            drawn[view.drone_uid] = _Drawn('drone', view.drone_type)
             if has_op:
                 batch.append(('update', view.operator_uid, cot.build_operator(view, dev, now_w)))
-                self._drawn[view.operator_uid] = _Drawn('operator', view.operator_type)
+                drawn[view.operator_uid] = _Drawn('operator', view.operator_type)
             if has_line:
                 batch.append(('update', view.line_uid, cot.build_line(view, dev, now_w)))
-                self._drawn[view.line_uid] = _Drawn('line', cot.LINE_TYPE)
-            self._sched[view.drone_uid] = _Sched(now_m, dev.last_seen, view.type_sig)
+                drawn[view.line_uid] = _Drawn('line', cot.LINE_TYPE)
+            sched[view.drone_uid] = _Sched(now_m, dev.last_seen, view.type_sig)
 
         # 5. Sensor point.
         reason = 'disabled'
@@ -352,25 +365,33 @@ class TakEngine:
                 reason = 'no GPS fix'
             else:
                 reason = 'publishing'
-                if (self._sensor_sent_m is None
-                        or now_m - self._sensor_sent_m >= cfg.sensor_heartbeat_s):
-                    tracked = sum(1 for d in self._drawn.values() if d.kind == 'drone')
+                if (sensor_sent_m is None
+                        or now_m - sensor_sent_m >= cfg.sensor_heartbeat_s):
+                    tracked = sum(1 for d in drawn.values() if d.kind == 'drone')
                     batch.append(('update', cot.sensor_uid(cfg),
                                   cot.build_sensor(cfg, gps, now_w, tracked)))
-                    self._drawn[cot.sensor_uid(cfg)] = _Drawn('sensor', cot.SENSOR_TYPE)
-                    self._sensor_sent_m = now_m
-                    self._sensor_sent_at = now_w
+                    drawn[cot.sensor_uid(cfg)] = _Drawn('sensor', cot.SENSOR_TYPE)
+                    sensor_sent_m = now_m
+                    sensor_sent_at = now_w
 
-        # 6. One hand-off.
-        if batch:
-            transport.enqueue(batch)
+        # 6. One hand-off (skipped when this session was superseded meanwhile).
+        with self._state_lock:
+            if stop.is_set() or stop is not self._stop_event:
+                return
+            if batch:
+                transport.enqueue(batch)
+            self._last_epoch = epoch
+            self._sensor_sent_m = sensor_sent_m
+            self._sensor_sent_at = sensor_sent_at
 
         # 7. Publish status.
         items = {'drones': 0, 'operators': 0, 'lines': 0, 'sensor': 0}
         plural = {'drone': 'drones', 'operator': 'operators', 'line': 'lines', 'sensor': 'sensor'}
-        for drawn in self._drawn.values():
-            items[plural[drawn.kind]] += 1
+        for d in drawn.values():
+            items[plural[d.kind]] += 1
         with self._status_lock:
+            if stop is not self._stop_event:
+                return
             self._deletes_sent += deletes
             self._ticks += 1
             self._last_tick_at = now_w

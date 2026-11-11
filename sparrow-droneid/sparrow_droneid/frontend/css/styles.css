@@ -1324,6 +1324,7 @@ html, body {
 .tak-days-warn { color: var(--tak-warn, #B45309); }
 .tak-days-bad  { color: var(--tak-bad, #DC2626); font-weight: 600; }
 .tak-err       { color: var(--tak-bad, #DC2626); }
+.tak-err-old   { color: var(--text-muted, #6B7280); font-style: italic; }
 .tak-pkg-result { overflow-wrap: anywhere; }
 .tak-pkg-result ul {
   margin: 4px 0;

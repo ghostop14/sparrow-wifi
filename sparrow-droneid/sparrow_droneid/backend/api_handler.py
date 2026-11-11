@@ -2383,8 +2383,9 @@ def api_tak_certs_get(req: RequestHandler):
     if not _require_crypto(req):
         return
     store = _cot_engine.cert_store
+    cfg, _warnings = tak_config.normalize(tak_config.read_raw(_require_db()))
     req._send_ok({'client': store.client_info(), 'ca': store.ca_info(),
-                  'enrolled': store.enrolled_info()})
+                  'enrolled': store.enrolled_info(tak_enrollment.cache_subdir(cfg))})
 
 
 @router.route('POST', '/api/v1/tak/certs/client', spec={
@@ -2576,6 +2577,9 @@ def api_tak_enroll(req: RequestHandler):
 
 # ---- data package ---------------------------------------------------------------------
 
+# Secrets that belong to the previously configured server (cleared when an import changes it).
+_PACKAGE_CLEARED_SECRETS = ('tak_enroll_password', 'tak_auth_password', 'tak_tls_client_password')
+
 _PACKAGE_NEXT_STEP = {
     'enrollment': 'Enter the enrollment username and password for this TAK Server, then Save.',
     'certificate': 'Client certificate imported. Enable the TAK output and Save.',
@@ -2652,10 +2656,24 @@ def api_tak_package(req: RequestHandler):
                            fmt=_file_format(pkg.client_bytes))
         imported['client'] = {'subject': client_mat.subject,
                               'not_after': tak_certs.iso_z(client_mat.not_after)}
-    for key in patch:
+    # An import that points the output at a different server must not leave the
+    # secrets saved for the OLD server behind: the next connect or enrollment would
+    # send them (HTTP basic / <auth>) to whatever host the package names.
+    old_raw = tak_config.read_raw(_require_db())
+    target_changed = (
+        old_raw.get('cot_address', '').strip().lower() != str(patch['cot_address']).strip().lower()
+        or old_raw.get('cot_port', '').strip() != str(patch['cot_port']))
+    cleared: list = []
+    if target_changed:
+        for key in _PACKAGE_CLEARED_SECRETS:
+            if old_raw.get(key):
+                merged[key] = ''
+                cleared.append(key)
+    for key in list(patch) + cleared:
         _require_db().set_setting(key, merged[key])
     _apply_tak_config(restart_tls=True)
     req._send_ok({
+        'cleared_secrets': cleared,
         'kind': pkg.kind,
         'description': pkg.description,
         'host': pkg.host, 'port': pkg.port, 'transport': pkg.transport,

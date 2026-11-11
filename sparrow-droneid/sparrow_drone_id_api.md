@@ -903,14 +903,14 @@ UDP tests open and close a socket; TCP connects and closes; TLS connects, handsh
 
 ### POST /api/v1/tak/package
 
-Body `{"data_b64": "<base64 zip>", "filename"?}` (decoded at most 2 MiB). Imports an ATAK enrollment package, a certificate package or an iTAK package; the zip is read in memory and nothing is extracted. Everything is validated before anything is written; a bad package is a 400 and changes nothing. Applied: transport, host, port, CA truststore and client mode (`enroll` or `upload`), `tak_tls_verify` and `tak_tls_check_hostname` true. Never changed: `cot_enabled`, the enrollment credentials.
+Body `{"data_b64": "<base64 zip>", "filename"?}` (decoded at most 2 MiB). Imports an ATAK enrollment package, a certificate package or an iTAK package; the zip is read in memory and nothing is extracted. Everything is validated before anything is written; a bad package is a 400 and changes nothing. Applied: transport, host, port, CA truststore and client mode (`enroll` or `upload`), `tak_tls_verify` and `tak_tls_check_hostname` true. Never changed: `cot_enabled` (an import never enables the output) and the enrollment user name. When the import changes the host or port from the saved values, the stored secrets `tak_enroll_password`, `tak_auth_password` and `tak_tls_client_password` are cleared in the same write so they cannot be sent to the new server; the keys actually cleared are listed in `cleared_secrets`.
 
 ```json
 {"kind": "enrollment", "description": "TAK 127.0.0.1", "host": "127.0.0.1", "port": 8089,
  "transport": "tls", "imported": {"ca": {"count": 2, "subjects": ["CN=..."]}, "client": null},
  "enroll_required": true,
  "next_step": "Enter the enrollment username and password for this TAK Server, then Save.",
- "warnings": [], "settings": {"...": "..."}}
+ "warnings": [], "cleared_secrets": [], "settings": {"...": "..."}}
 ```
 
 `kind` is `enrollment`, `certificate` or `truststore_only`.

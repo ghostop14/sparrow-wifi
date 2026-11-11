@@ -2665,8 +2665,14 @@ const SettingsManager = (() => {
     row('Deletes', `${_esc(st.deletes_sent ?? 0)} sent / ${_esc(st.deletes_on_stop ?? 0)} on stop`);
     const sp = st.sensor_point;
     row('Sensor point', sp ? val(sp.reason) : dash);
+    // An error older than the current connection is history, not a fault: mute it.
+    const errAt = st.last_error_at ? new Date(st.last_error_at).getTime() : NaN;
+    const connAt = st.connected_since ? new Date(st.connected_since).getTime() : NaN;
+    const errIsOld = st.connected && !isNaN(errAt) && !isNaN(connAt) && errAt < connAt;
     row('Last error', st.last_error
-      ? `<span class="tak-err">${_esc(st.last_error)}</span>${st.last_error_at ? ` <span class="text-muted">(${_esc(_fmtTime(st.last_error_at))})</span>` : ''}`
+      ? (st.last_error_at
+          ? `<span class="${errIsOld ? 'tak-err-old' : 'tak-err'}">${_esc(_fmtTime(st.last_error_at))} &mdash; ${_esc(st.last_error)}</span>`
+          : `<span class="${errIsOld ? 'tak-err-old' : 'tak-err'}">${_esc(st.last_error)}</span>`)
       : dash);
 
     if (st.tls) {
@@ -2760,6 +2766,7 @@ const SettingsManager = (() => {
       ${r.description ? `<div class="text-muted">${_esc(r.description)}</div>` : ''}
       ${items.length ? `<ul class="mb-1 ps-3">${items.map(i => `<li>${i}</li>`).join('')}</ul>` : ''}
       ${warns ? `<ul class="mb-1 ps-3">${warns}</ul>` : ''}
+      ${(r.cleared_secrets || []).length ? `<div class="tak-days-warn">The server changed, so these saved secrets were cleared: ${(r.cleared_secrets || []).map(k => `<code>${_esc(k)}</code>`).join(', ')}. Re-enter them for the new server.</div>` : ''}
       ${r.next_step ? `<div><strong>${_esc(r.next_step)}</strong></div>` : ''}`;
   }
 

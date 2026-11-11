@@ -125,9 +125,16 @@ def _cert_pem(cert) -> bytes:
 
 def _load_key(block: bytes, password: str):
     from cryptography.hazmat.primitives import serialization
+    pw = password.encode('utf-8') if password else None
     try:
-        return serialization.load_pem_private_key(
-            block, password.encode('utf-8') if password else None)
+        try:
+            return serialization.load_pem_private_key(block, pw)
+        except TypeError as exc:
+            # A password was typed for a key that turns out not to be encrypted
+            # (typically the truststore password reused for a plain PEM key).
+            if pw is not None and 'not encrypted' in str(exc).lower():
+                return serialization.load_pem_private_key(block, None)
+            raise
     except TypeError:
         raise CertError(WRONG_PASSWORD + ' (the key is encrypted and needs a password)')
     except ValueError as exc:
@@ -442,9 +449,11 @@ class CertStore:
         meta = self._read_json('client_meta.json') or {}
         return self._cert_info('client_cert.pem', meta, 'upload')
 
-    def enrolled_info(self) -> Optional[dict]:
-        meta = self._read_json('enroll/meta.json') or {}
-        info = self._cert_info('enroll/cert.pem', {
+    def enrolled_info(self, subdir: str = 'enroll') -> Optional[dict]:
+        """Summary of an enrolled certificate; *subdir* is its cache directory
+        (``enroll/<identity>``, see enrollment.cache_dir)."""
+        meta = self._read_json(subdir + '/meta.json') or {}
+        info = self._cert_info(subdir + '/cert.pem', {
             'subject': '', 'issuer': '', 'not_after': meta.get('not_after'),
             'source': 'enrollment', 'filename': '', 'format': 'pem',
             'stored_at': meta.get('enrolled_at')}, 'enrollment')

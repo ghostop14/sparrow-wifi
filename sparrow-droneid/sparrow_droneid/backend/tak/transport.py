@@ -403,9 +403,13 @@ class CotTransport:
                 if self._stop.is_set():
                     raise TransportError('stopping')
                 connected_at = self._monotonic()
+                # Purge stale updates BEFORE the epoch moves: the engine resends
+                # everything the moment it sees the new epoch, and that resend
+                # must never be caught by this purge.
+                if ever_connected and not is_udp:
+                    self._purge_updates()
                 with self._stats_lock:
                     self._epoch += 1
-                    epoch = self._epoch
                     if ever_connected and not is_udp:
                         self._reconnects += 1
                     self._connected = True
@@ -417,8 +421,6 @@ class CotTransport:
                         if not self._tls['server_subject']:
                             self._tls['server_subject'] = _peer_subject_unverified(sock)
                 ever_connected = True
-                if epoch > 1 and not is_udp:
-                    self._purge_updates()
                 if not is_udp and cfg.auth_username:
                     sock.settimeout(self._send_timeout_s)
                     sock.sendall(build_auth(cfg.auth_username, cfg.auth_password,
@@ -443,9 +445,16 @@ class CotTransport:
                     with self._stats_lock:
                         self._messages_sent += 1
                         self._last_send_at = datetime.now(timezone.utc)
-            except (OSError, ssl.SSLError, CertError, TransportError, ConnectionError) as exc:
+            except Exception as exc:
+                # Any failure (not just socket errors: a bad certificate file can raise
+                # ValueError / TypeError / UnsupportedAlgorithm) is recorded and retried
+                # with the normal backoff; the sender thread must never die.
                 if self._stop.is_set():
                     break
+                if not isinstance(exc, (OSError, ssl.SSLError, CertError, TransportError,
+                                        ConnectionError)):
+                    logger.debug('TAK sender: unexpected %s', exc.__class__.__name__,
+                                 exc_info=True)
                 if in_flight is not None:
                     self._finish_one()
                 message = describe_error(exc, cfg.host, cfg.port)
