@@ -374,9 +374,13 @@ class TakEngine:
                     sensor_sent_m = now_m
                     sensor_sent_at = now_w
 
-        # 6. One hand-off (skipped when this session was superseded meanwhile).
+        # 6. One hand-off, skipped only when this session was superseded meanwhile.
+        # A session that is merely STOPPING still hands its batch over: this tick
+        # already removed vanished UIDs from _drawn, so its deletes exist nowhere
+        # else, and _stop_locked joins this thread (transport still open) before it
+        # builds the stop-time deletes from what is left in _drawn.
         with self._state_lock:
-            if stop.is_set() or stop is not self._stop_event:
+            if stop is not self._stop_event:
                 return
             if batch:
                 transport.enqueue(batch)

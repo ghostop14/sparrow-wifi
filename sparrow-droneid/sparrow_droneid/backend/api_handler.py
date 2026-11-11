@@ -2659,10 +2659,13 @@ def api_tak_package(req: RequestHandler):
     # An import that points the output at a different server must not leave the
     # secrets saved for the OLD server behind: the next connect or enrollment would
     # send them (HTTP basic / <auth>) to whatever host the package names.
+    # The transport counts too: a package that keeps host:port but switches tls ->
+    # tcp would otherwise send the stored <auth> password in clear text.
     old_raw = tak_config.read_raw(_require_db())
     target_changed = (
         old_raw.get('cot_address', '').strip().lower() != str(patch['cot_address']).strip().lower()
-        or old_raw.get('cot_port', '').strip() != str(patch['cot_port']))
+        or old_raw.get('cot_port', '').strip() != str(patch['cot_port'])
+        or old_raw.get('tak_transport', '').strip().lower() != str(patch['tak_transport']).strip().lower())
     cleared: list = []
     if target_changed:
         for key in _PACKAGE_CLEARED_SECRETS:

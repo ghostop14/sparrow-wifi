@@ -451,7 +451,7 @@ class CertStore:
 
     def enrolled_info(self, subdir: str = 'enroll') -> Optional[dict]:
         """Summary of an enrolled certificate; *subdir* is its cache directory
-        (``enroll/<identity>``, see enrollment.cache_dir)."""
+        (``enroll/<identity>``, see enrollment.cache_subdir)."""
         meta = self._read_json(subdir + '/meta.json') or {}
         info = self._cert_info(subdir + '/cert.pem', {
             'subject': '', 'issuer': '', 'not_after': meta.get('not_after'),

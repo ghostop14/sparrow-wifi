@@ -271,6 +271,42 @@ class EngineRegression(unittest.TestCase):
         self.assertEqual(FakeTransport.instances[0].batches, [])
 
 
+    def test_tick_racing_stop_still_sends_its_deletes(self):
+        # A drone vanishes in the same tick as stop(): that tick removed the UIDs
+        # from _drawn, so its batch is the only place their deletes exist.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        clock = FakeClock()
+        drones = [('K', make_device(clock, operator_lat=0.0, operator_lon=0.0))]
+        gate = threading.Event()
+        entered = threading.Event()
+        block = {'on': False}
+
+        class Gps(FakeGps):
+            def to_dict(self):
+                if block['on'] and threading.current_thread().name == 'tak-emit':
+                    entered.set()
+                    gate.wait(5)
+                return super().to_dict()
+        FakeTransport.instances = []
+        eng = TakEngine(cert_dir=os.path.join(tmp.name, 'c'), drone_source=lambda: list(drones),
+                        gps_engine=Gps(), monotonic=clock.monotonic, wallclock=clock.wallclock,
+                        transport_factory=FakeTransport, enrollment_factory=FakeEnrollment)
+        self.addCleanup(eng.stop)
+        self.addCleanup(gate.set)
+        eng.configure(default_cfg(cot_enabled=True, tak_sensor_enabled=False))
+        self.assertTrue(wait_for(lambda: len(eng._drawn) == 1, 5))
+        tr = FakeTransport.instances[-1]
+        drones.clear()
+        block['on'] = True
+        eng.notify_detection()
+        self.assertTrue(entered.wait(5))
+        threading.Timer(0.1, gate.set).start()      # the tick resumes while stop() joins
+        eng.stop()
+        kinds = [k for b in tr.batches for (k, u, p) in (b[1] if isinstance(b, tuple) else b)]
+        self.assertEqual(kinds.count('delete'), 1)
+
+
 class CertRegression(unittest.TestCase):
 
     def test_unencrypted_key_with_a_password_loads(self):
@@ -294,8 +330,8 @@ class CertRegression(unittest.TestCase):
 
 class PackageSecretsRegression(ApiCase):
 
-    def package(self, host='evil.example', port=8089):
-        entries = [('count', '1'), ('connectString0', '%s:%d:ssl' % (host, port)),
+    def package(self, host='evil.example', port=8089, proto='ssl'):
+        entries = [('count', '1'), ('connectString0', '%s:%d:%s' % (host, port, proto)),
                    ('caLocation0', 'ts.p12'), ('caPassword0', 'atakatak'),
                    ('enrollForCertificateWithTrust0', 'true')]
         pref = ('<preferences><preference name="cot_streams">%s</preference></preferences>'
@@ -334,6 +370,15 @@ class PackageSecretsRegression(ApiCase):
         self.assertEqual(r.status, 200)
         self.assertEqual(r.body['cleared_secrets'], [])
         self.assertEqual(self.stored('tak_enroll_password'), 'enroll-secret')
+
+    def test_transport_downgrade_on_same_server_clears_secrets(self):
+        self.seed()
+        r = self.call(api.api_tak_package, {'data_b64': self.package('good.example', 8089, 'tcp')})
+        self.assertEqual(r.status, 200, r.body)
+        self.assertEqual(self.stored('tak_transport'), 'tcp')
+        self.assertIn('tak_auth_password', r.body['cleared_secrets'])
+        self.assertEqual(self.stored('tak_auth_password'), '')
+        self.assertEqual(self.stored('tak_enroll_password'), '')
 
     def test_only_secrets_that_were_set_are_listed(self):
         self.db.set_setting('tak_enroll_password', 'x')
