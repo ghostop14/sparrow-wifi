@@ -113,8 +113,8 @@ interfaceApp = None
 _INTERFACE_APPS = [
     # (executable, full command, regex to extract interface names)
     ('iwconfig', ['iwconfig'],                                               r'^(w.*?) .*'),
-    ('iw',       ['iw', 'dev'],                                              r'Interface (w[a-z0-9]+)'),
-    ('nmcli',    ['nmcli', '--colors', 'no', '--terse', 'device', 'status'], r'^(w[a-z0-9]+):wifi:'),
+    ('iw',       ['iw', 'dev'],                                              r'Interface (w[\w-]+)'),
+    ('nmcli',    ['nmcli', '--colors', 'no', '--terse', 'device', 'status'], r'^(w[\w-]+):wifi:'),
 ]
 
 def _findInterfaceApp():
