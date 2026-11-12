@@ -989,18 +989,61 @@ class FalconWirelessEngine(object):
 
         return result.returncode
 
+    # Returns the current nl80211 interface type ('managed', 'monitor', ...),
+    # or None if the interface cannot be queried.
+    def getInterfaceMode(interface):
+        result = subprocess.run(['iw', 'dev', interface, 'info'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        match = re.search(r'type\s+(\w+)', result.stdout.decode('UTF-8', errors='replace'))
+        return match.group(1) if match else None
+
     # Creating a monitor interface based on a wireless interface
     def airmonStart(interface):
-        # Checking for processes and configs
-        result = subprocess.run(['airmon-ng', 'start', interface], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-        # returncode will be 0 on success.  This is airmon-ng's result code
-        return result.returncode
-        
+        # Checking for processes and configs. airmon-ng's output is captured
+        # rather than discarded so refusals and warnings are visible on the
+        # console, and the actual interface mode is verified afterwards
+        # because airmon-ng's exit code is unreliable on refusal (it can
+        # print a warning and still exit 0).
+        result = subprocess.run(['airmon-ng', 'start', interface], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        airmonOutput = result.stdout.decode('UTF-8', errors='replace').strip()
+        if airmonOutput:
+            print(airmonOutput)
+        if FalconWirelessEngine.getInterfaceMode(interface) == 'monitor':
+            return 0
+        return result.returncode if result.returncode != 0 else 1
+
     def airmonStop(interface):
-        # Checking for processes and configs
-        result = subprocess.run(['airmon-ng', 'stop', interface], stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-        # returncode will be 0 on success.  This is airmon-ng's result code
-        return result.returncode
+        # airmon-ng 'stop' is name-convention based in some versions (it
+        # expects wlanXmon-style interfaces) and can refuse the very
+        # interface its own 'start' switched into monitor mode - printing
+        # the refusal where nobody sees it when spawned from a GUI, while
+        # still exiting 0, which made the stop button a silent no-op.
+        # Restore managed mode directly with iw - the path modern drivers
+        # actually implement - and fall back to airmon-ng only for setups
+        # where the iw path fails.
+        iwFailed = False
+        for curCommand in [ ['ip', 'link', 'set', interface, 'down'],
+                            ['iw', 'dev', interface, 'set', 'type', 'managed'],
+                            ['ip', 'link', 'set', interface, 'up'] ]:
+            result = subprocess.run(curCommand, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            if result.returncode != 0:
+                commandOutput = result.stdout.decode('UTF-8', errors='replace').strip()
+                if commandOutput:
+                    print(commandOutput)
+                iwFailed = True
+                break
+
+        if (not iwFailed) and (FalconWirelessEngine.getInterfaceMode(interface) == 'managed'):
+            return 0
+
+        # iw path failed (exotic driver/tool setups) - try airmon-ng and
+        # surface its output either way.
+        result = subprocess.run(['airmon-ng', 'stop', interface], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        airmonOutput = result.stdout.decode('UTF-8', errors='replace').strip()
+        if airmonOutput:
+            print(airmonOutput)
+        if FalconWirelessEngine.getInterfaceMode(interface) == 'managed':
+            return 0
+        return result.returncode if result.returncode != 0 else 1
         
     # Starting/stopping monitoring
     def airodumpStart(interface, bands='ag', tmpDir='/dev/shm', basename='falconairodump'):
