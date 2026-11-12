@@ -2498,18 +2498,24 @@ class mainWindow(QMainWindow):
         
         if not self.scanRunning:
             # Want to stop a running scan (self.scanRunning represents the NEW pressed state)
-            if self.scanThread:
+            # Local reference: this wait loop pumps the event loop, which can
+            # deliver a queued errMsg signal - onErrMsg's teardown would then
+            # null self.scanThread out from under this frame and crash the
+            # loop below with AttributeError on None. The identity check
+            # lets only one caller perform the teardown.
+            scanThread = self.scanThread
+            if scanThread:
                 self.setWaitCursor()
                 
-                self.scanThread.signalStop = True
+                scanThread.signalStop = True
 
-                while (self.scanThread.threadRunning):
+                while (scanThread.threadRunning):
                     self.statusBar().showMessage('Waiting for active scan to terminate...')
                     QApplication.processEvents()
                     sleep(0.05)
 
-                self.scanThread = None
-                
+                if self.scanThread is scanThread:
+                    self.scanThread = None
                 self.setArrowCursor()
                 
             self.statusBar().showMessage('Ready')
@@ -2578,24 +2584,33 @@ class mainWindow(QMainWindow):
         
         if ((errCode == WirelessNetwork.ERR_NETDOWN) or (errCode == WirelessNetwork.ERR_OPNOTSUPPORTED) or 
             (errCode == WirelessNetwork.ERR_OPNOTPERMITTED)):
-            if self.scanThread:
-                self.scanThread.signalStop = True
+            # Local reference: the wait loop pumps the event loop, which can
+            # deliver another queued errMsg and re-enter this method. The
+            # nested call used to complete the teardown and null
+            # self.scanThread out from under this frame, crashing the outer
+            # frame with AttributeError on None. With a local reference the
+            # loop stays valid, and the identity check ensures only the
+            # first caller through performs the teardown once.
+            scanThread = self.scanThread
+            if scanThread:
+                scanThread.signalStop = True
                 
-                while (self.scanThread.threadRunning):
+                while (scanThread.threadRunning):
                     QApplication.processEvents()
                     sleep(0.05)
 
-                self.scanThread = None
-                self.scanRunning = False
-                self.btnScan.setChecked(False)
-                
-                # Undo button
-                self.btnScan.setStyleSheet("background-color: rgba(2,128,192,255); border: none;")
-                self.btnScan.setText('&Scan')
-                self.menuRemoteAgent.setEnabled(True)
-                self.scanModeCombo.setEnabled(True)
-                self.huntChannels.setEnabled(True)
-                self.combo.setEnabled(True)
+                if self.scanThread is scanThread:
+                    self.scanThread = None
+                    self.scanRunning = False
+                    self.btnScan.setChecked(False)
+
+                    # Undo button
+                    self.btnScan.setStyleSheet("background-color: rgba(2,128,192,255); border: none;")
+                    self.btnScan.setText('&Scan')
+                    self.menuRemoteAgent.setEnabled(True)
+                    self.scanModeCombo.setEnabled(True)
+                    self.huntChannels.setEnabled(True)
+                    self.combo.setEnabled(True)
 
     def plotSSID(self, curSeries, curNet):
         tmpssid = curNet.ssid
