@@ -1,5 +1,9 @@
 QScintilla
+# Chart backend: PyQtChart (PyQt5) or PyQt6.QtCharts if your distro ships it.
+# If no QtChart module is installed, sparrow-wifi automatically falls back to
+# pyqtgraph, so it is OPTIONAL - uncomment it if your distro has no QtChart:
 PyQtChart
+#pyqtgraph
 gps3
 dronekit
 manuf

@@ -11,12 +11,12 @@
 ##################################################################
 #
 
-from PyQt5.QtWidgets import QDialog, QLabel, QTextEdit, QComboBox, QTableWidget,QTableWidgetItem, QPushButton, QHeaderView
-from PyQt5.QtWidgets import QDesktopWidget, QApplication, QMessageBox, QMenu, QAction, QFileDialog, QAbstractItemView
-from PyQt5.QtGui import QColor,QPalette, QFont, QIcon
-from PyQt5 import QtCore
-from PyQt5.QtCore import QTimer
-from PyQt5.QtCore import Qt
+from sparrowqt import QDialog, QLabel, QTextEdit, QComboBox, QTableWidget, QTableWidgetItem, QPushButton, QHeaderView
+from sparrowqt import QApplication, QMessageBox, QMenu, QAction, QFileDialog, QAbstractItemView, screen_center
+from sparrowqt import QColor, QPalette, QFont, QIcon
+from sparrowqt import QtCore
+from sparrowqt import QTimer
+from sparrowqt import Qt
 
 import datetime
 # from time import sleep
@@ -911,16 +911,8 @@ class AdvancedScanDialog(QDialog):
         self.btnExport.setGeometry(size.width()-130, size.height()//2+33, 120, 30)
         
     def center(self):
-        # Get our geometry
-        qr = self.frameGeometry()
-        # Find the desktop center point
-        cp = QDesktopWidget().availableGeometry().center()
-        # Move our center point to the desktop center point
-        qr.moveCenter(cp)
-        # Move the top-left point of the application window to the top-left point of the qr rectangle, 
-        # basically centering the window
-        self.move(qr.topLeft())
-
+        # Qt5/Qt6 compatible screen centering
+        screen_center(self)
     def closeEvent(self, event):
         try:
             # Stop active AP/Client scans if active
@@ -1088,8 +1080,7 @@ class AdvancedScanDialog(QDialog):
         outputFile.close()
         
     def saveFileDialog(self, fileSpec="CSV Files (*.csv);;All Files (*)"):    
-        options = QFileDialog.Options()
-        options |= QFileDialog.DontUseNativeDialog
+        options = QFileDialog.DontUseNativeDialog
         fileName, _ = QFileDialog.getSaveFileName(self,"QFileDialog.getSaveFileName()","",fileSpec, options=options)
         if fileName:
             return fileName
@@ -2663,4 +2654,4 @@ if __name__ == '__main__':
     advancedScanDialog = AdvancedScanDialog()
     advancedScanDialog.exec()
 
-    app.exec_()
+    app.exec()

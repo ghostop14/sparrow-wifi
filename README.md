@@ -6,7 +6,7 @@ The project includes four components that work standalone or together:
 
 | Component | Interface | Purpose |
 |-----------|-----------|---------|
-| **Sparrow-WiFi** | PyQt5 desktop GUI | WiFi/BT scanning, spectrum analysis, source tracking, wardriving |
+| **Sparrow-WiFi** | Qt desktop GUI (PyQt5 or PyQt6) | WiFi/BT scanning, spectrum analysis, source tracking, wardriving |
 | **Sparrow Agent** | Headless HTTP server | Remote scanning, drone/rover deployments, third-party integration |
 | **Sparrow DroneID** | Web-based (browser) | FAA RemoteID drone detection via WiFi and Bluetooth LE |
 | **Sparrow Elastic Bridge** | Headless CLI service | ECS 8.17 indexing of WiFi/BT observations into Elasticsearch / OpenSearch |
@@ -149,8 +149,9 @@ Synthetic test alerts emitted by the **Send Test Message** button use `rule.cate
 
 | Requirement | Sparrow-WiFi (GUI) | Sparrow DroneID (Web) |
 |-------------|-------------------|----------------------|
-| **OS** | Ubuntu 20.04+, Kali 2020.3+, Debian 11+ | Ubuntu 20.04+, Kali, Debian 11+, Raspberry Pi OS |
+| **OS** | Ubuntu 20.04+, Kali 2020.3+, Debian 11+, Gentoo/Pentoo, BlackArch | Ubuntu 20.04+, Kali, Debian 11+, Raspberry Pi OS |
 | **Python** | 3.8+ | 3.8+ |
+| **Qt binding** | PyQt5 **or** PyQt6 (see charting note below) | n/a |
 | **Root** | Required (iw scan) | Required (monitor mode, BLE) |
 | **WiFi adapter** | Any with `iw` support | Monitor-mode capable (e.g., rtl8812au, Intel AX200) |
 | **Bluetooth** | Optional (hci adapter, Ubertooth) | Optional (any BLE-capable adapter for RemoteID) |
@@ -175,7 +176,13 @@ sudo apt install python3-pip python3-pyqt5 python3-pyqt5.qtchart \
                  gpsd gpsd-clients python3-tk python3-setuptools
 ```
 
+> **Qt5 and Qt6 are both supported.** The GUI runs on PyQt5 (with PyQtChart for the spectrum charts) *or* PyQt6. Under PyQt6 the same QtChart module is used where distros ship it (`PyQt6.QtCharts`). **If no QtChart module is available, sparrow-wifi automatically falls back to [pyqtgraph](https://pyqtgraph.readthedocs.io/) for the spectrum charts** &mdash; this is the supported path on distros that do not package QtChart for Python (e.g., Gentoo ships `dev-python/pyqt6` and `dev-python/pyqtgraph` but no PyQtChart). If you install via pip under PyQt6, use `pip install pyqtgraph` as the chart backend.
+
+> **Gentoo / Pentoo users:** `emerge --ask dev-python/pyqt6 dev-python/pyqtgraph dev-python/numpy dev-python/python-dateutil dev-python/requests`; the remaining Python deps (`gps3`, `manuf`) are optional at runtime &mdash; GPS telemetry and OUI vendor lookups degrade gracefully when they are absent.
+
 > **Kali users:** PyQt5, PyQtChart, and aircrack-ng (for the Falcon plugin) are typically pre-installed. You'll mostly just need `gpsd`, `gpsd-clients`, and the Python deps below.
+
+> **BlackArch users (and any distro via venv):** the Qt5/Qt6 dual-compatibility and 6 GHz support were verified end-to-end on BlackArch via the virtualenv install in Option B below (PyQt5 5.15 + QtChart, and separately on the pyqtgraph fallback path), on mixed WiFi 6/7 hardware. The venv route works on any Linux distribution regardless of which Qt bindings the distro packages.
 
 Python dependencies &mdash; choose either approach:
 
@@ -246,6 +253,15 @@ For monitor mode (required by Sparrow DroneID and the Falcon plugin), adapter an
 - **Test first:** `iw phy <phy> info | grep monitor` or `iwconfig <iface>` to verify capabilities
 
 For Sparrow DroneID specifically, the adapter must deliver raw 802.11 frames in monitor mode. Some Intel adapters report monitor mode as supported but silently drop frames at the firmware level. The application detects this and warns you.
+
+### 6 GHz (WiFi 6E) Support
+
+Sparrow-WiFi is band-aware for all three WiFi bands:
+
+- **Discovery.** `iw` does not report a DS Parameter Set channel for 6 GHz BSSIDs, so sparrow-wifi derives the channel from the center frequency using the verified IEEE 802.11ax 6 GHz channel map (channels 1&ndash;233, F(N) = 5955 + (N&minus;1)&times;5 MHz, plus the special guard-band channel 2 @ 5935 MHz).
+- **WiFi generation.** The network table includes a **WiFi Gen** column showing `WiFi 4` (11n), `WiFi 5` (11ac), `WiFi 6` (11ax on 2.4/5 GHz) or `WiFi 6E` (6 GHz), derived from the band and the presence of HE (802.11ax) information elements in the scan.
+- **Channel hunting.** 6 GHz channel numbers (1&ndash;233) collide with 2.4 GHz (1&ndash;14) and 5 GHz (36&ndash;196) numbers, so the channel-hunt field accepts a `6:` prefix to explicitly select a 6 GHz channel: `1,6,36` hunts the legacy channels, `6:1,6:37` hunts 6 GHz channels 1 and 37, and `6:1,1` hunts both bands' channel 1. Plain numbers keep the historical 2.4/5 GHz resolution; channels that only exist in 6 GHz (e.g. `233`) resolve automatically.
+- **Charts.** The 2.4 GHz and 5 GHz channel charts plot networks by frequency band (not by raw channel number), so 6 GHz networks &mdash; whose channel numbers collide with the other bands &mdash; are never misplaced on them. 6 GHz networks appear in the table with their channel, frequency, and WiFi 6E generation; a dedicated 6 GHz spectrum chart is planned.
 
 ---
 

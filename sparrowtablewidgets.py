@@ -18,8 +18,8 @@
 # Boston, MA 02110-1301, USA.
 # 
 
-from PyQt5.QtWidgets import QTableWidgetItem
-from PyQt5.QtCore import Qt
+from sparrowqt import QTableWidgetItem
+from sparrowqt import Qt
 from dateutil import parser
 
 # ------------------  Table Sorting by Number Class  ------------------------------

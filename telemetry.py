@@ -18,16 +18,16 @@
 # Boston, MA 02110-1301, USA.
 # 
 
-from PyQt5.QtWidgets import QDialog, QApplication,QDesktopWidget
-from PyQt5.QtWidgets import QTableWidget, QHeaderView,QTableWidgetItem, QMessageBox, QFileDialog, QMenu, QAction
-# from PyQt5.QtWidgets import QLabel, QComboBox, QLineEdit, QPushButton, QFileDialog
-#from PyQt5.QtCore import Qt
-from PyQt5 import QtWidgets
-from PyQt5 import QtCore
-from PyQt5.QtCore import Qt
-from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
-from PyQt5.QtGui import QPen, QFont, QBrush, QColor, QPainter
-from PyQt5.QtWidgets import QPushButton
+from sparrowqt import QDialog, QApplication
+from sparrowqt import QTableWidget, QHeaderView, QTableWidgetItem, QMessageBox, QFileDialog, QMenu, QAction
+# from sparrowqt import QLabel, QComboBox, QLineEdit, QPushButton, QFileDialog
+# from sparrowqt import Qt
+from sparrowqt import QtWidgets
+from sparrowqt import QtCore, available_geometry, screen_center
+from sparrowqt import Qt
+from sparrowchart import SparrowChart as QChart, SparrowChartView as QChartView, SparrowLineSeries as QLineSeries, SparrowValueAxis as QValueAxis
+from sparrowqt import QPen, QFont, QBrush, QColor, QPainter
+from sparrowqt import QPushButton
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -144,7 +144,7 @@ class TelemetryDialog(QDialog):
         self.linesBeforeFlush = 10
         self.currentLine = 0
         
-        desktopSize = QApplication.desktop().screenGeometry()
+        desktopSize = available_geometry()
         self.setGeometry(self.geometry().x(), self.geometry().y(), desktopSize.width() // 2,desktopSize.height() // 2)
         
         self.setWindowTitle(winTitle)
@@ -237,16 +237,8 @@ class TelemetryDialog(QDialog):
         self.locationTable.setGeometry(10, int(self.geometry().height()/2 + 50), int(self.geometry().width()-20), int(self.geometry().height()/2-60))
 
     def center(self):
-        # Get our geometry
-        qr = self.frameGeometry()
-        # Find the desktop center point
-        cp = QDesktopWidget().availableGeometry().center()
-        # Move our center point to the desktop center point
-        qr.moveCenter(cp)
-        # Move the top-left point of the application window to the top-left point of the qr rectangle, 
-        # basically centering the window
-        self.move(qr.topLeft())
-
+        # Qt5/Qt6 compatible screen centering
+        screen_center(self)
     def showNTContextMenu(self, pos):
         curRow = self.locationTable.currentRow()
         
@@ -366,8 +358,7 @@ class TelemetryDialog(QDialog):
         outputFile.close()
         
     def saveFileDialog(self):    
-        options = QFileDialog.Options()
-        options |= QFileDialog.DontUseNativeDialog
+        options = QFileDialog.DontUseNativeDialog
         fileName, _ = QFileDialog.getSaveFileName(self,"QFileDialog.getSaveFileName()","","CSV Files (*.csv);;All Files (*)", options=options)
         if fileName:
             return fileName
@@ -545,7 +536,7 @@ class TelemetryDialog(QDialog):
        
     def showTelemetry(parent = None):
         dialog = TelemetryDialog(parent)
-        result = dialog.exec_()
+        result = dialog.exec()
         return (result == QDialog.Accepted)
 
 class BluetoothTelemetry(TelemetryDialog):
@@ -750,5 +741,4 @@ if __name__ == '__main__':
     dialog.show()
     dialog.updateData(50)
     #print("{} {} {}".format(date, time, ok))
-    app.exec_()
-
+    app.exec()

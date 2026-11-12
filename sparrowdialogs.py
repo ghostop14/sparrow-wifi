@@ -18,11 +18,11 @@
 # Boston, MA 02110-1301, USA.
 #
 
-from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QApplication, QLabel, QComboBox, QLineEdit, QPushButton, QAbstractItemView
-from PyQt5.QtWidgets  import QFileDialog, QSpinBox, QDesktopWidget, QMessageBox, QTableWidget, QHeaderView,QTableWidgetItem,  QMenu, QAction
+from sparrowqt import QDialog, QDialogButtonBox, QApplication, QLabel, QComboBox, QLineEdit, QPushButton, QAbstractItemView, QSpinBox
+from sparrowqt import QFileDialog, QMessageBox, QTableWidget, QHeaderView, QTableWidgetItem, QMenu, QAction
 from sparrowtablewidgets import DateTableWidgetItem, FloatTableWidgetItem, IntTableWidgetItem
-from PyQt5.QtCore import Qt,QTimer
-from PyQt5 import QtCore
+from sparrowqt import Qt, QTimer
+from sparrowqt import QtCore, available_geometry, screen_center
 
 from socket import *
 import datetime
@@ -45,8 +45,7 @@ from wirelessengine import WirelessEngine
 
 # ------------------  Global File Dialogs ------------------------------
 def openFileDialog(fileSpec="CSV Files (*.csv);;All Files (*)"):
-    options = QFileDialog.Options()
-    options |= QFileDialog.DontUseNativeDialog
+    options = QFileDialog.DontUseNativeDialog
     fileName, _ = QFileDialog.getOpenFileName(None,"QFileDialog.getOpenFileName()", "",fileSpec, options=options)
     if fileName:
         return fileName
@@ -55,8 +54,7 @@ def openFileDialog(fileSpec="CSV Files (*.csv);;All Files (*)"):
 
 
 def saveFileDialog(fileSpec="CSV Files (*.csv);;All Files (*)"):
-    options = QFileDialog.Options()
-    options |= QFileDialog.DontUseNativeDialog
+    options = QFileDialog.DontUseNativeDialog
     fileName, _ = QFileDialog.getSaveFileName(None,"QFileDialog.getSaveFileName()","",fileSpec, options=options)
     if fileName:
         return fileName
@@ -417,8 +415,7 @@ class DBSettingsDialog(QDialog):
             self.setPostgresVisible(True)
 
     def saveFileDialog(self):
-        options = QFileDialog.Options()
-        options |= QFileDialog.DontUseNativeDialog
+        options = QFileDialog.DontUseNativeDialog
         fileName, _ = QFileDialog.getSaveFileName(self,"QFileDialog.getSaveFileName()","","SQLite3 Files (*.sqlite3);;All Files (*)", options=options)
         if fileName:
             return fileName
@@ -440,7 +437,7 @@ class DBSettingsDialog(QDialog):
     @staticmethod
     def getSettings(parent = None):
         dialog = DBSettingsDialog(parent)
-        result = dialog.exec_()
+        result = dialog.exec()
         # date = dialog.dateTime()
         dbSettings = dialog.getDBSettings()
         return (dbSettings, result == QDialog.Accepted)
@@ -513,16 +510,8 @@ class MapSettingsDialog(QDialog):
         self.setWindowTitle("Map Settings")
 
     def center(self):
-        # Get our geometry
-        qr = self.frameGeometry()
-        # Find the desktop center point
-        cp = QDesktopWidget().availableGeometry().center()
-        # Move our center point to the desktop center point
-        qr.moveCenter(cp)
-        # Move the top-left point of the application window to the top-left point of the qr rectangle,
-        # basically centering the window
-        self.move(qr.topLeft())
-
+        # Qt5/Qt6 compatible screen centering
+        screen_center(self)
     def onFileClicked(self):
         fileName = self.saveFileDialog()
 
@@ -532,8 +521,7 @@ class MapSettingsDialog(QDialog):
             self.fileinput.setText(fileName)
 
     def saveFileDialog(self):
-        options = QFileDialog.Options()
-        options |= QFileDialog.DontUseNativeDialog
+        options = QFileDialog.DontUseNativeDialog
         fileName, _ = QFileDialog.getSaveFileName(self,"QFileDialog.getSaveFileName()","","HTML Files (*.html);;All Files (*)", options=options)
         if fileName:
             return fileName
@@ -578,7 +566,7 @@ class MapSettingsDialog(QDialog):
     @staticmethod
     def getSettings(parent = None):
         dialog = MapSettingsDialog(parent)
-        result = dialog.exec_()
+        result = dialog.exec()
         # date = dialog.dateTime()
         mapSettings = dialog.getMapSettings()
         return (mapSettings, result == QDialog.Accepted)
@@ -671,8 +659,7 @@ class TelemetryMapSettingsDialog(MapSettingsDialog):
         super().done(result)
 
     def openFileDialog(self):
-        options = QFileDialog.Options()
-        options |= QFileDialog.DontUseNativeDialog
+        options = QFileDialog.DontUseNativeDialog
         fileName, _ = QFileDialog.getOpenFileName(self,"QFileDialog.getOpenFileName()", "","CSV Files (*.csv);;All Files (*)", options=options)
         if fileName:
             return fileName
@@ -707,7 +694,7 @@ class TelemetryMapSettingsDialog(MapSettingsDialog):
     @staticmethod
     def getSettings(parent = None):
         dialog = TelemetryMapSettingsDialog(parent)
-        result = dialog.exec_()
+        result = dialog.exec()
         # date = dialog.dateTime()
         mapSettings = dialog.getMapSettings()
         return (mapSettings, result == QDialog.Accepted)
@@ -816,16 +803,8 @@ class AgentListenerDialog(QDialog):
         self.agentTable.verticalHeader().setStyleSheet(headerStyle)
 
     def center(self):
-        # Get our geometry
-        qr = self.frameGeometry()
-        # Find the desktop center point
-        cp = QDesktopWidget().availableGeometry().center()
-        # Move our center point to the desktop center point
-        qr.moveCenter(cp)
-        # Move the top-left point of the application window to the top-left point of the qr rectangle,
-        # basically centering the window
-        self.move(qr.topLeft())
-
+        # Qt5/Qt6 compatible screen centering
+        screen_center(self)
     def spinChanged(self):
         self.agentListenerThread.signalStop = True
 
@@ -917,7 +896,7 @@ class AgentListenerDialog(QDialog):
     @staticmethod
     def getAgent(parent = None):
         dialog = AgentListenerDialog(parent)
-        result = dialog.exec_()
+        result = dialog.exec()
         # date = dialog.dateTime()
         agentIP, port = dialog.getAgentInfo()
         return (agentIP, port, result == QDialog.Accepted)
@@ -986,16 +965,8 @@ class GPSCoordDialog(QDialog):
         self.historyTable.verticalHeader().setStyleSheet(headerStyle)
 
     def center(self):
-        # Get our geometry
-        qr = self.frameGeometry()
-        # Find the desktop center point
-        cp = QDesktopWidget().availableGeometry().center()
-        # Move our center point to the desktop center point
-        qr.moveCenter(cp)
-        # Move the top-left point of the application window to the top-left point of the qr rectangle,
-        # basically centering the window
-        self.move(qr.topLeft())
-
+        # Qt5/Qt6 compatible screen centering
+        screen_center(self)
     def closeEvent(self, event):
         self.gpsTimer.stop()
         event.accept()
@@ -1181,7 +1152,7 @@ class BluetoothDialog(QDialog):
         self.setBlackoutColors()
 
         # self.setGeometry(self.geometry().x(), self.geometry().y(), 700,500)
-        desktopSize = QApplication.desktop().screenGeometry()
+        desktopSize = available_geometry()
         self.mainWidth = desktopSize.width() * 2 // 3
         self.mainHeight = desktopSize.height() // 2
         self.resize(self.mainWidth, self.mainHeight)
@@ -1350,16 +1321,8 @@ class BluetoothDialog(QDialog):
         self.bluetoothTable.verticalHeader().setStyleSheet(headerStyle)
 
     def center(self):
-        # Get our geometry
-        qr = self.frameGeometry()
-        # Find the desktop center point
-        cp = QDesktopWidget().availableGeometry().center()
-        # Move our center point to the desktop center point
-        qr.moveCenter(cp)
-        # Move the top-left point of the application window to the top-left point of the qr rectangle,
-        # basically centering the window
-        self.move(qr.topLeft())
-
+        # Qt5/Qt6 compatible screen centering
+        screen_center(self)
     def closeEvent(self, event):
         self.btTimer.stop()
 
@@ -2172,16 +2135,8 @@ class AgentConfigDialog(QDialog):
             self.recordInterfaceRunning.setEnabled(False)
 
     def center(self):
-        # Get our geometry
-        qr = self.frameGeometry()
-        # Find the desktop center point
-        cp = QDesktopWidget().availableGeometry().center()
-        # Move our center point to the desktop center point
-        qr.moveCenter(cp)
-        # Move the top-left point of the application window to the top-left point of the qr rectangle,
-        # basically centering the window
-        self.move(qr.topLeft())
-
+        # Qt5/Qt6 compatible screen centering
+        screen_center(self)
     def closeEvent(self, event):
         event.accept()
 
@@ -2271,16 +2226,8 @@ class RemoteFilesDialog(QDialog):
         self.fileTable.verticalHeader().setStyleSheet(headerStyle)
 
     def center(self):
-        # Get our geometry
-        qr = self.frameGeometry()
-        # Find the desktop center point
-        cp = QDesktopWidget().availableGeometry().center()
-        # Move our center point to the desktop center point
-        qr.moveCenter(cp)
-        # Move the top-left point of the application window to the top-left point of the qr rectangle,
-        # basically centering the window
-        self.move(qr.topLeft())
-
+        # Qt5/Qt6 compatible screen centering
+        screen_center(self)
     def closeEvent(self, event):
         event.accept()
 
@@ -2447,6 +2394,6 @@ if __name__ == '__main__':
         # testWin = RemoteFilesDialog(None,'127.0.0.1', 8020)
         testWin.exec()
 
-        app.exec_()
+        app.exec()
     except KeyboardInterrupt:
         kill(getpid(), signal.SIGTERM)

@@ -24,7 +24,14 @@ import os
 import socket
 from contextlib import closing
 #from gps3 import gps3
-from gps3.agps3threaded import AGPS3mechanism
+# gps3 is optional: GPS hardware/telemetry is a non-core feature. When the
+# module is absent the engine still starts and simply reports no GPS fix.
+hasGPS3 = False
+try:
+    from gps3.agps3threaded import AGPS3mechanism
+    hasGPS3 = True
+except ImportError:
+    AGPS3mechanism = None
 from time import sleep
 from threading import Thread
 
@@ -35,9 +42,11 @@ class GPSThread(Thread):
         self.threadRunning = False
         self.mainEngine = gpsEngine
 
-        self.agps_thread = AGPS3mechanism()  # Instantiate AGPS3 Mechanisms
-        self.agps_thread.stream_data()  # From localhost (), or other hosts, by example, (host='gps.ddns.net')
-        self.agps_thread.run_thread()  # Throttle time to sleep after an empty lookup, default '()' 0.2 two tenths of a second
+        self.agps_thread = None
+        if hasGPS3:
+            self.agps_thread = AGPS3mechanism()  # Instantiate AGPS3 Mechanisms
+            self.agps_thread.stream_data()  # From localhost (), or other hosts, by example, (host='gps.ddns.net')
+            self.agps_thread.run_thread()  # Throttle time to sleep after an empty lookup, default '()' 0.2 two tenths of a second
         self.daemon = True
 
     def run(self):
@@ -80,7 +89,8 @@ class GPSThread(Thread):
 
             sleep(0.3)
             
-        self.agps_thread.stop()
+        if self.agps_thread is not None:
+            self.agps_thread.stop()
         self.threadRunning = False
 
 

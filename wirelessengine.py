@@ -104,16 +104,41 @@ channelToFreq['188'] = '4940'
 channelToFreq['189'] = '4945'
 channelToFreq['192'] = '4960'
 channelToFreq['196'] = '4980'
+
+# 6GHz band (802.11ax / WiFi 6E): standard 20MHz channels are numbered
+# 1, 5, 9, ..., 233 (step 4). Center frequency: F(N) = 5955 + (N-1) * 5 MHz,
+# e.g. ch1=5955, ch5=5975, ch33=6115, ch233=7115. Channel 2 (5935 MHz) is the
+# special UNII-5 guard-band channel and is included explicitly below.
+channelToFreq6GHz = {}
+for _ch6 in range(1, 234, 4):
+    _freq6 = 5955 + ((_ch6 - 1) * 5)
+    if 5955 <= _freq6 <= 7115:
+        channelToFreq6GHz[str(_ch6)] = str(_freq6)
+# Special guard-band channel 2 (UNII-5, 5925-5945 MHz)
+channelToFreq6GHz['2'] = '5935'
+
+# Reverse map: frequency (MHz) -> channel number, for bands where iw does not
+# report a DS Parameter Set channel (6GHz beacons omit it).  Derived from the
+# verified channelToFreq6GHz table so the special channel 2 is handled exactly.
+freqToChannel6GHz = {}
+for _ch6, _freq6 in channelToFreq6GHz.items():
+    freqToChannel6GHz[int(_freq6)] = int(_ch6)
+
    
 # ------------------  Interface detection -------------------------------------
 # Cached result of which tool is available for listing wireless interfaces.
 # None means not yet determined. Set on first call to getInterfaces().
 interfaceApp = None
 
+# iw (nl80211) MUST be preferred over iwconfig (wext): modern drivers
+# (mt7925u WiFi 7, ath12k, rtw89, ...) no longer register wext handlers,
+# so iwconfig reports those interfaces on STDERR as "no wireless extensions"
+# and they are silently lost when stderr is discarded. 'iw' sees every
+# nl80211 interface regardless of wext support.
 _INTERFACE_APPS = [
     # (executable, full command, regex to extract interface names)
+    ('iw',       ['iw', 'dev'],                                              r'Interface (w[\w-]+)'),
     ('iwconfig', ['iwconfig'],                                               r'^(w.*?) .*'),
-    ('iw',       ['iw', 'dev'],                                              r'Interface (w[a-z0-9]+)'),
     ('nmcli',    ['nmcli', '--colors', 'no', '--terse', 'device', 'status'], r'^(w[a-z0-9]+):wifi:'),
 ]
 
@@ -125,20 +150,21 @@ def _findInterfaceApp():
     return None
 
 
-# Cached iwconfig-vs-iw selection for callsites that cannot use nmcli
-# (monitor-mode enumeration, channel set). iwconfig is preferred when present
-# for behavioral parity with older releases; iw is the fallback on systems
-# where iwconfig has been removed (Ubuntu 25.04+, etc).
+# Cached iw-vs-iwconfig selection for callsites that cannot use nmcli
+# (monitor-mode enumeration, channel set). iw is preferred: iwconfig (wext)
+# cannot see interfaces from wext-less drivers (e.g. mt7925u WiFi 7), and it
+# has been removed from newer distros (Ubuntu 25.04+). iwconfig is kept only
+# as a legacy fallback.
 _iwTool = None
 
 def findIwTool():
-    """Return 'iwconfig' if available, else 'iw' if available, else None."""
+    """Return 'iw' if available, else 'iwconfig' if available, else None."""
     global _iwTool
     if _iwTool is None:
-        if shutil.which('iwconfig'):
-            _iwTool = 'iwconfig'
-        elif shutil.which('iw'):
+        if shutil.which('iw'):
             _iwTool = 'iw'
+        elif shutil.which('iwconfig'):
+            _iwTool = 'iwconfig'
     return _iwTool
 
 # ------------------  WirelessNetwork class ------------------------------------
@@ -307,6 +333,9 @@ class WirelessNetwork(object):
         self.secondaryChannel = 0  # used for 40+ MHz
         self.thirdChannel = 0  # used for 80+ MHz channels
         self.secondaryChannelLocation = ''  # above/below
+        self.wifiGeneration = ''  # 'WiFi 4'/'WiFi 5'/'WiFi 6'/'WiFi 6E' - derived from band + HE capability
+        self.hasHE = False  # 802.11ax (High Efficiency) IE seen in scan
+        self.band = ''  # '2.4GHz'/'5GHz'/'6GHz' - derived from frequency
         now=datetime.datetime.now()
         self.firstSeen = now
         self.lastSeen = now
@@ -490,6 +519,9 @@ _P_SECONDARY = re.compile('^.*?secondary channel offset: *([^ \\t]+).*')
 _P_THIRDFREQ = re.compile('^.*?center freq segment 1: *([^ \\t]+).*')
 _P_STATIONCOUNT = re.compile('.*station count: ([0-9]+)')
 _P_UTILIZATION = re.compile('.*channel utilisation: ([0-9]+)/255')
+# HE (High Efficiency / 802.11ax) detection: iw reports "HE:" section in scan for WiFi 6 APs
+_P_HE = re.compile(r'^\s*HE .*:.*')  # matches "HE (Iftypes...)" or similar HE IE header lines
+_P_HE_PHY = re.compile(r'^\s*HE PHY Capabilities')
 
 class WirelessEngine(object):
     def __init__(self):
@@ -507,12 +539,48 @@ class WirelessEngine(object):
             
         return macaddr
         
-    def getFrequencyForChannel(channelNumber):
+    @staticmethod
+    def getFrequencyForChannel(channelNumber, band=None):
         channelStr = str(channelNumber)
+        if band == '6GHz' or (band is None and channelStr not in channelToFreq and channelStr in channelToFreq6GHz):
+            if channelStr in channelToFreq6GHz:
+                return channelToFreq6GHz[channelStr]
+            if band == '6GHz':
+                # Explicit 6GHz request not in the 6GHz table (e.g. a
+                # 40/80/160MHz center-channel number): don't silently fall
+                # through to another band's channel of the same number.
+                return None
         if channelStr in channelToFreq:
             return channelToFreq[channelStr]
-        else:
-            return None
+        return None
+
+    @staticmethod
+    def getBandForFrequency(frequencyMHz):
+        """Return '2.4GHz', '5GHz' or '6GHz' for a given frequency in MHz."""
+        freq = int(frequencyMHz)
+        if 2412 <= freq <= 2484:
+            return '2.4GHz'
+        elif 4915 <= freq <= 4980:
+            return '5GHz'  # 4.9GHz public safety band (ch 184-196): plots with 5GHz, as upstream always routed it
+        elif 5080 <= freq <= 5865:
+            return '5GHz'
+        elif 5955 <= freq <= 7115:
+            return '6GHz'
+        return None
+
+    @staticmethod
+    def getWifiGeneration(frequencyMHz, hasHE=False):
+        """Human-readable WiFi generation from band + HE (802.11ax) capability."""
+        band = WirelessEngine.getBandForFrequency(frequencyMHz) if frequencyMHz else None
+        if band == '6GHz':
+            return 'WiFi 6E'
+        if hasHE:
+            return 'WiFi 6'
+        if band == '5GHz':
+            return 'WiFi 5'
+        if band == '2.4GHz':
+            return 'WiFi 4'
+        return ''
             
     def getSignalQualityFromDB0To5(dBm):
         # Based on same scale tha Microsoft uses.
@@ -769,6 +837,8 @@ class WirelessEngine(object):
         p_freq = _P_FREQ
         p_signal = _P_SIGNAL
         p_ht = _P_HT
+        p_he = _P_HE
+        p_he_phy = _P_HE_PHY
         p_bw = _P_BW
         p_secondary = _P_SECONDARY
         p_thirdfreq = _P_THIRDFREQ
@@ -890,8 +960,15 @@ class WirelessEngine(object):
                 
             if (len(fieldValue) > 0):
                 curNetwork.frequency = int(fieldValue)
+                # Derive band-aware channel for 6GHz where iw doesn't report DS Param
+                curNetwork.band = WirelessEngine.getBandForFrequency(curNetwork.frequency)
+                if curNetwork.band == '6GHz' and curNetwork.channel == 0:
+                    # Exact reverse-lookup from the verified 6GHz table
+                    # (handles the special guard-band channel 2 @ 5935)
+                    curNetwork.channel = freqToChannel6GHz.get(curNetwork.frequency, 0)
                 continue #Found the item
                 
+
             fieldValue = WirelessEngine.getFieldValue(p_signal, curLine)
                 
             # This test is different.  dBm is negative so can't test > 0.  10dBm is really high so lets use that
@@ -931,7 +1008,15 @@ class WirelessEngine(object):
                 curNetwork.thirdChannel = int(fieldValue)
                     
                 continue #Found the item
-                
+
+            # HE (802.11ax / WiFi 6) detection - HE IEs appear in iw scan output
+            # as lines starting with "HE" (e.g. "HE (channel width...)") or
+            # "HE PHY Capabilities".
+            if curNetwork is not None:
+                if p_he.match(curLine) or p_he_phy.match(curLine):
+                    curNetwork.hasHE = True
+                    continue
+
         # #### End loop ######
         
         # Add the last network
@@ -939,6 +1024,11 @@ class WirelessEngine(object):
             if curNetwork.channel > 0:
                 # I did see incomplete output from iw where not all the data was there
                 retVal[curNetwork.getKey()] = curNetwork
+        
+        # Post-process: derive WiFi generation from band + HE capability.
+        # (Runs after the last network is added so every network is covered.)
+        for net in retVal.values():
+            net.wifiGeneration = WirelessEngine.getWifiGeneration(net.frequency, net.hasHE)
         
         return retVal
         
@@ -958,7 +1048,7 @@ if __name__ == '__main__':
         
     winterface = wirelessInterfaces[0]
     print('Scanning for wireless networks on ' + winterface + '...')
-    
+
     # Testing to/from Json
     # convert to Json
     retCode, errString, jsonstr=WirelessEngine.getNetworksAsJson(winterface, None)

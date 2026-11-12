@@ -12,6 +12,11 @@ tmp/
 __pycache__/
 *.DS_Store
 controller/.venv/
+# Root-level virtualenvs (the README's Option B installs into the repo root);
+# Python >= 3.13 venvs self-ignore, older versions do not
+venv/
+venv-*/
+.venv/
 controller/state/controller.db
 controller.db
 # Fingerbank offline DB — large binary (~150 MB), downloaded by data_refresh
@@ -21,3 +26,5 @@ sparrow_elastic/data/fingerbank.db
 .playwright-mcp/
 *-layout.png
 page-*.yml
+# Downloaded at runtime by sparrow-wifi (OUI vendor database)
+manuf

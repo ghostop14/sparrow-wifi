@@ -30,16 +30,26 @@ import requests
 from time import sleep
 from threading import Thread, Lock
 
-from PyQt5.QtWidgets import QApplication, QMainWindow,  QDesktopWidget, QGraphicsSimpleTextItem, QFrame, QGraphicsView
-from PyQt5.QtWidgets import QMessageBox, QFileDialog, QInputDialog, QLineEdit, QAbstractItemView #, QSplitter
-from PyQt5.QtWidgets import QMenu, QAction, QComboBox, QLabel, QPushButton, QCheckBox, QTableWidget,QTableWidgetItem, QHeaderView
+from sparrowqt import (QApplication, QMainWindow, QFrame, QGraphicsView, QGraphicsItem,
+                       QMessageBox, QFileDialog, QInputDialog, QLineEdit, QAbstractItemView,
+                       QMenu, QAction, QComboBox, QLabel, QPushButton, QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView,
+                       QTimer, Qt, QSettings, QTranslator, QLocale,
+                       QIcon, QColor, QBrush, QPen, QPalette, QFont, QFontMetrics, QPainter,
+                       QGraphicsSimpleTextItem, QGraphicsScene, QGraphicsRectItem,
+                       QThread, QPoint, QRect, QSize, QWidget, QVBoxLayout, QHBoxLayout, QDialog,
+                       QTableWidgetItem as QTWI, QDialogButtonBox)
 #from PyQt5.QtWidgets import QTabWidget, QWidget, QVBoxLayout
-from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis
-from PyQt5.QtGui import QPen, QFont, QBrush, QColor, QPainter
+# Charting: uses QtChart when available, pyqtgraph fallback otherwise
+from sparrowchart import CHART_BACKEND
+if CHART_BACKEND == 'qtchart':
+    from sparrowchart import SparrowChart as QChart, SparrowChartView as QChartView, SparrowLineSeries as QLineSeries, SparrowValueAxis as QValueAxis
+else:
+    from sparrowchart import SparrowChart as QChart, SparrowChartView as QChartView, SparrowLineSeries as QLineSeries, SparrowValueAxis as QValueAxis
+
 # Qt for global colors.  See http://doc.qt.io/qt-5/qt.html#GlobalColor-enum
-from PyQt5.QtCore import Qt, QRect, QTimer
-from PyQt5.QtGui import QIcon, QRegion
-from PyQt5 import QtCore
+
+from sparrowqt import QRegion, available_geometry, screen_center
+from sparrowqt import QtCore
 
 # from PyQt5.QtCore import QCoreApplication # programmatic quit
 from wirelessengine import WirelessEngine, WirelessNetwork
@@ -473,8 +483,13 @@ class QHoverLineSeries(QLineSeries):
 # ------------------  Graphics Callout  ------------------------------
 class Callout(QGraphicsSimpleTextItem):
     def __init__(self, displayText, parent, textColor=Qt.white):
-        # super().__init__(displayText, parent)
-        super().__init__(parent=parent)
+        # With the pyqtgraph chart backend the "chart" object is not a
+        # QGraphicsItem, so it cannot be an item parent; the callout is then
+        # positioned by coordinates only.
+        if isinstance(parent, QGraphicsItem):
+            super().__init__(parent=parent)
+        else:
+            super().__init__()
         self.textColor = textColor
         self.chartParent = parent
         
@@ -759,7 +774,7 @@ class mainWindow(QMainWindow):
         self.missedAgentCycles = 0
         self.allowedMissedAgentCycles = 1
         
-        desktopSize = QApplication.desktop().screenGeometry()
+        desktopSize = available_geometry()
         #self.mainWidth=1024
         #self.mainHeight=768
         self.mainWidth = desktopSize.width() * 3 // 4
@@ -885,7 +900,12 @@ class mainWindow(QMainWindow):
         else:
             self.statusBar().showMessage('No wireless interfaces found.')
 
-        self.combo.activated[str].connect(self.onInterface)        
+        # PyQt6 renamed the activated[str] overload to textActivated;
+        # PyQt5 only has activated[str]. (Qt5 >= 5.15 has no textActivated.)
+        if hasattr(self.combo, 'textActivated'):
+            self.combo.textActivated.connect(self.onInterface)
+        else:
+            self.combo.activated[str].connect(self.onInterface)
         
         # Scan Button
         self.btnScan = QPushButton("&Scan", self)
@@ -909,6 +929,9 @@ class mainWindow(QMainWindow):
         self.lblScanMode = QLabel("Hunt Channel or Frequencies(s):", self)
         self.lblScanMode.setGeometry(565, 30, 200, 30)
         self.huntChannels = QLineEdit(self)
+        self.huntChannels.setToolTip("Comma-separated channels to hunt. Plain numbers use 2.4/5GHz resolution.\n"
+                                     "Use a 6: prefix for 6GHz channels, e.g. '6:1,6:37' (6GHz channel numbers\n"
+                                     "collide with 2.4/5GHz, so they need the qualifier).")
         self.huntChannels.setStatusTip('Channels or center frequencies can be specified.  List should be comma-separated.')
         self.huntChannels.setGeometry(763, 30, 100, 30)
         self.huntChannels.setText('1')
@@ -925,11 +948,11 @@ class mainWindow(QMainWindow):
         
         # Network Table
         self.networkTable = QTableWidget(self)
-        self.networkTable.setColumnCount(14)
+        self.networkTable.setColumnCount(15)
         # self.networkTable.setGeometry(10, 100, self.mainWidth-60, self.mainHeight/2-105)
         self.networkTable.setShowGrid(True)
         # self.networkTable.setHorizontalHeaderLabels(['macAddr', 'vendor','SSID', 'Security', 'Privacy', 'Channel', 'Frequency', 'Signal Strength', 'Bandwidth', 'Last Seen', 'First Seen', 'GPS'])
-        self.networkTable.setHorizontalHeaderLabels(['macAddr', 'vendor','SSID', 'Security', 'Privacy', 'Channel', 'Frequency', 'Signal Strength', 'Bandwidth', '% Utilization','Stations','Last Seen', 'First Seen', 'GPS'])
+        self.networkTable.setHorizontalHeaderLabels(['macAddr', 'vendor','SSID', 'Security', 'Privacy', 'Channel', 'Frequency', 'Signal Strength', 'Bandwidth', '% Utilization','Stations','Last Seen', 'First Seen', 'GPS', 'WiFi Gen'])
         self.networkTable.resizeColumnsToContents()
         self.networkTable.setRowCount(0)
         self.networkTable.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
@@ -1814,7 +1837,18 @@ class mainWindow(QMainWindow):
         for curItem in tmpList:
             if len(curItem) > 0:
                 try:
-                    freqForChannel = WirelessEngine.getFrequencyForChannel(curItem)
+                    # '6:N' selects an explicit 6GHz channel.  6GHz channel
+                    # numbers (1-233) collide with 2.4GHz (1-14) and 5GHz
+                    # (36-196) numbers, so they need a band qualifier to be
+                    # hunted.  A plain number keeps the historical 2.4/5GHz
+                    # resolution; channels that only exist in 6GHz (e.g. 233)
+                    # auto-resolve to 6GHz.
+                    band = None
+                    channelRef = curItem
+                    if curItem.lower().startswith('6:'):
+                        band = '6GHz'
+                        channelRef = curItem[2:]
+                    freqForChannel = WirelessEngine.getFrequencyForChannel(channelRef, band)
                     
                     if freqForChannel is not None:
                         self.huntChannelList.append(int(freqForChannel))
@@ -1989,6 +2023,7 @@ class mainWindow(QMainWindow):
                 #    self.waterfall24 = WaterfallPlotWindow(self, None)
                 
                 #self.waterfall24.update
+                self.chart24.update()
             
             if not self.remoteAgentUp:
                 self.btSpectrumTimer.start(self.btSpectrumTimeoutLocal)
@@ -2037,6 +2072,7 @@ class mainWindow(QMainWindow):
                     self.spectrum24Line.append(fCurKey, dBm)
                 # Re-enable updates and force an update
                 self.Plot24.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
+                self.chart24.update()
                 # Not needed
                 # self.Plot24.update()
                 
@@ -2057,6 +2093,7 @@ class mainWindow(QMainWindow):
 
                 # Re-enable updates and force an update
                 self.Plot5.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
+                self.chart5.update()
                 # Not needed
                 # self.Plot5.update()
                 
@@ -2834,6 +2871,16 @@ class mainWindow(QMainWindow):
                         self.networkTable.item(curRow, 10).setText(str(curNet.stationcount))
                         self.networkTable.item(curRow, 11).setText(curNet.lastSeen.strftime("%m/%d/%Y %H:%M:%S"))
 
+                        # WiFi generation can firm up on later scans (HE IEs are
+                        # not present in every beacon)
+                        wifiGen = getattr(curNet, 'wifiGeneration', '')
+                        if not wifiGen:
+                            wifiGen = WirelessEngine.getWifiGeneration(curNet.frequency, curNet.hasHE)
+                        if self.networkTable.item(curRow, 14):
+                            self.networkTable.item(curRow, 14).setText(wifiGen)
+                        else:
+                            self.networkTable.setItem(curRow, 14, QTableWidgetItem(wifiGen))
+
                         # Carry forward firstSeen
                         curNet.firstSeen = curData.firstSeen # This is one field to carry forward
 
@@ -2865,17 +2912,21 @@ class mainWindow(QMainWindow):
                             telemetryWindow = self.telemetryWindows[curNet.getKey()]
                             telemetryWindow.updateNetworkData(curNet)
 
-                        # 3 scenarios:
-                        # 20 MHz, 1 channel
-                        # 40 MHz, 2nd channel above/below or non-contiguous for 5 GHz
-                        # 80/160 MHz, Specified differently.  It's allocated as a contiguous block
-                        if curNet.channel < 15:  # Max 2.4 GHz CENTER channel is 14
-                            # 2.4 GHz
-                            # range function goes to max-1
-                            self.update24Net(curSeries, curNet)
-                        else:
-                            # 5 GHz
-                            self.update5Net(curSeries, curNet)
+                        # Band-aware routing (see the notes in
+                        # populateTableNewItem): resolve the band from the
+                        # frequency so 6GHz networks - whose channel numbers
+                        # collide with 2.4/5GHz - are not misplotted.
+                        if curSeries is not None:
+                            netBand = None
+                            if curNet.frequency:
+                                netBand = WirelessEngine.getBandForFrequency(curNet.frequency)
+                            if netBand is None:
+                                netBand = '2.4GHz' if (curNet.channel is not None and curNet.channel < 15) else '5GHz'
+
+                            if netBand == '2.4GHz':
+                                self.update24Net(curSeries, curNet)
+                            elif netBand == '5GHz':
+                                self.update5Net(curSeries, curNet)
 
     def getNextColor(self):
         nextColor = colors[self.nextColor]
@@ -2915,18 +2966,28 @@ class mainWindow(QMainWindow):
             # ----------- Update the plots -------------------
             nextColor = self.getNextColor()
             
-            # 3 scenarios: 
-            # 20 MHz, 1 channel
-            # 40 MHz, 2nd channel above/below or non-contiguous for 5 GHz
-            # 80/160 MHz, Specified differently.  It's allocated as a contiguous block
-            if curNet.channel < 15:
-                # 2.4 GHz
+            # Band-aware routing: 6GHz channel numbers (1-233) collide with
+            # 2.4GHz (1-14) and 5GHz (36-196) numbers, so routing on the raw
+            # channel number would misplace 6GHz networks on the 2.4/5GHz
+            # charts. Resolve the band from the frequency instead, falling
+            # back to the historical channel-number heuristic when no
+            # frequency is known (e.g. data from older remote agents).
+            netBand = None
+            if curNet.frequency:
+                netBand = WirelessEngine.getBandForFrequency(curNet.frequency)
+            if netBand is None:
+                netBand = '2.4GHz' if (curNet.channel is not None and curNet.channel < 15) else '5GHz'
+
+            newSeries = None
+            if netBand == '2.4GHz':
                 newSeries = self.createNewSeries(nextColor, self.chart24)
                 self.add24Net(newSeries, curNet)
-            else:
-                # 5 GHz
+            elif netBand == '5GHz':
                 newSeries = self.createNewSeries(nextColor, self.chart5)
                 self.add5Net(newSeries, curNet)
+            # 6GHz networks are listed in the table (WiFi Gen column shows
+            # 'WiFi 6E') but are not plotted on the 2.4/5GHz channel charts;
+            # a dedicated 6GHz spectrum view is tracked separately.
                 
             # ----------- Update the Table -------------------
             # Do the table second so we can attach the series to it.
@@ -2950,7 +3011,8 @@ class mainWindow(QMainWindow):
             if (len(tmpssid) == 0):
                 tmpssid = '<Unknown>'
                 
-            newSeries.setName(tmpssid)
+            if newSeries is not None:
+                newSeries.setName(tmpssid)
 
             newSSID = QTableWidgetItem(tmpssid)
             ssidBrush = QBrush(nextColor)
@@ -2981,6 +3043,12 @@ class mainWindow(QMainWindow):
                 self.networkTable.setItem(rowPosition, 13, QTableWidgetItem('Yes'))
             else:
                 self.networkTable.setItem(rowPosition, 13, QTableWidgetItem('No'))
+
+            # WiFi generation (WiFi 4/5/6/6E) derived from frequency + HE capability
+            wifiGen = getattr(curNet, 'wifiGeneration', '')
+            if not wifiGen:
+                wifiGen = WirelessEngine.getWifiGeneration(curNet.frequency, curNet.hasHE)
+            self.networkTable.setItem(rowPosition, 14, QTableWidgetItem(wifiGen))
 
         self.ageOut()
 
@@ -3075,8 +3143,7 @@ class mainWindow(QMainWindow):
         
         
     def openFileDialog(self, fileSpec="CSV Files (*.csv);;All Files (*)"):    
-        options = QFileDialog.Options()
-        options |= QFileDialog.DontUseNativeDialog
+        options = QFileDialog.DontUseNativeDialog
         fileName, _ = QFileDialog.getOpenFileName(self,"QFileDialog.getOpenFileName()", "",fileSpec, options=options)
         if fileName:
             return fileName
@@ -3084,8 +3151,7 @@ class mainWindow(QMainWindow):
             return None
  
     def saveFileDialog(self, fileSpec="CSV Files (*.csv);;All Files (*)"):    
-        options = QFileDialog.Options()
-        options |= QFileDialog.DontUseNativeDialog
+        options = QFileDialog.DontUseNativeDialog
         fileName, _ = QFileDialog.getSaveFileName(self,"QFileDialog.getSaveFileName()","",fileSpec, options=options)
         if fileName:
             return fileName
@@ -3340,16 +3406,8 @@ class mainWindow(QMainWindow):
         self.updateLock.release()
         
     def center(self):
-        # Get our geometry
-        qr = self.frameGeometry()
-        # Find the desktop center point
-        cp = QDesktopWidget().availableGeometry().center()
-        # Move our center point to the desktop center point
-        qr.moveCenter(cp)
-        # Move the top-left point of the application window to the top-left point of the qr rectangle, 
-        # basically centering the window
-        self.move(qr.topLeft())
-        
+        # Qt5/Qt6 compatible screen centering
+        screen_center(self)
     def requestRemoteInterfaces(self):
         url = "http://" + self.remoteAgentIP + ":" + str(self.remoteAgentPort) + "/wireless/interfaces"
         statusCode, responsestr = makeGetRequest(url)
@@ -3750,7 +3808,7 @@ if __name__ == '__main__':
             
     app = QApplication(sys.argv)
     mainWin = mainWindow()
-    result = app.exec_()
+    result = app.exec()
     sys.exit(result)
     # Some thread is still blocking...
     # os._exit(result)
