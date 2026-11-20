@@ -39,6 +39,10 @@ class FakeTak:
         self.sign_hits = 0
         self.mode = 'ok'               # ok | 401 | 500 | xml
         self.cert_days = 365
+        # Signing time source; tests point it at their FakeClock so issued
+        # certificates are dated on the same clock the manager checks expiry
+        # against (real time drifts away from the pinned fake date).
+        self.now = lambda: datetime.now(timezone.utc)
         self.config_body = CONFIG_XML.encode()
         self.last_csr = None
         self.last_headers = None
@@ -82,7 +86,7 @@ class FakeTak:
                     return self._reply(401, b'no')
                 csr = x509.load_pem_x509_csr(body)
                 outer.last_csr = csr
-                now = datetime.now(timezone.utc)
+                now = outer.now()
                 cert = (x509.CertificateBuilder().subject_name(csr.subject)
                         .issuer_name(SERVER_CA.cert.subject).public_key(csr.public_key())
                         .serial_number(x509.random_serial_number())
@@ -124,6 +128,7 @@ class EnrollCase(unittest.TestCase):
         self.server = FakeTak(self.tmp.name)
         self.addCleanup(self.server.close)
         self.clock = FakeClock()
+        self.server.now = self.clock.wallclock
         self.backoff = {}
         old = enrollment.KEY_SIZE
         enrollment.KEY_SIZE = 2048                      # keep the tests quick
