@@ -267,6 +267,12 @@ class DroneIDDevice:
     military: bool = False
     law_enforcement: bool = False
 
+    # ODID message types (ODID_MSG_* values) decoded from the frame this
+    # device was built from. Frame bookkeeping used to merge transports that
+    # send one message per frame (NAN, BLE), not drone state: excluded from
+    # to_dict() and never persisted. Empty for non-ODID protocols.
+    odid_messages: frozenset = field(default=frozenset(), repr=False, compare=False)
+
     def get_key(self) -> str:
         """Primary key for tracking: prefer serial, fall back to registration or MAC."""
         if self.serial_number:
@@ -279,6 +285,7 @@ class DroneIDDevice:
                 receiver_alt: Optional[float] = None) -> dict:
         """Convert to dict with optional derived fields from receiver position."""
         data = asdict(self)
+        data.pop('odid_messages', None)
         data['id_type_name'] = IdType(self.id_type).display_name if 0 <= self.id_type <= 4 else "Unknown"
         data['ua_type_name'] = UAType(self.ua_type).display_name if 0 <= self.ua_type <= 15 else "Unknown"
 

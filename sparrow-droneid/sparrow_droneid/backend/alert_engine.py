@@ -254,6 +254,21 @@ class AlertEngine:
         if not key:
             return
 
+        # A Wi-Fi transmitter that sends its identity in pieces is keyed by
+        # its MAC until a Basic ID arrives, and by its registration until a
+        # serial does; the tracker re-keys it each time (the device it hands
+        # us carries every identity merged so far). Carry the alert state to
+        # the current key so it stays one drone (one new_drone alert).
+        # SSID-scanner detections carry a synthetic identity and are tracked
+        # separately from Remote ID frames on the same BSSID, so they don't.
+        if device.protocol != Protocol.WIFI_SSID.value:
+            aliases = [a for a in (device.mac_address, device.registration_id)
+                       if a and a != key]
+            if aliases:
+                with self._lock:
+                    for alias in aliases:
+                        self._rekey_locked(alias, key)
+
         # Friendly-drone suppression. When the operator tags a drone Friendly
         # and disables friendly alerts, skip all rule evaluation so repeat
         # launches (e.g. SAR sorties) don't flood the alert panel. We still
@@ -461,6 +476,27 @@ class AlertEngine:
                 AlertType.NEW_DRONE.value, device,
                 f"First detection of {key}",
             )
+
+    def _rekey_locked(self, old_key: str, new_key: str) -> None:
+        """Move all per-drone alert state from old_key to new_key. Caller holds _lock.
+
+        A pending new_drone alert keeps its original deferral start; the
+        caller's registration step then refreshes it with the latest device.
+        """
+        already_known = new_key in self._known_serials
+        if old_key in self._known_serials:
+            self._known_serials.discard(old_key)
+            self._known_serials.add(new_key)
+        pending = self._pending_new.pop(old_key, None)
+        # If new_key was already known its announcement is done or pending.
+        if pending is not None and not already_known:
+            self._pending_new[new_key] = pending
+        if old_key in self._alerted_lost:
+            self._alerted_lost.discard(old_key)
+            self._alerted_lost.add(new_key)
+        violations = self._alerted_violations.pop(old_key, None)
+        if violations:
+            self._alerted_violations.setdefault(new_key, set()).update(violations)
 
     def forget_drones(self, keys) -> None:
         """Drop all per-drone alert state for drones that have left tracking.

@@ -56,6 +56,13 @@ _DJI_OUIS = frozenset({b'\x26\x37\x12', b'\x60\x60\x1f', b'\x60\x60\x14'})
 NAN_OUI_TYPE = 0x13
 ASTM_BEACON_OUI_TYPE = 0x0D
 
+# NAN Service ID for Remote ID: first 6 bytes of SHA-256("org.opendroneid.remoteid")
+# (opendroneid-core-c wifi.c). Identifies ODID among other NAN services.
+ODID_NAN_SERVICE_ID = b'\x88\x69\x19\x9d\x92\x09'
+
+# Decoded track direction at or above this is "unknown" (ODID INV_DIR = 361).
+ODID_MAX_DIRECTION = 360.0
+
 # French RemoteID (arrêté du 27 décembre 2019) — ASD-STAN OUI
 OUI_FRENCH = b'\x6a\x5c\x35'
 FRENCH_OUI_TYPE = 0x01
@@ -150,14 +157,15 @@ class ODIDParser:
         speed_mult = status_byte & 0x01
 
         # Direction: whole degrees 0-179, plus 180 when the E/W bit is set
-        # (opendroneid-core-c decodeDirection).
+        # (opendroneid-core-c decodeDirection). 361 (byte 181 + E/W) is the
+        # ODID "unknown" sentinel; anything >= 360 is not a heading, so leave
+        # direction at its default rather than wrapping it into a real bearing.
         raw_dir = data[2]
         direction = float(raw_dir)
         if ew_dir:
             direction += 180.0
-        if direction >= 360.0:
-            direction -= 360.0
-        device.direction = direction
+        if direction < ODID_MAX_DIRECTION:
+            device.direction = direction
 
         # Speed
         raw_speed = data[3]
@@ -243,7 +251,10 @@ class ODIDParser:
             cls.parse_system(data, device)
         elif msg_type == ODID_MSG_OPERATOR_ID:
             cls.parse_operator_id(data, device)
-        # Type 2 (Auth) and others are ignored in v1
+        else:
+            # Type 2 (Auth) and others are ignored in v1
+            return
+        device.odid_messages = device.odid_messages | {msg_type}
 
     @classmethod
     def parse_message_pack(cls, data: bytes) -> DroneIDDevice:
@@ -547,6 +558,18 @@ class FrameExtractor:
             offset += 2 + length
 
     @staticmethod
+    def _accept_odid(device: DroneIDDevice) -> bool:
+        """An ASTM frame is usable if it decoded at least one ODID message.
+
+        It need not carry an identity (the caller keys those by MAC), but an
+        identity that is present must look real (>= 4 chars) to drop junk.
+        """
+        if not device.odid_messages:
+            return False
+        ident = device.serial_number or device.registration_id
+        return not ident or len(ident) >= 4
+
+    @staticmethod
     def extract_from_action(frame: bytes):
         """Try to extract ODID data from an action frame.
 
@@ -609,7 +632,12 @@ class FrameExtractor:
                 # (SSI present), but includes the service info anyway.
                 # We skip the bit check and always try to parse if
                 # there's data after the fixed SDA header.
-                if len(attr_body) > 10:
+                #
+                # Only the Remote ID service is parsed. A frame need not
+                # carry an identity: transmitters may send one message per
+                # frame (no Basic ID), and the caller keys those by MAC.
+                if (len(attr_body) > 10
+                        and attr_body[0:6] == ODID_NAN_SERVICE_ID):
                     ssi_len = attr_body[9]
                     ssi_start = 10
                     ssi_end = ssi_start + ssi_len
@@ -620,8 +648,7 @@ class FrameExtractor:
                                 device = ODIDParser.parse_wifi_beacon_payload(
                                     attr_body[ssi_start:ssi_end]
                                 )
-                                key = device.get_key()
-                                if key and len(key) >= 4:
+                                if FrameExtractor._accept_odid(device):
                                     device.protocol = Protocol.ASTM_NAN.value
                                     return device
                             except Exception:
@@ -646,11 +673,12 @@ class FrameExtractor:
         for oui, oui_type, payload in FrameExtractor._scan_vendor_ies(frame, ie_offset):
             # ASTM F3411 beacon method — payload is ODID_service_info:
             # [message_counter(1)][ODID_MessagePack_encoded...]
+            # The OUI/type is Remote ID specific, so a pack without a Basic ID
+            # is still accepted; the caller keys it by MAC.
             if oui == OUI_ASTM_BEACON and oui_type == ASTM_BEACON_OUI_TYPE:
                 try:
                     device = ODIDParser.parse_wifi_beacon_payload(payload)
-                    key = device.get_key()
-                    if key and len(key) >= 4:
+                    if FrameExtractor._accept_odid(device):
                         device.protocol = Protocol.ASTM_BEACON.value
                         return device
                 except Exception:
@@ -1431,54 +1459,128 @@ class DroneIDEngine:
         elif subtype in (SUBTYPE_BEACON, SUBTYPE_PROBE_RESP):
             device = FrameExtractor.extract_from_beacon_or_probe(frame_bytes)
 
-        if device is None or not device.get_key():
+        if device is None:
             return
 
-        # Populate RF metadata from tcpdump header
+        # Populate RF metadata from tcpdump header before the key check:
+        # get_key() falls back to the MAC for frames without an identity.
         device.rssi = header_info.get('rssi', 0)
         device.mac_address = header_info.get('mac', '')
         device.channel = self._channel
         device.frequency = 2437 if self._channel == 6 else 2412 + (self._channel - 1) * 5
 
+        if not device.get_key():
+            return
+
         self._droneid_frame_count += 1
         self._track_device(device)
 
-    def _track_device(self, device: DroneIDDevice):
-        """Update tracking state, persist to DB, and fire the detection callback.
+    @staticmethod
+    def _merge_frame_fields(device: DroneIDDevice, existing: DroneIDDevice):
+        """Fill fields the new WiFi frame didn't carry from the existing entry.
 
-        Called from both the WiFi parse path and the BLE scan path so the
-        downstream logic (merging, RSSI history, DB write, alerts) is shared.
-        The caller is responsible for setting device.rssi / device.mac_address
-        before calling this method.
+        Identity, operator and self-ID fields carry over when empty. Location
+        fields carry over only when the frame was ODID and had no Location
+        message: a frame that did carry one is authoritative even for zeros
+        (a hovering drone reports speed 0), and non-ODID protocols (DJI,
+        French) always send position.
+        """
+        if not device.serial_number and existing.serial_number:
+            device.serial_number = existing.serial_number
+        if not device.registration_id and existing.registration_id:
+            device.registration_id = existing.registration_id
+        if not device.self_id_text and existing.self_id_text:
+            device.self_id_text = existing.self_id_text
+        if not device.operator_id and existing.operator_id:
+            device.operator_id = existing.operator_id
+        if device.operator_lat == 0.0 and existing.operator_lat != 0.0:
+            device.operator_lat = existing.operator_lat
+            device.operator_lon = existing.operator_lon
+            device.operator_alt = existing.operator_alt
+        if device.ua_type == 0 and existing.ua_type != 0:
+            device.ua_type = existing.ua_type
+
+        if not device.odid_messages:
+            return
+        if ODID_MSG_BASIC_ID not in device.odid_messages:
+            device.id_type = existing.id_type
+        if ODID_MSG_LOCATION not in device.odid_messages:
+            device.drone_lat = existing.drone_lat
+            device.drone_lon = existing.drone_lon
+            device.drone_alt_geo = existing.drone_alt_geo
+            device.drone_alt_baro = existing.drone_alt_baro
+            device.drone_height_agl = existing.drone_height_agl
+            device.speed = existing.speed
+            device.direction = existing.direction
+            device.vertical_speed = existing.vertical_speed
+
+    def _find_key_by_mac(self, mac: str, exclude_key: str = '') -> str:
+        """Return the _active_drones key of an entry with this MAC, or ''.
+
+        Must be called under self._lock.
+        """
+        if not mac:
+            return ''
+        for k, existing in self._active_drones.items():
+            if k != exclude_key and existing.mac_address == mac:
+                return k
+        return ''
+
+    @staticmethod
+    def _identities_compatible(device: DroneIDDevice, prior: DroneIDDevice) -> bool:
+        """True when a same-MAC entry describes the same transmitter as this frame.
+
+        Serial and registration must not conflict (either may be absent, as
+        when a transmitter sends one message per frame). SSID-scanner entries
+        carry a synthetic identity derived from the SSID and are never merged
+        with Remote ID frames.
+        """
+        ssid = Protocol.WIFI_SSID.value
+        if device.protocol == ssid or prior.protocol == ssid:
+            return False
+        for name in ('serial_number', 'registration_id'):
+            a, b = getattr(device, name), getattr(prior, name)
+            if a and b and a != b:
+                return False
+        return True
+
+    def _track_device(self, device: DroneIDDevice):
+        """Update WiFi tracking state, persist to DB, and fire the detection callback.
+
+        Called from the WiFi parse path and the WiFi SSID scanner (BLE uses
+        _track_ble_device). The caller is responsible for setting
+        device.rssi / device.mac_address before calling this method.
+
+        Frames are merged into the active entry for the same identity key or,
+        failing that, a same-MAC entry with a compatible identity (e.g. a NAN
+        frame carrying one Location message and no Basic ID). The entry is
+        then keyed by the merged identity's get_key(), so the key is stable
+        across frames that carry different parts of the identity and always
+        equals the stored device's get_key().
         """
         now = _utcnow_iso_z()
-        key = device.get_key()
 
         # Update active drones dict; collect migration info to act on outside lock
         migration = None
         disp_migration = None
         flag_migration = None
         with self._lock:
-            if key in self._active_drones:
-                existing = self._active_drones[key]
+            key = device.get_key()
+            existing = self._active_drones.get(key)
+            if existing is None:
+                prior_key = self._find_key_by_mac(device.mac_address, exclude_key=key)
+                prior = self._active_drones.get(prior_key) if prior_key else None
+                if prior is not None and self._identities_compatible(device, prior):
+                    existing = prior
+
+            if existing is not None:
                 device.first_seen = existing.first_seen
-                # Merge: keep existing data for fields the new frame didn't populate
-                if not device.serial_number and existing.serial_number:
-                    device.serial_number = existing.serial_number
-                if not device.registration_id and existing.registration_id:
-                    device.registration_id = existing.registration_id
-                if not device.self_id_text and existing.self_id_text:
-                    device.self_id_text = existing.self_id_text
-                if not device.operator_id and existing.operator_id:
-                    device.operator_id = existing.operator_id
-                if device.operator_lat == 0.0 and existing.operator_lat != 0.0:
-                    device.operator_lat = existing.operator_lat
-                    device.operator_lon = existing.operator_lon
-                    device.operator_alt = existing.operator_alt
-                if device.ua_type == 0 and existing.ua_type != 0:
-                    device.ua_type = existing.ua_type
-            else:
-                # Check if a prior MAC-keyed entry should migrate to this serial-keyed entry
+                self._merge_frame_fields(device, existing)
+                key = device.get_key()
+
+            if key not in self._active_drones:
+                # Moves a same-MAC entry (the merged one, or a conflicting one
+                # such as an SSID-scanner entry) and its tags to this key.
                 migration = self._maybe_migrate_key(device, key)
                 if not device.first_seen:
                     device.first_seen = now
