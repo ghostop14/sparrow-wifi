@@ -149,9 +149,10 @@ class ODIDParser:
         ew_dir = (status_byte >> 1) & 0x01
         speed_mult = status_byte & 0x01
 
-        # Direction: 0-179 -> 0-358 degrees (2-degree steps)
+        # Direction: whole degrees 0-179, plus 180 when the E/W bit is set
+        # (opendroneid-core-c decodeDirection).
         raw_dir = data[2]
-        direction = raw_dir * 2.0
+        direction = float(raw_dir)
         if ew_dir:
             direction += 180.0
         if direction >= 360.0:
