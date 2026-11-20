@@ -296,5 +296,43 @@ class TestSingleNewDroneAlertAcrossRekey(unittest.TestCase):
         self.assertEqual(self._new_drone_alerts(alerts), [f'First detection of {MAC}'])
 
 
+
+class TestBleMergeFollowsMessagePresence(unittest.TestCase):
+    """BLE uses the same presence-aware merge as Wi-Fi."""
+
+    BLE_MAC = 'AA:BB:CC:00:11:22'
+
+    def _ble(self, msgs, **kw):
+        return DroneIDDevice(mac_address=self.BLE_MAC, protocol=Protocol.ASTM_BLE.value,
+                             odid_messages=frozenset(msgs), **kw)
+
+    def test_hovering_speed_zero_replaces_previous_speed(self):
+        engine, _ = _make_engine()
+        engine._track_ble_device(self._ble({1}, drone_lat=35.0, drone_lon=-78.0,
+                                           speed=12.0, direction=90.0))
+        engine._track_ble_device(self._ble({1}, drone_lat=35.0, drone_lon=-78.0,
+                                           speed=0.0, direction=None))
+        d = engine._active_drones[self.BLE_MAC]
+        self.assertEqual(d.speed, 0.0)
+        self.assertIsNone(d.direction)
+
+    def test_non_location_message_keeps_location_and_id_type(self):
+        engine, _ = _make_engine()
+        engine._track_ble_device(self._ble({0}, serial_number='BLE-SER-1', id_type=1, ua_type=2))
+        engine._track_ble_device(self._ble({1}, drone_lat=35.0, drone_lon=-78.0,
+                                           speed=12.0, direction=90.0))
+        engine._track_ble_device(self._ble({4}, operator_lat=35.1, operator_lon=-78.1))
+        d = engine._active_drones[self.BLE_MAC]
+        self.assertEqual((d.drone_lat, d.speed, d.direction), (35.0, 12.0, 90.0))
+        self.assertEqual((d.serial_number, d.id_type, d.ua_type), ('BLE-SER-1', 1, 2))
+        self.assertEqual(d.operator_lat, 35.1)
+
+
+class TestDefaultHeading(unittest.TestCase):
+
+    def test_default_device_heading_is_unknown(self):
+        self.assertIsNone(DroneIDDevice().direction)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -162,7 +162,7 @@ _schema('DroneSummary', _obj({
     'drone_height_agl': _num(description='Drone height above ground level (metres)'),
     # Velocity
     'speed':            _num(description='Horizontal speed (m/s)'),
-    'direction':        _num(description='Track direction (degrees true, 0=North)'),
+    'direction':        _nullable(_num(description='Track direction (degrees true, 0=North); null when unknown')),
     'vertical_speed':   _num(description='Vertical speed (m/s, positive=up)'),
     # Operator info
     'operator_lat':     _num(description='Operator latitude (decimal degrees)'),
@@ -244,7 +244,7 @@ _schema('TrackPoint', _obj({
     'drone_alt_geo':    _num(description='Geodetic altitude (metres MSL)'),
     'drone_height_agl': _num(description='Height above ground level (metres)'),
     'speed':            _num(description='Horizontal speed (m/s)'),
-    'direction':        _num(description='Track direction (degrees true)'),
+    'direction':        _nullable(_num(description='Track direction (degrees true); null when unknown')),
     'rssi':             _int(description='Received signal strength (dBm)'),
     'timestamp':        _str(description='ISO 8601 UTC timestamp'),
 }))
@@ -272,7 +272,7 @@ _schema('HistoryRecord', _obj({
     'drone_lon':       _num(),
     'drone_height_agl': _num(),
     'speed':           _num(),
-    'direction':       _num(),
+    'direction':       _nullable(_num()),
     'operator_lat':    _num(),
     'operator_lon':    _num(),
     'rssi':            _int(),
@@ -699,7 +699,7 @@ _schema('DroneDatabaseEntry', _obj({
     'drone_alt_baro':   _num(description='Drone barometric altitude at last detection (metres)'),
     'drone_height_agl': _num(description='Drone height above ground level at last detection (metres)'),
     'speed':            _num(description='Horizontal speed at last detection (m/s)'),
-    'direction':        _num(description='Track direction at last detection (degrees true)'),
+    'direction':        _nullable(_num(description='Track direction at last detection (degrees true); null when unknown')),
     'vertical_speed':   _num(description='Vertical speed at last detection (m/s)'),
     'rssi':             _int(description='Received signal strength at last detection (dBm)'),
     'takeoff_lat':      _num(description='Takeoff latitude (decimal degrees) — French RID'),

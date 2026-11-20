@@ -381,6 +381,30 @@ class TestEngineStatusTracking(unittest.TestCase):
         engine.add_detection(device, 0.0, 0.0, 0.0)
         self.assertEqual(engine._buffer.depth, 0)
 
+    def _ids(self, *devices):
+        engine = ElasticsearchEngine()
+        engine._enabled = True
+        engine._client = MagicMock()
+        for d in devices:
+            engine.add_detection(d, 35.0, -78.0, 100.0)
+        return [a["_id"] for a in engine._buffer.swap()]
+
+    def test_doc_id_distinct_for_drones_without_serial(self):
+        """MAC-keyed drones detected in the same instant must not share an _id."""
+        ts = "2026-03-31T14:30:00Z"
+        ids = self._ids(DroneIDDevice(mac_address="aa:aa:aa:aa:aa:01", last_seen=ts),
+                        DroneIDDevice(mac_address="aa:aa:aa:aa:aa:02", last_seen=ts),
+                        DroneIDDevice(registration_id="REG-1", last_seen=ts))
+        self.assertEqual(len(set(ids)), 3)
+
+    def test_doc_id_for_serial_drone_unchanged(self):
+        ts = "2026-03-31T14:30:00Z"
+        engine = ElasticsearchEngine()
+        [doc_id] = self._ids(DroneIDDevice(serial_number="SER-1", mac_address="aa:aa:aa:aa:aa:01",
+                                           last_seen=ts))
+        self.assertEqual(doc_id, DocumentBuilder.compute_doc_id(
+            "SER-1", engine._agent_name or engine._hostname, ts))
+
     def test_status_reflects_buffer_depth(self):
         engine = ElasticsearchEngine()
         engine._enabled = True

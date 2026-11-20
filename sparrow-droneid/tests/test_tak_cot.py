@@ -171,6 +171,14 @@ class TestExactXml(unittest.TestCase):
         self.assertTrue(remarks.startswith(
             "Wi-Fi SSID detection (no Remote ID); position is the receiver's\n"))
 
+    def test_unknown_heading_omits_track_and_says_unknown(self):
+        dev = full_device(speed=5.25, direction=None)
+        view = cot.drone_view(dev.get_key(), dev, CFG)
+        out = cot.build_drone(view, dev, CFG, NOW).decode()
+        self.assertNotIn('<track', out)
+        remarks = parse(out.encode()).find('detail/remarks').text
+        self.assertIn('Speed: 5.25 m/s, course unknown,', remarks)
+
     def test_track_omitted_when_stationary(self):
         dev = full_device(speed=0.0, direction=0.0)
         view = cot.drone_view(dev.get_key(), dev, CFG)

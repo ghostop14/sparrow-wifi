@@ -758,7 +758,7 @@ class AlertEngine:
         self_id = alert_dict.get('self_id_text', '')
         protocol_display = alert_dict.get('protocol_display', '')
         speed = alert_dict.get('speed', 0)
-        direction = alert_dict.get('direction', 0)
+        direction = alert_dict.get('direction')
         vendor = alert_dict.get('vendor', '')
         range_m = alert_dict.get('range_m')
         bearing_deg = alert_dict.get('bearing_deg')
@@ -821,7 +821,8 @@ class AlertEngine:
 
         # Movement
         if speed and speed > 0:
-            parts.append(f"Speed: {self._fmt_speed(speed, imperial)}  HDG: {direction:.0f}°")
+            hdg = f"  HDG: {direction:.0f}°" if direction is not None else ''
+            parts.append(f"Speed: {self._fmt_speed(speed, imperial)}{hdg}")
 
         # RSSI
         if rssi and rssi != 0:

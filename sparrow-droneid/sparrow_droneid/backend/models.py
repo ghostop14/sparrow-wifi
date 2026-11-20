@@ -227,7 +227,9 @@ class DroneIDDevice:
 
     # Drone velocity
     speed: float = 0.0
-    direction: float = 0.0
+    # Track direction, degrees true. None = no heading reported (ODID
+    # "unknown" 361, or the protocol/frame carried none).
+    direction: Optional[float] = None
     vertical_speed: float = 0.0
 
     # Operator info
@@ -346,7 +348,7 @@ class TrackPoint:
     drone_alt_geo: float = 0.0
     drone_height_agl: float = 0.0
     speed: float = 0.0
-    direction: float = 0.0
+    direction: Optional[float] = None
     rssi: int = 0
     timestamp: str = ""
 

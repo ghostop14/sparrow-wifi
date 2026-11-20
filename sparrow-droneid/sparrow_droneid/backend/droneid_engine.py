@@ -159,7 +159,7 @@ class ODIDParser:
         # Direction: whole degrees 0-179, plus 180 when the E/W bit is set
         # (opendroneid-core-c decodeDirection). 361 (byte 181 + E/W) is the
         # ODID "unknown" sentinel; anything >= 360 is not a heading, so leave
-        # direction at its default rather than wrapping it into a real bearing.
+        # direction None (unknown) rather than wrapping it into a real bearing.
         raw_dir = data[2]
         direction = float(raw_dir)
         if ew_dir:
@@ -1477,7 +1477,7 @@ class DroneIDEngine:
 
     @staticmethod
     def _merge_frame_fields(device: DroneIDDevice, existing: DroneIDDevice):
-        """Fill fields the new WiFi frame didn't carry from the existing entry.
+        """Fill fields the new WiFi frame / BLE advertisement didn't carry.
 
         Identity, operator and self-ID fields carry over when empty. Location
         fields carry over only when the frame was ODID and had no Location
@@ -1681,34 +1681,10 @@ class DroneIDEngine:
             if key in self._active_drones:
                 existing = self._active_drones[key]
                 device.first_seen = existing.first_seen
-                # Merge: keep existing data for fields the new message didn't set
-                if not device.serial_number and existing.serial_number:
-                    device.serial_number = existing.serial_number
-                if not device.registration_id and existing.registration_id:
-                    device.registration_id = existing.registration_id
-                if not device.self_id_text and existing.self_id_text:
-                    device.self_id_text = existing.self_id_text
-                if not device.operator_id and existing.operator_id:
-                    device.operator_id = existing.operator_id
-                if device.drone_lat == 0.0 and existing.drone_lat != 0.0:
-                    device.drone_lat = existing.drone_lat
-                    device.drone_lon = existing.drone_lon
-                if device.drone_alt_geo == 0.0 and existing.drone_alt_geo != 0.0:
-                    device.drone_alt_geo = existing.drone_alt_geo
-                    device.drone_alt_baro = existing.drone_alt_baro
-                    device.drone_height_agl = existing.drone_height_agl
-                if device.speed == 0.0 and existing.speed != 0.0:
-                    device.speed = existing.speed
-                    device.direction = existing.direction
-                    device.vertical_speed = existing.vertical_speed
-                if device.operator_lat == 0.0 and existing.operator_lat != 0.0:
-                    device.operator_lat = existing.operator_lat
-                    device.operator_lon = existing.operator_lon
-                    device.operator_alt = existing.operator_alt
-                if device.ua_type == 0 and existing.ua_type != 0:
-                    device.ua_type = existing.ua_type
-                if not device.protocol and existing.protocol:
-                    device.protocol = existing.protocol
+                # Merge: keep existing data for fields this message didn't
+                # carry. Location fields follow message presence, not zero
+                # values, so a hovering drone's speed 0 replaces the old speed.
+                self._merge_frame_fields(device, existing)
             else:
                 # Check if a prior serial-keyed entry should migrate to this MAC key
                 migration = self._maybe_migrate_key(device, key)
@@ -1965,6 +1941,12 @@ class DroneIDEngine:
                 device = ODIDParser.parse_message_pack(odid_bytes)
             except Exception as exc:
                 logging.debug("DroneID BLE: parse error from %s: %s", ble_device.address, exc)
+                return
+
+            # Nothing decodable (e.g. an Auth-only advertisement): there is
+            # nothing to merge, and without a decoded message type the merge
+            # could not tell which fields this advertisement left out.
+            if not device.odid_messages:
                 return
 
             # BLE broadcasts individual messages, not packs — always key by

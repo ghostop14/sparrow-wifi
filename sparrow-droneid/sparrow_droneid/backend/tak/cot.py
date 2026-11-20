@@ -263,8 +263,9 @@ def build_drone(view: DroneView, dev: DroneIDDevice, cfg: TakConfig,
     if dev.drone_height_agl != 0.0:
         alt += ', %.1f m AGL' % dev.drone_height_agl
     lines.append(alt)
-    lines.append('Speed: %.2f m/s, course %.0f deg, vertical %.1f m/s' % (
-        dev.speed, dev.direction, dev.vertical_speed))
+    course = 'unknown' if dev.direction is None else '%.0f deg' % dev.direction
+    lines.append('Speed: %.2f m/s, course %s, vertical %.1f m/s' % (
+        dev.speed, course, dev.vertical_speed))
     if dev.operator_id:
         lines.append('Operator ID: ' + clean_field(dev.operator_id))
     if dev.self_id_text:
@@ -274,7 +275,9 @@ def build_drone(view: DroneView, dev: DroneIDDevice, cfg: TakConfig,
     lines.append('Sensor: ' + clean_field(cfg.station_name))
 
     detail = '<contact callsign="%s"/>' % xml_attr(view.callsign)
-    if not (dev.speed == 0.0 and dev.direction == 0.0) and not is_ssid:
+    # <track> needs a course; with no heading the speed stays in the remarks.
+    if (dev.direction is not None and not (dev.speed == 0.0 and dev.direction == 0.0)
+            and not is_ssid):
         detail += '<track course="%.1f" speed="%.2f"/>' % (dev.direction, dev.speed)
     detail += '<remarks>%s</remarks>' % xml_text('\n'.join(lines))
     detail += (

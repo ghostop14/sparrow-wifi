@@ -414,7 +414,7 @@ class WifiSsidScanner:
             drone_alt_baro=0.0,
             drone_height_agl=0.0,
             speed=0.0,
-            direction=0.0,
+            direction=None,
             vertical_speed=0.0,
             operator_lat=0.0,
             operator_lon=0.0,

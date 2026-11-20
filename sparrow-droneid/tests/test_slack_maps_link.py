@@ -122,5 +122,18 @@ class TestApiExternalLink(unittest.TestCase):
         self.assertNotIn(OP_URL, body['alert']['external_link']['url'])
 
 
+
+class TestHeadingInAlertText(unittest.TestCase):
+
+    def test_known_heading_is_shown(self):
+        text = _make_engine()._format_alert_message(_alert(speed=10.0, direction=270.0))
+        self.assertIn('HDG: 270°', text)
+
+    def test_unknown_heading_is_omitted(self):
+        text = _make_engine()._format_alert_message(_alert(speed=10.0, direction=None))
+        self.assertIn('Speed:', text)
+        self.assertNotIn('HDG', text)
+
+
 if __name__ == '__main__':
     unittest.main()

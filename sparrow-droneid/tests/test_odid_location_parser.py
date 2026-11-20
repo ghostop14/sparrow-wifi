@@ -45,19 +45,19 @@ class TestODIDLocationParser(unittest.TestCase):
 
     def test_unknown_direction_sentinel_is_not_a_heading(self):
         # INV_DIR 361 encodes as byte 181 with the E/W bit set. It must not
-        # wrap to 1 degree; direction stays at its "no value" default.
+        # wrap to 1 degree; the heading is reported as unknown (None).
         msg = bytearray(SAMPLE_LOCATION)
         msg[1] |= 0x02
         msg[2] = 181
         device = self._parse(bytes(msg))
-        self.assertEqual(device.direction, 0.0)
+        self.assertIsNone(device.direction)
         self.assertEqual(device.speed, 20.5)  # rest of the message still decodes
 
     def test_out_of_range_direction_is_not_a_heading(self):
         msg = bytearray(SAMPLE_LOCATION)
         msg[1] |= 0x02
         msg[2] = 200  # 380 degrees
-        self.assertEqual(self._parse(bytes(msg)).direction, 0.0)
+        self.assertIsNone(self._parse(bytes(msg)).direction)
 
     def test_359_is_kept(self):
         msg = bytearray(SAMPLE_LOCATION)

@@ -1166,7 +1166,7 @@ The core data model representing a detected drone. All drone-related endpoints r
 | `drone_alt_baro` | float | Drone barometric altitude (m) |
 | `drone_height_agl` | float | Drone height above ground level (m) |
 | `speed` | float | Ground speed (m/s) |
-| `direction` | float | Track direction (degrees, 0=North, CW) |
+| `direction` | float \| null | Track direction (degrees, 0=North, CW); `null` when the heading is unknown |
 | `vertical_speed` | float | Vertical speed (m/s, positive=up) |
 | `operator_lat` | float | Operator latitude (WGS84) |
 | `operator_lon` | float | Operator longitude (WGS84) |

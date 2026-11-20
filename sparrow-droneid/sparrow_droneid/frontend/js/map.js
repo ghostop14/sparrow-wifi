@@ -716,7 +716,8 @@ const MapManager = (() => {
     const state = drone.derived?.state || 'active';
     const stateColor = state === 'active' ? '#F59E0B' : state === 'aging' ? '#78909C' : '#455A64';
     const color = dispositionColor(drone, stateColor);
-    const dir = drone.direction || 0;
+    const hasDir = drone.direction != null;
+    const dir = hasDir ? drone.direction : 0;
     const opacity = state === 'active' ? 1.0 : state === 'aging' ? 0.6 : 0.35;
 
     // At-a-glance label: operator ID or serial (truncated), plus alt AGL
@@ -748,8 +749,8 @@ const MapManager = (() => {
             <circle cx="29" cy="29" r="5" fill="${color}" opacity="0.25" stroke="${color}" stroke-width="1"/>
             <!-- Body -->
             <circle cx="18" cy="18" r="4.5" fill="${color}" stroke="rgba(0,0,0,0.5)" stroke-width="1"/>
-            <!-- Heading tick (front) -->
-            <line x1="18" y1="13" x2="18" y2="7" stroke="#fff" stroke-width="1.5" stroke-linecap="round" opacity="0.9"/>
+            <!-- Heading tick (front); omitted when the heading is unknown -->
+            ${hasDir ? '<line x1="18" y1="13" x2="18" y2="7" stroke="#fff" stroke-width="1.5" stroke-linecap="round" opacity="0.9"/>' : ''}
           </svg>
         </div>
         ${flagBadgesHtml(drone)}${labelHtml}

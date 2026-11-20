@@ -1536,8 +1536,10 @@ class ElasticsearchEngine:
                 vendor=vendor,
                 time_in_area_s=time_in_area_s,
             )
+            # get_key() (serial, else registration, else MAC): drones without
+            # a serial would otherwise all share '' and collide on _id.
             doc_id = DocumentBuilder.compute_doc_id(
-                device.serial_number,
+                device.get_key(),
                 self._agent_name or self._hostname,
                 device.last_seen,
             )
