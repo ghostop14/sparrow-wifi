@@ -31,6 +31,16 @@ from .models import (
     rssi_trend as calc_rssi_trend,
 )
 
+# Optional Remote ID trust tracking. When the `remoteid` package is
+# installed, every captured Remote ID frame also feeds a per-transmitter
+# tracker that produces authenticated/plausible/suspicious/spoofed
+# verdicts with reasons (see DroneIDDevice.trust_verdict). Detection and
+# parsing work unchanged without it; the trust fields simply stay empty.
+try:
+    import remoteid  # pyright: ignore[reportMissingImports]
+except ImportError:
+    remoteid = None
+
 # --------------- Constants ------------------------------------------------
 
 # ODID message types (ASTM F3411-22a)
@@ -1064,6 +1074,12 @@ class DroneIDEngine:
         # Callback for alert engine
         self.on_detection = None
 
+        # Optional trust tracker (None when `remoteid` is not installed).
+        # Access is serialised because the WiFi parse thread and the BLE
+        # event loop both ingest frames.
+        self._trust_tracker = remoteid.Tracker() if remoteid else None
+        self._trust_lock = threading.Lock()
+
     @property
     def monitoring(self):
         return self._monitoring
@@ -1406,6 +1422,9 @@ class DroneIDEngine:
         mac = ':'.join(f'{b:02x}' for b in sa_bytes)
 
         header_info = {'rssi': rssi, 'mac': mac}
+        # Feed the whole radiotap packet to the trust tracker. Whole 802.11
+        # frames carry their own source address, so no address is needed.
+        header_info['trust'] = self._trust_ingest(pkt_data, 'radiotap', rssi=rssi)
         self._process_frame(frame, header_info)
 
     @staticmethod
@@ -1440,6 +1459,33 @@ class DroneIDEngine:
 
         return 0
 
+    def _trust_ingest(self, data, transport, address=None, rssi=None):
+        """Feed one raw Remote ID frame to the trust tracker, if available.
+
+        Returns the per-transmitter verdict, or None when the `remoteid`
+        package is not installed or the frame carries no Remote ID. Auth
+        messages that Sparrow's own parser ignores still reach the tracker
+        here, which is what allows `authenticated` verdicts.
+        """
+        tracker = self._trust_tracker
+        if tracker is None:
+            return None
+        try:
+            with self._trust_lock:
+                return tracker.ingest(data, transport, address=address, rssi=rssi)
+        except ValueError:
+            return None  # not a Remote ID frame
+        except Exception:
+            return None
+
+    @staticmethod
+    def _apply_trust(device: DroneIDDevice, trust):
+        """Attach a trust verdict to the device built from the same frame."""
+        if trust is None:
+            return
+        device.trust_verdict = trust.verdict
+        device.trust_reasons = list(trust.reasons)
+
     def _process_frame(self, frame_bytes, header_info):
         """Identify frame type and extract ODID data."""
         if len(frame_bytes) < 2:
@@ -1468,6 +1514,7 @@ class DroneIDEngine:
         device.mac_address = header_info.get('mac', '')
         device.channel = self._channel
         device.frequency = 2437 if self._channel == 6 else 2412 + (self._channel - 1) * 5
+        self._apply_trust(device, header_info.get('trust'))
 
         if not device.get_key():
             return
@@ -1930,6 +1977,17 @@ class DroneIDEngine:
 
             payload = service_data[BLE_ASTM_UUID]
 
+            # Feed the raw service data to the trust tracker before any
+            # parse early-return below: Auth-only advertisements carry no
+            # decodable position but are exactly what the tracker needs for
+            # signature verification. `remoteid` accepts the application
+            # code first, so the payload goes in unstripped.
+            trust = self._trust_ingest(
+                payload, 'ble_service_data',
+                address=ble_device.address,
+                rssi=advertisement_data.rssi,
+            )
+
             # Strip the 2-byte header: [app_code(1)][counter(1)] leaving the
             # 25-byte ODID message (or message pack starting at offset 2)
             if len(payload) < BLE_SERVICE_DATA_HEADER_LEN + 1:
@@ -1954,6 +2012,7 @@ class DroneIDEngine:
             device.mac_address = ble_device.address
             device.protocol = Protocol.ASTM_BLE.value
             device.rssi = advertisement_data.rssi if advertisement_data.rssi is not None else 0
+            self._apply_trust(device, trust)
 
             self._ble_frame_count += 1
             self._track_ble_device(device)

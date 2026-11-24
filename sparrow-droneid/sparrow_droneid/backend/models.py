@@ -269,6 +269,12 @@ class DroneIDDevice:
     military: bool = False
     law_enforcement: bool = False
 
+    # Remote ID trust verdict from the optional `remoteid` package
+    # (authenticated / plausible / suspicious / spoofed with reasons).
+    # Empty when `remoteid` is not installed; never persisted.
+    trust_verdict: str = ""
+    trust_reasons: List[str] = field(default_factory=list)
+
     # ODID message types (ODID_MSG_* values) decoded from the frame this
     # device was built from. Frame bookkeeping used to merge transports that
     # send one message per frame (NAN, BLE), not drone state: excluded from
